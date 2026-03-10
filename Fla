@@ -1,10 +1,7 @@
 -- =====================================================
---   ARISE SHADOW HUNT | AUTOMATION HUB v10.0
---   Mass Attack AKTIF menggunakan EnemyGuid + ClickEnemy
---   Map Rotation AKTIF
---   Player Settings: Walk Speed, Rejoin, Hide Notif ✅ BARU
---   Auto Raid | Roll Equipment | Roll Sword | Roll Ability
---   → Coming Soon (butuh data Simple Spy)
+--   Script Auto Farming by FLa Project | v1
+--   Hero guid: live capture via hookmetamethod HeroMoveToEnemyPos
+--   Mass Attack: Original (fire remotes tanpa teleport)
 -- =====================================================
 
 local Players           = game:GetService("Players")
@@ -13,2008 +10,1201 @@ local UserInputService  = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService   = game:GetService("TeleportService")
 local RunService        = game:GetService("RunService")
+local GuiService        = game:GetService("GuiService")
+local VIM               = game:GetService("VirtualInputManager")
+local VU                = game:GetService("VirtualUser")
 
-local LocalPlayer = Players.LocalPlayer
+local LP = Players.LocalPlayer
+
 -- =====================================================
-local Remotes         = ReplicatedStorage:WaitForChild("Remotes")
-local RE_Start        = Remotes:WaitForChild("StartLocalPlayerTeleport")
-local RE_Local        = Remotes:WaitForChild("LocalPlayerTeleport")
-local RE_Click        = Remotes:WaitForChild("ClickEnemy")              -- InvokeServer
-local RE_Attack       = Remotes:WaitForChild("PlayerClickAttackSkill")  -- FireServer
-local RE_Collect      = Remotes:WaitForChild("CollectItem")
-local RE_Reward       = Remotes:WaitForChild("ExtraReward")
+-- REMOTES
+-- =====================================================
+local Rem      = ReplicatedStorage:WaitForChild("Remotes")
+local RE_Start = Rem:WaitForChild("StartLocalPlayerTeleport")
+local RE_Local = Rem:WaitForChild("LocalPlayerTeleport")
+local RE_Click = Rem:WaitForChild("ClickEnemy")
+local RE_Atk   = Rem:WaitForChild("PlayerClickAttackSkill")
+local RE_Col   = Rem:WaitForChild("CollectItem")
+local RE_Draw  = Rem:WaitForChild("GetDrawHeroId")
+local RE_Extra = Rem:WaitForChild("ExtraReward")
+local RE_Drop  = Rem:WaitForChild("DropItems")
+local RE_Death = Rem:WaitForChild("EnemyDeath")
 
+-- =====================================================
+-- HERO / PET REMOTES (confirmed dari sniffer)
+-- =====================================================
+local RE_HeroMove  = Rem:WaitForChild("HeroMoveToEnemyPos")
+local RE_HeroStand = Rem:WaitForChild("HeroStandTo")
+local RE_HeroSkill = Rem:WaitForChild("HeroPlaySkillAnim")
+
+-- =====================================================
+-- HERO GUID — intercept live dari game sendiri
+-- Setiap kali game mengirim HeroMoveToEnemyPos,
+-- kita tangkap heroTagetPosInfos → ambil semua guid hero.
+-- Ini cara paling reliable karena guid bisa berubah tiap session.
+-- =====================================================
+local HERO_GUIDS   = {}   -- array of guid string
+local MY_USER_ID   = LP.UserId
+
+-- Hook FireServer untuk intercept HeroMoveToEnemyPos
+pcall(function()
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        if (method == "FireServer" or method == "InvokeServer") and self == RE_HeroMove then
+            local args = {...}
+            if args[1] and type(args[1]) == "table" and args[1].heroTagetPosInfos then
+                -- Ambil semua hero guid dari heroTagetPosInfos
+                local newGuids = {}
+                for hGuid, _ in pairs(args[1].heroTagetPosInfos) do
+                    table.insert(newGuids, hGuid)
+                end
+                if #newGuids > 0 then
+                    HERO_GUIDS = newGuids
+                    -- Print sekali saat pertama kali dapat guid
+                    if #HERO_GUIDS > 0 then
+                        print("✅ Hero guids captured: "..#HERO_GUIDS.." heroes")
+                        for _, g in ipairs(HERO_GUIDS) do print("   →", g) end
+                    end
+                end
+            end
+        end
+        return oldNamecall(self, ...)
+    end)
+end)
+
+-- Remote Scanner
+task.spawn(function()
+    task.wait(2)
+    print("\n╔══════════════════════════════════════╗")
+    print("║   ASH Hub — REMOTE SCAN              ║")
+    print("╚══════════════════════════════════════╝")
+    local remList = Rem:GetChildren()
+    table.sort(remList, function(a,b) return a.Name < b.Name end)
+    for _, child in ipairs(remList) do
+        print(string.format("  [%s]  %s", child.ClassName, child.Name))
+    end
+    print("══════════════════════════════════════\n")
+    print("ℹ Hero guids akan di-capture otomatis")
+    print("  saat kamu klik musuh pertama kali.\n")
+end)
 
 -- =====================================================
 -- MAP DATA
 -- =====================================================
-local MAPS = {
-    { name="Map 1",  id=50001, remote="Start" },
-    { name="Map 2",  id=50002, remote="Start" },
-    { name="Map 3",  id=50003, remote="Start" },
-    { name="Map 4",  id=50004, remote="Start" },
-    { name="Map 5",  id=50005, remote="Local" },
-    { name="Map 6",  id=50006, remote="Local" },
-    { name="Map 7",  id=50007, remote="Local" },
-    { name="Map 8",  id=50008, remote="Local" },
-    { name="Map 9",  id=50009, remote="Local" },
-    { name="Map 10", id=50010, remote="Local" },
-    { name="Map 11", id=50011, remote="Local" },
-    { name="Map 12", id=50012, remote="Local" },
-    { name="Map 13", id=50013, remote="Local" },
-    { name="Map 14", id=50014, remote="Local" },
-    { name="Map 15", id=50015, remote="Local" },
-    { name="Map 16", id=50016, remote="Local" },
-    { name="Map 17", id=50017, remote="Local" },
-    { name="Map 18", id=50018, remote="Local" },
-}
+local MAPS = {}
+for i = 1, 18 do
+    MAPS[i] = { name="Map "..i, id=50000+i, remote=i<=4 and "Start" or "Local" }
+end
 
--- =====================================================
--- TELEPORT MAP
--- =====================================================
-local function TeleportToMap(mapData)
-    if mapData.remote == "Start" then
-        pcall(function() RE_Start:FireServer({ mapId = mapData.id }) end)
-    else
-        pcall(function() RE_Local:FireServer({ mapId = mapData.id }) end)
-    end
+local function TpMap(m)
+    if m.remote=="Start" then pcall(function() RE_Start:FireServer({mapId=m.id}) end)
+    else pcall(function() RE_Local:FireServer({mapId=m.id}) end) end
 end
 
 -- =====================================================
--- MASS ATTACK CORE v5 - CONFIRMED DATA
+-- STATE TABLES
 -- =====================================================
+local MA  = { running=false, thread=nil, autoCollect=true, killed=0, collected=0, killTarget=7 }
+local MR  = { selected={}, nextMapDelay=3, teleportDelay=3 }
+local AG  = { running=false, thread=nil, autoCollect=true, killed=0, collected=0, currentTarget=nil }
+-- AGR hanya menyimpan config collect untuk AG (tidak ada interval/delay lagi)
+local AGR = {}
 
-local MassAttack = {
-    running     = false,
-    thread      = nil,
-    spamDelay   = 0.08,
-    looping     = true,
-    autoCollect = true,
-    killed      = 0,
-    collected   = 0,
-    killTarget  = 7,
-}
+-- Player / AFK state (pakai tabel biar hemat local slots)
+local PS  = { speedPct=100, hideNotif=false }
+local AFK = { on=false, t=nil, secs=0, timerTh=nil, labelRef=nil }
 
-local RE_DrawHero = Remotes:WaitForChild("GetDrawHeroId")
-local RE_Extra    = Remotes:WaitForChild("ExtraReward")
-
--- ── GET ENEMIES ──────────────────────────────────────
+-- =====================================================
+-- GAMEPLAY HELPERS
+-- =====================================================
 local function GetEnemies()
-    local list   = {}
-    local folder = workspace:FindFirstChild("Enemys")
-    if not folder then return list end
-    for _, enemy in ipairs(folder:GetChildren()) do
-        if enemy:IsA("Model") then
-            local guid = enemy:GetAttribute("EnemyGuid")
-            local hrp  = enemy:FindFirstChild("HumanoidRootPart")
-            local hum  = enemy:FindFirstChildOfClass("Humanoid")
-            if guid and hrp and hum and hum.Health > 0 then
-                table.insert(list, {
-                    model = enemy,
-                    guid  = guid,
-                    hrp   = hrp,
-                })
-            end
+    local list={}
+    local f=workspace:FindFirstChild("Enemys"); if not f then return list end
+    for _,e in ipairs(f:GetChildren()) do
+        if e:IsA("Model") then
+            local g=e:GetAttribute("EnemyGuid"); local h=e:FindFirstChild("HumanoidRootPart"); local hum=e:FindFirstChildOfClass("Humanoid")
+            if g and h and hum and hum.Health>0 then table.insert(list,{model=e,guid=g,hrp=h}) end
         end
     end
     return list
 end
 
--- ── AUTO COLLECT via DropItems event ─────────────────
-local collectedGuids = {}
+local colG={}
+local dstQ={}
+local deadG={}
 
-local RE_DropItems = Remotes:WaitForChild("DropItems")
-RE_DropItems.OnClientEvent:Connect(function(data)
-    if not MassAttack.autoCollect then return end
+RE_Drop.OnClientEvent:Connect(function(data)
     if not data or not data.rewards then return end
+    if not (MA.autoCollect or AG.autoCollect) then return end
     task.spawn(function()
-        for _, reward in pairs(data.rewards) do
-            if type(reward) == "table" and reward.guid then
-                local guid = reward.guid
-                if not collectedGuids[guid] then
-                    collectedGuids[guid] = true
-                    pcall(function()
-                        RE_Collect:InvokeServer(guid)
-                    end)
-                    MassAttack.collected = MassAttack.collected + 1
-                    task.wait(0.02)
-                end
+        for _,r in pairs(data.rewards) do
+            if type(r)=="table" and r.guid and not colG[r.guid] then
+                colG[r.guid]=true; pcall(function() RE_Col:InvokeServer(r.guid) end)
+                if MA.running then MA.collected=MA.collected+1 end
+                if AG.running then AG.collected=AG.collected+1 end
+                task.wait(0.02)
             end
         end
     end)
 end)
 
--- ── AUTO DESTROYER via GetDrawHeroId event ────────────
-local RE_DrawHeroEvent = Remotes:WaitForChild("GetDrawHeroId")
-local destroyerQueue = {}
-
 pcall(function()
-    if RE_DrawHeroEvent:IsA("RemoteEvent") then
-        RE_DrawHeroEvent.OnClientEvent:Connect(function(data)
-            if not MassAttack.autoCollect then return end
-            if data and data.guid then
-                table.insert(destroyerQueue, data)
-            end
+    if RE_Draw:IsA("RemoteEvent") then
+        RE_Draw.OnClientEvent:Connect(function(d)
+            if (MA.autoCollect or AG.autoCollect) and d and d.guid then table.insert(dstQ,d) end
         end)
     end
 end)
 
--- ── TRACK ENEMY DEATH ────────────────────────────────
-local deadGuids     = {}
-local RE_EnemyDeath = Remotes:WaitForChild("EnemyDeath")
-RE_EnemyDeath.OnClientEvent:Connect(function(data)
-    if not data then return end
-    local guid = data.enemyGuid or data.guid
-    if guid then
-        deadGuids[guid] = true
-        if MassAttack.running then
-            MassAttack.killed = MassAttack.killed + 1
-        end
-    end
-end)
-
--- ── HELPER ───────────────────────────────────────────
-local function IsEnemyDead(e)
-    -- Cek deadGuids global (dari EnemyDeath event)
-    if deadGuids[e.guid] then return true end
-    -- Cek model masih ada di workspace
-    if not e.model or not e.model.Parent then return true end
-    -- Cek Humanoid Health secara langsung (sumber kebenaran utama)
-    local hum = e.model:FindFirstChildOfClass("Humanoid")
-    return not hum or hum.Health <= 0
-end
-
--- ── AUTO DESTROYER WORKER ────────────────────────────
-local function StartDestroyerWorker()
+local function StartDestroyWorker(checkFn)
     task.spawn(function()
-        while MassAttack.running do
-            if #destroyerQueue > 0 then
-                local data = table.remove(destroyerQueue, 1)
-                pcall(function()
-                    RE_DrawHero:InvokeServer({
-                        expireTime   = data.expireTime or (os.time() + 30),
-                        quirks       = data.quirks or {0, 0, 0},
-                        monsterGuid  = data.monsterGuid or "",
-                        monsterId    = data.monsterId or 0,
-                        guid         = data.guid,
-                        multiplier   = data.multiplier or 1,
-                        pos          = data.pos or Vector3.new(0,0,0),
-                    })
-                end)
-                task.wait(0.1)
-                pcall(function()
-                    RE_Extra:FireServer({
-                        isSell = true,
-                        guid   = data.guid,
-                    })
-                end)
+        while checkFn() do
+            if #dstQ>0 then
+                local d=table.remove(dstQ,1)
+                pcall(function() RE_Draw:InvokeServer({expireTime=d.expireTime or(os.time()+30),quirks=d.quirks or{0,0,0},monsterGuid=d.monsterGuid or"",monsterId=d.monsterId or 0,guid=d.guid,multiplier=d.multiplier or 1,pos=d.pos or Vector3.new()}) end)
+                task.wait(0.1); pcall(function() RE_Extra:FireServer({isSell=true,guid=d.guid}) end)
             end
             task.wait(0.05)
         end
     end)
 end
 
--- ── SPAM SEMUA MUSUH PARALLEL ─────────────────────────
-local function SpamAllEnemies()
-    for _, e in ipairs(GetEnemies()) do
-        if not IsEnemyDead(e) then
-            local hrp = e.model and e.model:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                task.spawn(function()
-                    pcall(function()
-                        RE_Click:InvokeServer({ enemyGuid = e.guid, enemyPos = hrp.Position })
-                    end)
-                    pcall(function()
-                        RE_Attack:FireServer({ attackEnemyGUID = e.guid })
-                    end)
-                end)
-            end
-        end
-    end
-end
-
--- ── ATTACK SAMPAI KILL TARGET TERCAPAI ────────────────
-local function AttackUntilKillTarget(onStatus)
-    -- JANGAN reset deadGuids global — dipakai EnemyDeath event listener
-    -- Hanya bersihkan queue collect & destroyer untuk sesi map ini
-    collectedGuids = {}
-    destroyerQueue = {}
-
-    -- Snapshot GUID yang sudah mati SEBELUM sesi ini
-    -- sehingga kill lama tidak dihitung sebagai kill baru
-    local guidsBefore = {}
-    for guid, _ in pairs(deadGuids) do
-        guidsBefore[guid] = true
-    end
-
-    -- Kill counter khusus sesi ini (tidak bergantung MassAttack.killed global)
-    local killsThisSession = 0
-    local sessionConn = RE_EnemyDeath.OnClientEvent:Connect(function(data)
-        if not data then return end
-        local guid = data.enemyGuid or data.guid
-        if guid and not guidsBefore[guid] then
-            guidsBefore[guid] = true   -- tandai agar tidak double-count
-            killsThisSession = killsThisSession + 1
-        end
-    end)
-
-    -- Tunggu musuh pertama muncul (max 6 detik)
-    local waitT = 0
-    while waitT < 6 and MassAttack.running do
-        if #GetEnemies() > 0 then break end
-        if onStatus then
-            onStatus("⚠ Tidak ada musuh... ("..math.floor(6-waitT).."s)", true)
-        end
-        task.wait(0.4); waitT = waitT + 0.4
-    end
-    if not MassAttack.running then
-        pcall(function() sessionConn:Disconnect() end)
-        return false
-    end
-
-    -- Jika setelah tunggu masih kosong → skip map ini
-    if #GetEnemies() == 0 then
-        pcall(function() sessionConn:Disconnect() end)
-        if onStatus then onStatus("⏭ Map kosong, skip ke map berikutnya", false) end
-        return true
-    end
-
-    -- Untuk Kill All: konfirmasi area kosong selama 1.5 detik berturut-turut
-    local CONFIRM_EMPTY_TIME = 1.5
-    local emptyAccum         = 0
-
-    while MassAttack.running do
-        local target    = MassAttack.killTarget
-        local isKillAll = (target == 0)
-
-        local alive = 0
-        for _, e in ipairs(GetEnemies()) do
-            if not IsEnemyDead(e) then alive = alive + 1 end
-        end
-
-        if isKillAll then
-            if alive == 0 then
-                emptyAccum = emptyAccum + 0.08
-                if emptyAccum >= CONFIRM_EMPTY_TIME then
-                    pcall(function() sessionConn:Disconnect() end)
-                    return true
-                end
-                task.wait(0.08)
-                continue
-            else
-                emptyAccum = 0
-            end
-            if onStatus then
-                onStatus("⚔ Kill All: "..alive.." sisa  💎 "..MassAttack.collected, true)
-            end
-        else
-            emptyAccum = 0
-            if killsThisSession >= target then
-                pcall(function() sessionConn:Disconnect() end)
-                task.wait(0.05)
-                return true
-            end
-            if onStatus then
-                onStatus("⚔ "..alive.." hidup  🎯 "..killsThisSession.."/"..target.."  💎 "..MassAttack.collected, true)
-            end
-        end
-
-        for _, e in ipairs(GetEnemies()) do
-            if not IsEnemyDead(e) then
-                local hrp = e.model and e.model:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    local enemyGuid = e.guid
-                    local enemyPos  = hrp.Position
-                    task.spawn(function()
-                        pcall(function()
-                            RE_Click:InvokeServer({ enemyGuid = enemyGuid, enemyPos = enemyPos })
-                        end)
-                        pcall(function()
-                            RE_Attack:FireServer({ attackEnemyGUID = enemyGuid })
-                        end)
-                    end)
-                end
-            end
-        end
-
-        task.wait(0.08)
-    end
-
-    pcall(function() sessionConn:Disconnect() end)
-    return false
-end
-
--- ── MAP ROTATION STATE ────────────────────────────────
-local MapRotation = {
-    selected      = {},
-    nextMapDelay  = 3,
-    teleportDelay = 3,
-}
-
--- ── AUTO SKILL (Z X C V F) ───────────────────────────
--- Di PC  : simulasi keypress Z/X/C/V/F via VirtualInputManager
--- Di HP  : sama, VirtualInputManager juga bekerja di mobile executor
-local VIM = game:GetService("VirtualInputManager")
-
-local AutoSkill = {
-    Z = { on=false, key=Enum.KeyCode.Z, thread=nil, delay=1.0 },
-    X = { on=false, key=Enum.KeyCode.X, thread=nil, delay=1.0 },
-    C = { on=false, key=Enum.KeyCode.C, thread=nil, delay=1.0 },
-    V = { on=false, key=Enum.KeyCode.V, thread=nil, delay=1.0 },
-    F = { on=false, key=Enum.KeyCode.F, thread=nil, delay=1.0 },
-}
-local SKILL_ORDER = {"Z","X","C","V","F"}
-
-local function PressKey(keyCode)
-    pcall(function()
-        VIM:SendKeyEvent(true,  keyCode, false, game)
-        task.wait(0.05)
-        VIM:SendKeyEvent(false, keyCode, false, game)
-    end)
-end
-
-local function StartSkill(name)
-    local sk = AutoSkill[name]
-    if sk.thread then return end
-    sk.on = true
-    sk.thread = task.spawn(function()
-        while sk.on do
-            PressKey(sk.key)
-            task.wait(sk.delay)
-        end
-        sk.thread = nil
-    end)
-end
-
-local function StopSkill(name)
-    local sk = AutoSkill[name]
-    sk.on = false
-    if sk.thread then
-        pcall(function() task.cancel(sk.thread) end)
-        sk.thread = nil
-    end
-end
-
-local function StartMassAttack(onStatus, onToggle)
-    if MassAttack.running then return end
-    MassAttack.running   = true
-    MassAttack.killed    = 0
-    MassAttack.collected = 0
-
-    StartDestroyerWorker()
-
-    MassAttack.thread = task.spawn(function()
-        -- Index map terakhir yang dikunjungi (untuk melanjutkan urutan)
-        local lastMapIdx = 0
-
-        while MassAttack.running do
-
-            -- ── Baca pilihan map SEKARANG (real-time) ──────────
-            local selectedMaps = {}
-            for i = 1, #MAPS do
-                if MapRotation.selected[i] then
-                    table.insert(selectedMaps, i)
-                end
-            end
-
-            if #selectedMaps > 0 then
-                -- Cari map berikutnya setelah lastMapIdx dalam urutan selectedMaps
-                local nextMapIdx = nil
-                for _, mapIdx in ipairs(selectedMaps) do
-                    if mapIdx > lastMapIdx then
-                        nextMapIdx = mapIdx
-                        break
-                    end
-                end
-                -- Jika sudah habis / tidak ada yg lebih besar → kembali ke awal
-                if not nextMapIdx then
-                    nextMapIdx  = selectedMaps[1]
-                    lastMapIdx  = 0
-                end
-                lastMapIdx = nextMapIdx
-
-                local mapData = MAPS[nextMapIdx]
-
-                if onStatus then onStatus("🗺 Teleport → "..mapData.name.."...", true) end
-                TeleportToMap(mapData)
-
-                local d = 0
-                while d < MapRotation.teleportDelay and MassAttack.running do
-                    task.wait(0.2); d = d + 0.2
-                end
-                if not MassAttack.running then break end
-
-                local targetLabel = MassAttack.killTarget == 0 and "All" or tostring(MassAttack.killTarget)
-                if onStatus then
-                    onStatus("⚔ "..mapData.name.." — target "..targetLabel.." kill", true)
-                end
-                local done = AttackUntilKillTarget(onStatus)
-
-                if not done or not MassAttack.running then break end
-
-                local delay = MapRotation.nextMapDelay
-                local doneLabel = MassAttack.killTarget == 0 and "All killed!" or (tostring(MassAttack.killTarget).." kill!")
-                if onStatus then
-                    onStatus("✅ "..doneLabel.."  Pindah dalam "..delay.."s...", true)
-                end
-                d = 0
-                while d < MapRotation.nextMapDelay and MassAttack.running do
-                    task.wait(0.2); d = d + 0.2
-                end
-
-            else
-                -- Tidak ada map dipilih → farm di map saat ini saja
-                lastMapIdx = 0
-                local done = AttackUntilKillTarget(onStatus)
-                if done and MassAttack.running then
-                    local delay = MapRotation.nextMapDelay
-                    local doneLabel = MassAttack.killTarget == 0 and "All killed!" or (tostring(MassAttack.killTarget).." kill!")
-                    if onStatus then
-                        onStatus("✅ "..doneLabel.."  Ulang dalam "..delay.."s...", true)
-                    end
-                    local d = 0
-                    while d < MapRotation.nextMapDelay and MassAttack.running do
-                        task.wait(0.2); d = d + 0.2
-                    end
-                end
-            end
-        end
-
-        MassAttack.running = false
-        if onToggle then onToggle(false) end
-    end)
-end
-
-local function StopMassAttack()
-    MassAttack.running = false
-    if MassAttack.thread then
-        task.cancel(MassAttack.thread)
-        MassAttack.thread = nil
-    end
-end
-
-local function StopMapRotation()
-    StopMassAttack()
-end
-
--- =====================================================
--- PLAYER SETTINGS CORE
--- =====================================================
-
--- ── WALK SPEED ───────────────────────────────────────
-local DEFAULT_SPEED  = 16   -- speed default Roblox
-local PlayerSettings = {
-    speedPct      = 100,    -- 0–200%
-    hideNotif     = false,
-    speedConn     = nil,
-}
-
-local function ApplyWalkSpeed(pct)
-    PlayerSettings.speedPct = pct
-    local spd = DEFAULT_SPEED * (pct / 100)
-    local char = LocalPlayer.Character
-    if char then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then hum.WalkSpeed = spd end
-    end
-end
-
--- Jaga speed tetap aktif saat respawn / karakter diganti
-LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(0.5)
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        hum.WalkSpeed = DEFAULT_SPEED * (PlayerSettings.speedPct / 100)
+RE_Death.OnClientEvent:Connect(function(d)
+    if not d then return end
+    local g=d.enemyGuid or d.guid
+    if g then
+        deadG[g]=true
+        if MA.running then MA.killed=MA.killed+1 end
+        if AG.running then AG.killed=AG.killed+1 end
     end
 end)
 
--- ── AUTO HIDE REWARD NOTIF ────────────────────────────
--- Strategi GANDA (berlapis):
--- 1. Event: pantau TipsPanel.RewardFrame → Destroy() saat muncul
--- 2. Polling: setiap 0.3 detik, jika RewardFrame masih ada →
---    klik semua sudut layar via VirtualInputManager agar popup tutup
---    (sama persis seperti "Click anywhere to close this window")
-local notifThread = nil
-local notifConn1  = nil
-local notifConn2  = nil
-
-local VIM_notif = game:GetService("VirtualInputManager")
-
-local function ClickAllCorners()
-    -- Klik di beberapa titik layar: tengah, sudut-sudut, tepi
-    local vp = workspace.CurrentCamera.ViewportSize
-    local pts = {
-        Vector2.new(vp.X * 0.5,  vp.Y * 0.5),   -- tengah
-        Vector2.new(vp.X * 0.1,  vp.Y * 0.1),   -- kiri atas
-        Vector2.new(vp.X * 0.9,  vp.Y * 0.1),   -- kanan atas
-        Vector2.new(vp.X * 0.1,  vp.Y * 0.9),   -- kiri bawah
-        Vector2.new(vp.X * 0.9,  vp.Y * 0.9),   -- kanan bawah
-        Vector2.new(vp.X * 0.5,  vp.Y * 0.85),  -- bawah tengah (area Confirm)
-        Vector2.new(vp.X * 0.5,  vp.Y * 0.2),   -- atas tengah
-    }
-    for _, pt in ipairs(pts) do
-        pcall(function()
-            VIM_notif:SendMouseButtonEvent(pt.X, pt.Y, 0, true,  game, 1)
-            VIM_notif:SendMouseButtonEvent(pt.X, pt.Y, 0, false, game, 1)
-        end)
-    end
+local function IsDead(e)
+    if deadG[e.guid] then return true end
+    if not e.model or not e.model.Parent then return true end
+    local h=e.model:FindFirstChildOfClass("Humanoid"); return not h or h.Health<=0
 end
 
-local function TryDestroyRewardFrame()
-    local destroyed = false
-    pcall(function()
-        local tips = LocalPlayer.PlayerGui:FindFirstChild("TipsPanel")
-        if not tips then return end
-        local rf = tips:FindFirstChild("RewardFrame")
-        if rf then
-            rf:Destroy()
-            destroyed = true
-        end
-    end)
-    return destroyed
-end
-
-local function StartHideNotif()
-    -- Bersihkan state lama
-    if notifConn1 then pcall(function() notifConn1:Disconnect() end) notifConn1 = nil end
-    if notifConn2 then pcall(function() notifConn2:Disconnect() end) notifConn2 = nil end
-    if notifThread then pcall(function() task.cancel(notifThread) end) notifThread = nil end
-
-    -- Coba destroy yang sudah ada sekarang
-    TryDestroyRewardFrame()
-
-    -- LAYER 1: Event listener → destroy RewardFrame saat muncul
-    local function WatchTipsPanel(tipsPanel)
-        if notifConn2 then pcall(function() notifConn2:Disconnect() end) end
-        notifConn2 = tipsPanel.ChildAdded:Connect(function(child)
-            if not PlayerSettings.hideNotif then return end
-            if child.Name == "RewardFrame" then
-                task.defer(function()
-                    pcall(function() child:Destroy() end)
-                end)
-            end
-        end)
-        -- Destroy yang sudah ada di TipsPanel ini
-        pcall(function()
-            local rf = tipsPanel:FindFirstChild("RewardFrame")
-            if rf then rf:Destroy() end
-        end)
-    end
-
-    local tips = LocalPlayer.PlayerGui:FindFirstChild("TipsPanel")
-    if tips then WatchTipsPanel(tips) end
-
-    notifConn1 = LocalPlayer.PlayerGui.ChildAdded:Connect(function(child)
-        if not PlayerSettings.hideNotif then return end
-        if child.Name == "TipsPanel" then
-            task.defer(function()
-                if PlayerSettings.hideNotif then WatchTipsPanel(child) end
+-- =====================================================
+-- FIRE HERO REMOTES (Mass Attack — tanpa teleport HRP)
+-- =====================================================
+local function FireHeroRemotes(enemyGuid, enemyPos)
+    for _, hr in ipairs(HERO_REMOTES) do
+        task.spawn(function()
+            local r = hr.remote
+            pcall(function()
+                if r:IsA("RemoteFunction") then
+                    r:InvokeServer({enemyGuid=enemyGuid,enemyPos=enemyPos,guid=enemyGuid,targetGuid=enemyGuid,pos=enemyPos})
+                elseif r:IsA("RemoteEvent") then
+                    r:FireServer({enemyGuid=enemyGuid,enemyPos=enemyPos,guid=enemyGuid,targetGuid=enemyGuid,pos=enemyPos})
+                end
             end)
-        end
-    end)
+        end)
+    end
+end
 
-    -- LAYER 2: Polling setiap 0.3 detik
-    -- Jika RewardFrame masih ada (event terlambat/gagal) → klik semua sudut
-    notifThread = task.spawn(function()
-        while PlayerSettings.hideNotif do
-            local tips2 = LocalPlayer.PlayerGui:FindFirstChild("TipsPanel")
-            if tips2 and tips2:FindFirstChild("RewardFrame") then
-                -- Ada popup → coba destroy dulu, lalu klik layar
-                TryDestroyRewardFrame()
-                ClickAllCorners()
+-- =====================================================
+-- HRP TELEPORT HELPERS (AUTO RANDOM ATTACK saja)
+-- =====================================================
+local ORIGIN_POS = Vector3.new(0,0,0)
+
+local function SaveOrigin()
+    local char=LP.Character; if not char then return end
+    local hrp=char:FindFirstChild("HumanoidRootPart"); if hrp then ORIGIN_POS=hrp.Position end
+end
+
+local function TeleportHRPToEnemy(pos)
+    local char=LP.Character; if not char then return end
+    local hrp=char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+    hrp.CFrame=CFrame.new(pos+Vector3.new(0,2,2))
+end
+
+local function ReturnHRPToOrigin()
+    local char=LP.Character; if not char then return end
+    local hrp=char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+    hrp.CFrame=CFrame.new(ORIGIN_POS)
+end
+
+-- =====================================================
+-- MASS ATTACK LOOP (ORIGINAL — hanya fire remotes)
+-- =====================================================
+local function AttackLoop_Mass(onStatus)
+    deadG={}; colG={}; dstQ={}
+    local start=MA.killed; local wt=0
+    while wt<6 and MA.running do
+        if #GetEnemies()>0 then break end
+        if onStatus then onStatus("⚠ Tidak ada musuh ("..math.floor(6-wt).."s)") end
+        task.wait(0.4); wt=wt+0.4
+    end
+    if not MA.running then return false end
+    if #GetEnemies()==0 then if onStatus then onStatus("⏭ Map kosong, skip...") end; return true end
+    local emptyT=0
+    while MA.running do
+        local isAll=(MA.killTarget==0); local here=MA.killed-start
+        local alive=0; for _,e in ipairs(GetEnemies()) do if not IsDead(e) then alive=alive+1 end end
+        if isAll then
+            if alive==0 then emptyT=emptyT+0.08; if emptyT>=1.5 then return true end; task.wait(0.08); continue end
+            emptyT=0; if onStatus then onStatus("⚔ Kill All: "..alive.." sisa  💎"..MA.collected) end
+        else
+            emptyT=0; if here>=MA.killTarget then task.wait(0.05); return true end
+            if onStatus then onStatus("⚔ "..alive.." hidup  🎯"..here.."/"..MA.killTarget.."  💎"..MA.collected) end
+        end
+        for _,e in ipairs(GetEnemies()) do
+            if not IsDead(e) then
+                local hrp=e.model and e.model:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local g,p=e.guid,hrp.Position
+                    task.spawn(function()
+                        pcall(function() RE_Click:InvokeServer({enemyGuid=g,enemyPos=p}) end)
+                        pcall(function() RE_Atk:FireServer({attackEnemyGUID=g}) end)
+                        FireHeroRemotes(g,p)
+                    end)
+                end
             end
-            task.wait(0.3)
         end
-        notifThread = nil
-    end)
+        task.wait(0.08)
+    end
+    return false
 end
 
-local function StopHideNotif()
-    PlayerSettings.hideNotif = false
-    if notifConn1 then pcall(function() notifConn1:Disconnect() end) notifConn1 = nil end
-    if notifConn2 then pcall(function() notifConn2:Disconnect() end) notifConn2 = nil end
-    if notifThread then pcall(function() task.cancel(notifThread) end) notifThread = nil end
+-- =====================================================
+-- AUTO RANDOM ATTACK
+-- AG.currentTarget = entry dari GetEnemies() yg dipilih
+-- user di Enemy List. Bisa diganti kapanpun (mid-attack).
+-- Loop: teleport ke target, attack di tempat.
+-- Kalau AG.currentTarget berubah → langsung pindah.
+-- =====================================================
+
+-- Fire semua damage — karakter + semua hero/pet brutal
+-- Hero guid di-capture otomatis dari hookmetamethod.
+local function FireAllDamage(g, ep)
+    -- ── Karakter utama ──────────────────────────────
+    pcall(function() RE_Click:InvokeServer({enemyGuid=g, enemyPos=ep}) end)
+    pcall(function() RE_Atk:FireServer({attackEnemyGUID=g}) end)
+    pcall(function() RE_Atk:FireServer(g) end)
+
+    -- ── Hero / Pet brutal ───────────────────────────
+    -- HERO_GUIDS diisi otomatis saat game mengirim HeroMoveToEnemyPos
+    -- (terjadi saat kamu klik musuh manual pertama kali setelah load)
+    for _, hGuid in ipairs(HERO_GUIDS) do
+        -- Spam skillType 1, 2, 3 sekaligus per hero
+        -- skillType=1 basic, =2 skill, =3 ultimate/angry
+        pcall(function() RE_HeroSkill:FireServer({heroGuid=hGuid, enemyGuid=g, skillType=1, masterId=MY_USER_ID}) end)
+        pcall(function() RE_HeroSkill:FireServer({heroGuid=hGuid, enemyGuid=g, skillType=2, masterId=MY_USER_ID}) end)
+        pcall(function() RE_HeroSkill:FireServer({heroGuid=hGuid, enemyGuid=g, skillType=3, masterId=MY_USER_ID}) end)
+        pcall(function() RE_HeroStand:FireServer({masterId=MY_USER_ID, cframe=CFrame.new(ep+Vector3.new(2,0,2)), guid=hGuid}) end)
+    end
 end
 
--- ── REJOIN SERVER (same server) ───────────────────────
-local function RejoinServer()
-    local placeId  = game.PlaceId
-    local serverId = game.JobId   -- ID server saat ini
+-- Kirim HeroMoveToEnemyPos sekali saat teleport ke musuh baru
+local function FireHeroMoveToTarget(enemyGuid, enemyPos)
+    if #HERO_GUIDS == 0 then return end
+    local posInfos = {}
+    for i, hGuid in ipairs(HERO_GUIDS) do
+        local offset = Vector3.new((i-1)*3 - 3, 0, (i%2==0 and 2 or -2))
+        posInfos[hGuid] = enemyPos + offset
+    end
     pcall(function()
-        -- Teleport ke server yang sama menggunakan JobId
-        TeleportService:TeleportToPlaceInstance(placeId, serverId, LocalPlayer)
+        RE_HeroMove:FireServer({
+            attackTarget      = enemyGuid,
+            userId            = MY_USER_ID,
+            heroTagetPosInfos = posInfos,
+        })
+    end)
+end
+
+local function AttackLoop_Goyang(onStatus)
+    colG={}; dstQ={}
+    SaveOrigin()
+
+    while AG.running do
+        local tgt = AG.currentTarget
+
+        -- Belum ada target dipilih → standby
+        if not tgt then
+            if onStatus then onStatus("👆 Tap nama musuh di Enemy List...") end
+            task.wait(0.2); continue
+        end
+
+        -- Target mati / hilang dari map
+        if IsDead(tgt) or not tgt.model.Parent then
+            if onStatus then onStatus("💀 ["..tgt.model.Name.."] mati — tap musuh lain") end
+            ReturnHRPToOrigin(); task.wait(0.3); continue
+        end
+
+        local tHrp = tgt.model:FindFirstChild("HumanoidRootPart")
+        if not tHrp then task.wait(0.1); continue end
+
+        local g = tgt.guid
+        local snapPos = tHrp.Position
+
+        -- Teleport SEKALI ke dekat musuh
+        TeleportHRPToEnemy(snapPos)
+        -- Beritahu server hero bergerak ke musuh ini (sekali saja)
+        FireHeroMoveToTarget(g, snapPos)
+        if onStatus then onStatus("🕺 Goyang → ["..tgt.model.Name.."]  💎"..AG.collected) end
+
+        -- Attack loop di tempat sampai:
+        -- · target mati, ATAU
+        -- · user mengganti target (AG.currentTarget berubah)
+        local activeTgt = tgt
+        while AG.running do
+            -- Cek switch target oleh user
+            if AG.currentTarget ~= activeTgt then break end
+            -- Cek target mati
+            if IsDead(activeTgt) or not activeTgt.model.Parent then
+                ReturnHRPToOrigin()
+                if onStatus then onStatus("💀 ["..activeTgt.model.Name.."] mati — tap musuh lain") end
+                break
+            end
+            FireAllDamage(g, snapPos)
+            task.wait()
+        end
+    end
+
+    ReturnHRPToOrigin()
+    return false
+end
+
+-- =====================================================
+-- LOOP RUNNER - Mass Attack (pakai map rotation)
+-- =====================================================
+local function RunLoop(state, cfg, loopFn, onStatus, onDone)
+    state.running=true; state.killed=0; state.collected=0
+    StartDestroyWorker(function() return state.running end)
+    state.thread=task.spawn(function()
+        local last=0
+        while state.running do
+            local sel={}; for i=1,#MAPS do if cfg.selected[i] then table.insert(sel,i) end end
+            if #sel>0 then
+                local ni=nil; for _,i in ipairs(sel) do if i>last then ni=i; break end end
+                if not ni then ni=sel[1]; last=0 end; last=ni
+                local m=MAPS[ni]; if onStatus then onStatus("🗺 → "..m.name) end
+                TpMap(m)
+                local d=0; while d<cfg.teleportDelay and state.running do task.wait(0.2); d=d+0.2 end
+                if not state.running then break end
+                if not loopFn(onStatus) then break end
+                if onStatus then onStatus("✅ "..cfg.nextMapDelay.."s...") end
+                d=0; while d<cfg.nextMapDelay and state.running do task.wait(0.2); d=d+0.2 end
+            else
+                last=0
+                local done=loopFn(onStatus)
+                if done and state.running then
+                    if onStatus then onStatus("✅ Loop "..cfg.nextMapDelay.."s...") end
+                    local d=0; while d<cfg.nextMapDelay and state.running do task.wait(0.2); d=d+0.2 end
+                end
+            end
+        end
+        state.running=false; if onDone then onDone() end
     end)
 end
 
 -- =====================================================
--- CLEANUP OLD GUI
+-- AG RUNNER — langsung attack di map saat ini (tanpa rotation)
 -- =====================================================
-if LocalPlayer.PlayerGui:FindFirstChild("ASH_Hub") then
-    LocalPlayer.PlayerGui.ASH_Hub:Destroy()
+local function RunAG(onStatus, onDone)
+    AG.running=true; AG.killed=0; AG.collected=0
+    StartDestroyWorker(function() return AG.running end)
+    AG.thread=task.spawn(function()
+        -- Loop terus di map sekarang, serang musuh dari target list
+        while AG.running do
+            local done = AttackLoop_Goyang(onStatus)
+            if not AG.running then break end
+            -- Semua target habis / map kosong → tunggu sebentar lalu coba lagi
+            if done then
+                if onStatus then onStatus("✅ Semua target habis, nunggu spawn...") end
+                task.wait(1)
+            end
+        end
+        AG.running=false; if onDone then onDone() end
+    end)
+end
+
+local function StopLoop(state, extraFn)
+    state.running=false
+    if state.thread then pcall(function() task.cancel(state.thread) end); state.thread=nil end
+    if extraFn then extraFn() end
 end
 
 -- =====================================================
--- SCREEN GUI
+-- AUTO SKILL
 -- =====================================================
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name           = "ASH_Hub"
-ScreenGui.ResetOnSpawn   = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent         = LocalPlayer.PlayerGui
+local SKL={
+    Z={on=false,key=Enum.KeyCode.Z,t=nil},
+    X={on=false,key=Enum.KeyCode.X,t=nil},
+    C={on=false,key=Enum.KeyCode.C,t=nil},
+    V={on=false,key=Enum.KeyCode.V,t=nil},
+    F={on=false,key=Enum.KeyCode.F,t=nil},
+}
+local function PK(k) pcall(function() VIM:SendKeyEvent(true,k,false,game); task.wait(0.05); VIM:SendKeyEvent(false,k,false,game) end) end
+local function SkOn(n)  local s=SKL[n]; if s.t then return end; s.on=true;  s.t=task.spawn(function() while s.on do PK(s.key); task.wait(1) end; s.t=nil end) end
+local function SkOff(n) local s=SKL[n]; s.on=false; if s.t then pcall(function() task.cancel(s.t) end); s.t=nil end end
+
+-- =====================================================
+-- PLAYER HELPERS
+-- =====================================================
+local function ApplySpd(p)
+    PS.speedPct=p; local c=LP.Character; if c then local h=c:FindFirstChildOfClass("Humanoid"); if h then h.WalkSpeed=16*(p/100) end end
+end
+LP.CharacterAdded:Connect(function(c) task.wait(0.5); local h=c:FindFirstChildOfClass("Humanoid"); if h then h.WalkSpeed=16*(PS.speedPct/100) end end)
+
+local hideLoop=nil
+local function StartHideNotif()
+    PS.hideNotif=true
+    if hideLoop then pcall(function() hideLoop:Disconnect() end) end
+    hideLoop=RunService.Heartbeat:Connect(function()
+        if not PS.hideNotif then return end
+        local pg=LP.PlayerGui
+        local tips=pg:FindFirstChild("TipsPanel")
+        if tips then for _,c in ipairs(tips:GetChildren()) do pcall(function() c:Destroy() end) end end
+        for _,sg in ipairs(pg:GetChildren()) do
+            if sg:IsA("ScreenGui") and sg.Name~="ASH_Hub" then
+                for _,c in ipairs(sg:GetDescendants()) do
+                    if c:IsA("Frame") and (c.Name:find("Reward") or c.Name:find("reward") or c.Name:find("Tips") or c.Name:find("tips")) then
+                        pcall(function() c:Destroy() end)
+                    end
+                end
+            end
+        end
+    end)
+end
+local function StopHideNotif()
+    PS.hideNotif=false
+    if hideLoop then pcall(function() hideLoop:Disconnect() end); hideLoop=nil end
+end
+
+local function Rejoin() pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,LP) end) end
+
+local function FmtTime(s)
+    local h=math.floor(s/3600); local m=math.floor((s%3600)/60); local sc=s%60
+    if h>0 then return h.."j "..string.format("%02d",m).."m "..string.format("%02d",sc).."s"
+    elseif m>0 then return m.."m "..string.format("%02d",sc).."s"
+    else return sc.."s" end
+end
+
+local function StartAFK()
+    if AFK.t then return end; AFK.on=true; AFK.secs=0
+    AFK.t=task.spawn(function() while AFK.on do pcall(function() VU:CaptureController(); VU:ClickButton2(Vector2.new()) end); task.wait(15) end; AFK.t=nil end)
+    if AFK.timerTh then pcall(function() task.cancel(AFK.timerTh) end) end
+    AFK.timerTh=task.spawn(function()
+        while AFK.on do task.wait(1); AFK.secs=AFK.secs+1
+            if AFK.labelRef then AFK.labelRef.Text="⏰ Anti AFK  —  "..FmtTime(AFK.secs) end
+        end
+    end)
+end
+local function StopAFK()
+    AFK.on=false; AFK.secs=0
+    if AFK.t then pcall(function() task.cancel(AFK.t) end); AFK.t=nil end
+    if AFK.timerTh then pcall(function() task.cancel(AFK.timerTh) end); AFK.timerTh=nil end
+    if AFK.labelRef then AFK.labelRef.Text="⏰ Anti AFK" end
+end
+
+-- =====================================================
+-- DESTROY OLD GUI
+-- =====================================================
+pcall(function()
+    local old=LP.PlayerGui:FindFirstChild("ASH_Hub"); if old then old:Destroy() end
+end)
+task.wait(0.1)
+
+-- =====================================================
+-- SCREEN GUI + COLORS
+-- =====================================================
+local SG=Instance.new("ScreenGui"); SG.Name="ASH_Hub"; SG.ResetOnSpawn=false
+SG.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; SG.DisplayOrder=9999; SG.Parent=LP.PlayerGui
+
+-- Colors dikemas dalam tabel C — hemat 18 local slots
+local C={
+    BG   =Color3.fromRGB(18,12,35),
+    SIDE =Color3.fromRGB(22,14,42),
+    ROW  =Color3.fromRGB(26,16,48),
+    ACC  =Color3.fromRGB(110,40,220),
+    ACC2 =Color3.fromRGB(150,75,255),
+    BORD =Color3.fromRGB(48,20,88),
+    TXT  =Color3.fromRGB(220,200,255),
+    DIM  =Color3.fromRGB(130,100,175),
+    DK   =Color3.fromRGB(65,48,105),
+    YEL  =Color3.fromRGB(255,210,55),
+    GRN  =Color3.fromRGB(55,230,100),
+    RED  =Color3.fromRGB(220,48,68),
+    BLU  =Color3.fromRGB(55,155,255),
+    NSEL =Color3.fromRGB(72,26,158),
+    BOFF =Color3.fromRGB(22,14,42),
+    TBAR =Color3.fromRGB(20,10,44),
+    AG   =Color3.fromRGB(255,140,20),    -- AUTO RANDOM ATTACK accent
+    AGNSL=Color3.fromRGB(140,70,10),     -- AUTO RANDOM ATTACK selected
+}
+
+-- =====================================================
+-- BUBBLE
+-- =====================================================
+local Bubble=Instance.new("TextButton",SG)
+Bubble.Size=UDim2.new(0,58,0,58); Bubble.Position=UDim2.new(0.5,-29,0,50)
+Bubble.BackgroundColor3=C.ACC; Bubble.BorderSizePixel=0; Bubble.Text=""; Bubble.AutoButtonColor=false; Bubble.Visible=false
+Instance.new("UICorner",Bubble).CornerRadius=UDim.new(1,0)
+do
+    local g=Instance.new("UIGradient",Bubble); g.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(155,65,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(65,15,170))}); g.Rotation=135
+    local s=Instance.new("UIStroke",Bubble); s.Color=Color3.fromRGB(210,150,255); s.Thickness=2; s.Transparency=0.15
+    local l1=Instance.new("TextLabel",Bubble); l1.Size=UDim2.new(1,0,0.55,0); l1.Position=UDim2.new(0,0,0.07,0); l1.BackgroundTransparency=1; l1.Text="FLa"; l1.TextSize=15; l1.Font=Enum.Font.GothamBold; l1.TextColor3=Color3.fromRGB(255,255,255); l1.TextXAlignment=Enum.TextXAlignment.Center
+    local l2=Instance.new("TextLabel",Bubble); l2.Size=UDim2.new(1,0,0.3,0); l2.Position=UDim2.new(0,0,0.64,0); l2.BackgroundTransparency=1; l2.Text="ASH"; l2.TextSize=7; l2.Font=Enum.Font.Gotham; l2.TextColor3=C.ACC2; l2.TextXAlignment=Enum.TextXAlignment.Center
+end
+
+do -- Bubble drag
+    local bd=false; local bsm=Vector2.new(); local bsp=Vector2.new()
+    Bubble.InputBegan:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+            bd=true; bsm=Vector2.new(i.Position.X,i.Position.Y); bsp=Vector2.new(Bubble.AbsolutePosition.X,Bubble.AbsolutePosition.Y)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if bd and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
+            local inset=GuiService:GetGuiInset(); local vp=workspace.CurrentCamera.ViewportSize
+            Bubble.Position=UDim2.new(0,math.clamp(bsp.X+(i.Position.X-bsm.X),0,vp.X-58),0,math.clamp(bsp.Y+(i.Position.Y-bsm.Y)-inset.Y,0,vp.Y-58))
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then bd=false end
+    end)
+end
+
+local function FloatBubble()
+    task.spawn(function()
+        local t=0
+        while Bubble.Visible do
+            t=t+task.wait(0.03); local p=Bubble.Position
+            Bubble.Position=UDim2.new(p.X.Scale,p.X.Offset,p.Y.Scale,p.Y.Offset+math.sin(t*2)*4-math.sin((t-0.03)*2)*4)
+        end
+    end)
+end
 
 -- =====================================================
 -- MAIN WINDOW
 -- =====================================================
-local Win = Instance.new("Frame", ScreenGui)
-Win.Name             = "Win"
-Win.Size             = UDim2.new(0.62, 0, 0.58, 0)
-Win.Position         = UDim2.new(0.19, 0, 0.21, 0)
-Win.BackgroundColor3 = Color3.fromRGB(7, 5, 18)
-Win.BorderSizePixel  = 0
-Win.ClipsDescendants = true
-Instance.new("UICorner", Win).CornerRadius = UDim.new(0, 14)
-
-local winStroke = Instance.new("UIStroke", Win)
-winStroke.Color        = Color3.fromRGB(100, 38, 220)
-winStroke.Thickness    = 1.5
-winStroke.Transparency = 0.18
-
-local winGrad = Instance.new("UIGradient", Win)
-winGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0,   Color3.fromRGB(13,  8, 32)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB( 7,  5, 18)),
-    ColorSequenceKeypoint.new(1,   Color3.fromRGB(11,  8, 26)),
-})
-winGrad.Rotation = 145
+local Win=Instance.new("Frame",SG); Win.Name="Win"
+Win.Size=UDim2.new(0.68,0,0.76,0); Win.Position=UDim2.new(0.16,0,0.05,0)
+Win.BackgroundColor3=C.BG; Win.BorderSizePixel=0; Win.ClipsDescendants=false
+Instance.new("UICorner",Win).CornerRadius=UDim.new(0,12)
+do local s=Instance.new("UIStroke",Win); s.Color=C.ACC; s.Thickness=1.5; s.Transparency=0.3 end
 
 -- =====================================================
 -- TITLE BAR
 -- =====================================================
-local TBar = Instance.new("Frame", Win)
-TBar.Size             = UDim2.new(1, 0, 0, 40)
-TBar.BackgroundColor3 = Color3.fromRGB(16, 7, 38)
-TBar.BorderSizePixel  = 0
-Instance.new("UICorner", TBar).CornerRadius = UDim.new(0, 14)
-
-local tFix = Instance.new("Frame", TBar)
-tFix.Size             = UDim2.new(1, 0, 0, 14)
-tFix.Position         = UDim2.new(0, 0, 1, -14)
-tFix.BackgroundColor3 = Color3.fromRGB(16, 7, 38)
-tFix.BorderSizePixel  = 0
-
-local tGrad = Instance.new("UIGradient", TBar)
-tGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0,   Color3.fromRGB(95, 32, 215)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(52, 14, 135)),
-    ColorSequenceKeypoint.new(1,   Color3.fromRGB(16,  7,  38)),
-})
-tGrad.Rotation = 90
-
-local tIcon = Instance.new("TextLabel", TBar)
-tIcon.Size               = UDim2.new(0, 22, 0, 22)
-tIcon.Position           = UDim2.new(0, 10, 0.5, -11)
-tIcon.BackgroundTransparency = 1
-tIcon.Text               = "⚔"
-tIcon.TextSize           = 14
-tIcon.Font               = Enum.Font.GothamBold
-tIcon.TextColor3         = Color3.fromRGB(255, 210, 55)
-
-local tTitle = Instance.new("TextLabel", TBar)
-tTitle.Size              = UDim2.new(0.5, 0, 0, 14)
-tTitle.Position          = UDim2.new(0, 36, 0, 6)
-tTitle.BackgroundTransparency = 1
-tTitle.Text              = "ARISE SHADOW HUNT"
-tTitle.TextSize          = 10
-tTitle.Font              = Enum.Font.GothamBold
-tTitle.TextColor3        = Color3.fromRGB(255, 255, 255)
-tTitle.TextXAlignment    = Enum.TextXAlignment.Left
-
-local tSub = Instance.new("TextLabel", TBar)
-tSub.Size                = UDim2.new(0.5, 0, 0, 10)
-tSub.Position            = UDim2.new(0, 36, 0, 22)
-tSub.BackgroundTransparency = 1
-tSub.Text                = "AUTOMATION HUB  •  v11.0"
-tSub.TextSize            = 7
-tSub.Font                = Enum.Font.Gotham
-tSub.TextColor3          = Color3.fromRGB(145, 85, 255)
-tSub.TextXAlignment      = Enum.TextXAlignment.Left
-
-local function WinBtn(xOff, col, txt)
-    local b = Instance.new("TextButton", TBar)
-    b.Size             = UDim2.new(0, 20, 0, 20)
-    b.Position         = UDim2.new(1, xOff, 0.5, -10)
-    b.BackgroundColor3 = col
-    b.BorderSizePixel  = 0
-    b.Text             = txt
-    b.TextSize         = 9
-    b.Font             = Enum.Font.GothamBold
-    b.TextColor3       = Color3.fromRGB(255, 255, 255)
-    b.AutoButtonColor  = false
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
-    return b
+local TBARH=36
+local TBar=Instance.new("Frame",Win); TBar.Name="TBar"
+TBar.Size=UDim2.new(1,0,0,TBARH); TBar.Position=UDim2.new(0,0,0,0)
+TBar.BackgroundColor3=C.TBAR; TBar.BorderSizePixel=0
+Instance.new("UICorner",TBar).CornerRadius=UDim.new(0,12)
+do
+    local fix=Instance.new("Frame",TBar); fix.Size=UDim2.new(1,0,0,14); fix.Position=UDim2.new(0,0,1,-14); fix.BackgroundColor3=C.TBAR; fix.BorderSizePixel=0
+    local g=Instance.new("UIGradient",TBar); g.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(100,35,225)),ColorSequenceKeypoint.new(0.6,C.TBAR),ColorSequenceKeypoint.new(1,C.TBAR)}); g.Rotation=90
+    local ico=Instance.new("TextLabel",TBar); ico.Size=UDim2.new(0,22,0,22); ico.Position=UDim2.new(0,8,0.5,-11); ico.BackgroundTransparency=1; ico.Text="⚔"; ico.TextSize=14; ico.Font=Enum.Font.GothamBold; ico.TextColor3=C.YEL
+    local tit=Instance.new("TextLabel",TBar); tit.Size=UDim2.new(0.6,0,0,14); tit.Position=UDim2.new(0,34,0,3); tit.BackgroundTransparency=1; tit.Text="Script Auto Farming by FLa Project"; tit.TextSize=9; tit.Font=Enum.Font.GothamBold; tit.TextColor3=C.TXT; tit.TextXAlignment=Enum.TextXAlignment.Left
+    local sub=Instance.new("TextLabel",TBar); sub.Size=UDim2.new(0.6,0,0,9); sub.Position=UDim2.new(0,34,0,19); sub.BackgroundTransparency=1; sub.Text="AUTOMATION HUB  v12.1"; sub.TextSize=6; sub.Font=Enum.Font.Gotham; sub.TextColor3=C.ACC2; sub.TextXAlignment=Enum.TextXAlignment.Left
 end
-local CloseBtn = WinBtn(-26, Color3.fromRGB(170, 35, 58), "✕")
-local MinBtn   = WinBtn(-50, Color3.fromRGB(40, 22, 75),  "—")
-CloseBtn.MouseButton1Click:Connect(function()
-    StopMassAttack()
-    StopMapRotation()
-    ScreenGui:Destroy()
-end)
+
+local function MkWBtn(xOff,bg,txt)
+    local b=Instance.new("TextButton",TBar); b.Size=UDim2.new(0,18,0,18); b.Position=UDim2.new(1,xOff,0.5,-9)
+    b.BackgroundColor3=bg; b.BorderSizePixel=0; b.Text=txt; b.TextSize=8; b.Font=Enum.Font.GothamBold; b.TextColor3=C.TXT; b.AutoButtonColor=false
+    Instance.new("UICorner",b).CornerRadius=UDim.new(0,5); return b
+end
+local BtnClose=MkWBtn(-24,C.RED,"✕")
+local BtnMin  =MkWBtn(-46,C.BORD,"—")
+BtnClose.MouseButton1Click:Connect(function() StopLoop(MA); StopLoop(AG,ReturnHRPToOrigin); StopHideNotif(); StopAFK(); SG:Destroy() end)
 
 -- =====================================================
--- SIDEBAR
+-- MINIMIZE / RESTORE
 -- =====================================================
-local Sidebar = Instance.new("Frame", Win)
-Sidebar.Size             = UDim2.new(0.22, 0, 1, -40)
-Sidebar.Position         = UDim2.new(0, 0, 0, 40)
-Sidebar.BackgroundColor3 = Color3.fromRGB(10, 6, 24)
-Sidebar.BorderSizePixel  = 0
-Instance.new("UIStroke", Sidebar).Color = Color3.fromRGB(42, 16, 80)
+local function ShowBubble()
+    Win.Visible=false; local vp=workspace.CurrentCamera.ViewportSize
+    Bubble.Position=UDim2.new(0,vp.X/2-29,0,50); Bubble.Size=UDim2.new(0,0,0,0); Bubble.Visible=true
+    TweenService:Create(Bubble,TweenInfo.new(0.25,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Size=UDim2.new(0,58,0,58)}):Play()
+    FloatBubble()
+end
+local function ShowWin()
+    TweenService:Create(Bubble,TweenInfo.new(0.18,Enum.EasingStyle.Back,Enum.EasingDirection.In),{Size=UDim2.new(0,0,0,0)}):Play()
+    task.wait(0.19); Bubble.Visible=false; Bubble.Size=UDim2.new(0,58,0,58); Win.Visible=true
+end
+BtnMin.MouseButton1Click:Connect(ShowBubble)
+Bubble.MouseButton1Click:Connect(ShowWin)
 
-local divLine = Instance.new("Frame", Win)
-divLine.Size             = UDim2.new(0, 1, 1, -40)
-divLine.Position         = UDim2.new(0.22, 0, 0, 40)
-divLine.BackgroundColor3 = Color3.fromRGB(42, 16, 80)
-divLine.BorderSizePixel  = 0
+-- Window drag
+do
+    local wd=false; local wdm=Vector2.new(); local wdp=Vector2.new()
+    TBar.InputBegan:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+            wd=true; wdm=Vector2.new(i.Position.X,i.Position.Y); wdp=Vector2.new(Win.AbsolutePosition.X,Win.AbsolutePosition.Y)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if wd and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
+            local inset=GuiService:GetGuiInset(); local vp=workspace.CurrentCamera.ViewportSize
+            Win.Position=UDim2.new(0,math.clamp(wdp.X+(i.Position.X-wdm.X),0,vp.X-Win.AbsoluteSize.X),0,math.clamp(wdp.Y+(i.Position.Y-wdm.Y)-inset.Y,0,vp.Y-Win.AbsoluteSize.Y))
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then wd=false end
+    end)
+end
 
 -- =====================================================
--- CONTENT AREA
+-- LAYOUT: SIDEBAR + CONTENT AREA
 -- =====================================================
-local ContentArea = Instance.new("Frame", Win)
-ContentArea.Size             = UDim2.new(0.78, 0, 1, -40)
-ContentArea.Position         = UDim2.new(0.22, 0, 0, 40)
-ContentArea.BackgroundTransparency = 1
-ContentArea.ClipsDescendants = true
+local SBW=0.20
+local Body=Instance.new("Frame",Win); Body.Name="Body"
+Body.Size=UDim2.new(1,0,1,-TBARH); Body.Position=UDim2.new(0,0,0,TBARH)
+Body.BackgroundColor3=C.BG; Body.BorderSizePixel=0; Body.ClipsDescendants=true
+Instance.new("UICorner",Body).CornerRadius=UDim.new(0,12)
 
-local Panels = {}
+local Sidebar=Instance.new("Frame",Body); Sidebar.Size=UDim2.new(SBW,0,1,0); Sidebar.BackgroundColor3=C.SIDE; Sidebar.BorderSizePixel=0
+do local dl=Instance.new("Frame",Body); dl.Size=UDim2.new(0,1,1,0); dl.Position=UDim2.new(SBW,0,0,0); dl.BackgroundColor3=C.BORD; dl.BorderSizePixel=0 end
+
+local CA=Instance.new("Frame",Body); CA.Size=UDim2.new(1-SBW,-1,1,0); CA.Position=UDim2.new(SBW,1,0,0); CA.BackgroundTransparency=1; CA.ClipsDescendants=true
+
+-- =====================================================
+-- UI HELPER FUNCTIONS
+-- =====================================================
+local Panels={}
 local function NewPanel(tag)
-    local p = Instance.new("Frame", ContentArea)
-    p.Name             = tag
-    p.Size             = UDim2.new(1, 0, 1, 0)
-    p.BackgroundTransparency = 1
-    p.Visible          = false
-    Panels[tag]        = p
-    return p
+    local p=Instance.new("ScrollingFrame",CA); p.Name=tag; p.Size=UDim2.new(1,0,1,0); p.BackgroundTransparency=1; p.BorderSizePixel=0
+    p.ScrollBarThickness=3; p.ScrollBarImageColor3=C.ACC; p.CanvasSize=UDim2.new(0,0,0,0); p.AutomaticCanvasSize=Enum.AutomaticSize.Y; p.Visible=false
+    local pad=Instance.new("UIPadding",p); pad.PaddingTop=UDim.new(0,8); pad.PaddingBottom=UDim.new(0,14); pad.PaddingLeft=UDim.new(0,10); pad.PaddingRight=UDim.new(0,10)
+    Panels[tag]=p; return p
 end
 
--- ── UI HELPERS ─────────────────────────────────────
-local function MakeLabel(parent, yOff, txt, size, col)
-    local l = Instance.new("TextLabel", parent)
-    l.Size              = UDim2.new(1, -16, 0, 16)
-    l.Position          = UDim2.new(0, 8, 0, yOff)
-    l.BackgroundTransparency = 1
-    l.Text              = txt
-    l.TextSize          = size or 9
-    l.Font              = Enum.Font.GothamBold
-    l.TextColor3        = col or Color3.fromRGB(160, 110, 255)
-    l.TextXAlignment    = Enum.TextXAlignment.Left
-    l.TextWrapped       = true
-    return l
+local function L(par,txt,x,y,w,h,sz,col,align)
+    local l=Instance.new("TextLabel",par); l.Size=UDim2.new(w or 1,0,0,h or 14); l.Position=UDim2.new(x or 0,0,0,y or 0)
+    l.BackgroundTransparency=1; l.Text=txt; l.TextSize=sz or 8; l.Font=Enum.Font.GothamBold
+    l.TextColor3=col or C.DIM; l.TextXAlignment=align or Enum.TextXAlignment.Left; l.TextWrapped=true; return l
 end
 
-local function MakeSep(parent, yOff)
-    local s = Instance.new("Frame", parent)
-    s.Size             = UDim2.new(1, -16, 0, 1)
-    s.Position         = UDim2.new(0, 8, 0, yOff)
-    s.BackgroundColor3 = Color3.fromRGB(42, 16, 80)
-    s.BorderSizePixel  = 0
+local function SH(par,yOff,ico,txt,acol)
+    local f=Instance.new("Frame",par); f.Size=UDim2.new(1,0,0,20); f.Position=UDim2.new(0,0,0,yOff); f.BackgroundTransparency=1
+    L(f,ico,0,1,0,18,12,acol or C.YEL); local lb=L(f,txt,0,3,1,14,9,acol or C.ACC2); lb.Position=UDim2.new(0,22,0,3)
 end
 
-local function MakeBigBtn(parent, yOff, emoji, mainTxt, subTxt)
-    local btn = Instance.new("TextButton", parent)
-    btn.Size             = UDim2.new(1, -16, 0, 46)
-    btn.Position         = UDim2.new(0, 8, 0, yOff)
-    btn.BackgroundColor3 = Color3.fromRGB(85, 28, 185)
-    btn.BorderSizePixel  = 0
-    btn.Text             = ""
-    btn.AutoButtonColor  = false
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
-
-    local bg = Instance.new("UIGradient", btn)
-    bg.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(130, 48, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(68, 14, 165)),
-    })
-    bg.Rotation = 135
-
-    local bs = Instance.new("UIStroke", btn)
-    bs.Color        = Color3.fromRGB(165, 85, 255)
-    bs.Thickness    = 1.2
-    bs.Transparency = 0.32
-
-    local em = Instance.new("TextLabel", btn)
-    em.Size               = UDim2.new(0, 30, 1, 0)
-    em.Position           = UDim2.new(0, 8, 0, 0)
-    em.BackgroundTransparency = 1
-    em.Text               = emoji
-    em.TextSize           = 20
-    em.Font               = Enum.Font.GothamBold
-    em.TextColor3         = Color3.fromRGB(255, 215, 55)
-
-    local ml = Instance.new("TextLabel", btn)
-    ml.Size              = UDim2.new(1, -50, 0, 16)
-    ml.Position          = UDim2.new(0, 42, 0.5, -18)
-    ml.BackgroundTransparency = 1
-    ml.Text              = mainTxt
-    ml.TextSize          = 11
-    ml.Font              = Enum.Font.GothamBold
-    ml.TextColor3        = Color3.fromRGB(255, 255, 255)
-    ml.TextXAlignment    = Enum.TextXAlignment.Left
-
-    local sl = Instance.new("TextLabel", btn)
-    sl.Size              = UDim2.new(1, -50, 0, 11)
-    sl.Position          = UDim2.new(0, 42, 0.5, 2)
-    sl.BackgroundTransparency = 1
-    sl.Text              = subTxt
-    sl.TextSize          = 7
-    sl.Font              = Enum.Font.Gotham
-    sl.TextColor3        = Color3.fromRGB(195, 148, 255)
-    sl.TextXAlignment    = Enum.TextXAlignment.Left
-
-    return btn, bg, ml, sl, em
+local function Sep(par,yOff)
+    local s=Instance.new("Frame",par); s.Size=UDim2.new(1,0,0,1); s.Position=UDim2.new(0,0,0,yOff); s.BackgroundColor3=C.BORD; s.BorderSizePixel=0
 end
 
-local function MakeComingSoon(parent, featureName)
-    local f = Instance.new("Frame", parent)
-    f.Size             = UDim2.new(1, -16, 0, 120)
-    f.Position         = UDim2.new(0, 8, 0, 50)
-    f.BackgroundColor3 = Color3.fromRGB(11, 7, 26)
-    f.BorderSizePixel  = 0
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 10)
-    local fs = Instance.new("UIStroke", f)
-    fs.Color = Color3.fromRGB(42, 16, 80); fs.Thickness = 1
-
-    local ic = Instance.new("TextLabel", f)
-    ic.Size               = UDim2.new(1, 0, 0, 40)
-    ic.Position           = UDim2.new(0, 0, 0, 12)
-    ic.BackgroundTransparency = 1
-    ic.Text               = "🔒"
-    ic.TextSize           = 26
-    ic.Font               = Enum.Font.GothamBold
-    ic.TextColor3         = Color3.fromRGB(80, 55, 130)
-    ic.TextXAlignment     = Enum.TextXAlignment.Center
-
-    local tl = Instance.new("TextLabel", f)
-    tl.Size               = UDim2.new(1, -16, 0, 16)
-    tl.Position           = UDim2.new(0, 8, 0, 58)
-    tl.BackgroundTransparency = 1
-    tl.Text               = "COMING SOON"
-    tl.TextSize           = 10
-    tl.Font               = Enum.Font.GothamBold
-    tl.TextColor3         = Color3.fromRGB(140, 90, 230)
-    tl.TextXAlignment     = Enum.TextXAlignment.Center
-
-    local sl2 = Instance.new("TextLabel", f)
-    sl2.Size               = UDim2.new(1, -16, 0, 28)
-    sl2.Position           = UDim2.new(0, 8, 0, 80)
-    sl2.BackgroundTransparency = 1
-    sl2.Text               = featureName .. " akan aktif setelah\ndata Simple Spy dikumpulkan"
-    sl2.TextSize           = 7
-    sl2.Font               = Enum.Font.Gotham
-    sl2.TextColor3         = Color3.fromRGB(90, 66, 130)
-    sl2.TextXAlignment     = Enum.TextXAlignment.Center
-    sl2.TextWrapped        = true
+local function RC(par,yOff,h,bg)
+    local f=Instance.new("Frame",par); f.Size=UDim2.new(1,0,0,h or 30); f.Position=UDim2.new(0,0,0,yOff)
+    f.BackgroundColor3=bg or C.ROW; f.BorderSizePixel=0; Instance.new("UICorner",f).CornerRadius=UDim.new(0,7); return f
 end
 
--- toggle pill helper
-local function MakeTogglePill(parent, x, y)
-    local pill = Instance.new("TextButton", parent)
-    pill.Size             = UDim2.new(0, 34, 0, 16)
-    pill.Position         = UDim2.new(0, x, 0, y)
-    pill.BackgroundColor3 = Color3.fromRGB(28, 14, 50)
-    pill.BorderSizePixel  = 0
-    pill.Text             = ""
-    pill.AutoButtonColor  = false
-    Instance.new("UICorner", pill).CornerRadius = UDim.new(1, 0)
-
-    local knob = Instance.new("Frame", pill)
-    knob.Size             = UDim2.new(0, 11, 0, 11)
-    knob.Position         = UDim2.new(0, 2, 0.5, -5)
-    knob.BackgroundColor3 = Color3.fromRGB(80, 55, 110)
-    knob.BorderSizePixel  = 0
-    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
-    return pill, knob
+local function TP(par)
+    local p=Instance.new("TextButton",par); p.Size=UDim2.new(0,34,0,16); p.Position=UDim2.new(1,-38,0.5,-8)
+    p.BackgroundColor3=C.BOFF; p.BorderSizePixel=0; p.Text=""; p.AutoButtonColor=false; Instance.new("UICorner",p).CornerRadius=UDim.new(1,0)
+    local k=Instance.new("Frame",p); k.Size=UDim2.new(0,12,0,12); k.Position=UDim2.new(0,2,0.5,-6); k.BackgroundColor3=C.DK; k.BorderSizePixel=0; Instance.new("UICorner",k).CornerRadius=UDim.new(1,0)
+    return p,k
+end
+local function SetPill(p,k,on)
+    TweenService:Create(p,TweenInfo.new(0.14),{BackgroundColor3=on and C.NSEL or C.BOFF}):Play()
+    TweenService:Create(k,TweenInfo.new(0.14),{Position=on and UDim2.new(1,-14,0.5,-6) or UDim2.new(0,2,0.5,-6),BackgroundColor3=on and C.YEL or C.DK}):Play()
 end
 
-local function SetPill(pill, knob, on)
-    TweenService:Create(pill, TweenInfo.new(0.18), {
-        BackgroundColor3 = on and Color3.fromRGB(72,28,158) or Color3.fromRGB(28,14,50)
-    }):Play()
-    TweenService:Create(knob, TweenInfo.new(0.18), {
-        Position         = on and UDim2.new(1,-13,0.5,-5) or UDim2.new(0,2,0.5,-5),
-        BackgroundColor3 = on and Color3.fromRGB(255,200,55) or Color3.fromRGB(80,55,110),
-    }):Play()
+local function TBar2(par,yOff,opts,lbls,defI,bw,selBg,selFg,onSel)
+    local row=Instance.new("Frame",par); row.Size=UDim2.new(1,0,0,22); row.Position=UDim2.new(0,0,0,yOff); row.BackgroundTransparency=1
+    local ll=Instance.new("UIListLayout",row); ll.FillDirection=Enum.FillDirection.Horizontal; ll.Padding=UDim.new(0,4)
+    local refs={}
+    for i,val in ipairs(opts) do
+        local b=Instance.new("TextButton",row); b.Size=UDim2.new(0,bw or 26,1,0)
+        b.BackgroundColor3=i==defI and(selBg or Color3.fromRGB(140,42,14)) or C.BOFF
+        b.BorderSizePixel=0; b.Text=lbls[i]; b.TextSize=7.5; b.Font=Enum.Font.GothamBold
+        b.TextColor3=i==defI and(selFg or C.YEL) or C.DIM; b.AutoButtonColor=false
+        Instance.new("UICorner",b).CornerRadius=UDim.new(0,6); refs[i]=b
+        b.MouseButton1Click:Connect(function()
+            onSel(i,val)
+            for j,r in ipairs(refs) do r.BackgroundColor3=j==i and(selBg or Color3.fromRGB(140,42,14)) or C.BOFF; r.TextColor3=j==i and(selFg or C.YEL) or C.DIM end
+        end)
+    end
+end
+
+local function BigBtn(par,yOff,ico,txt,gbg)
+    local b=Instance.new("TextButton",par); b.Size=UDim2.new(1,0,0,40); b.Position=UDim2.new(0,0,0,yOff)
+    b.BackgroundColor3=C.ACC; b.BorderSizePixel=0; b.Text=""; b.AutoButtonColor=false; Instance.new("UICorner",b).CornerRadius=UDim.new(0,9)
+    local g=Instance.new("UIGradient",b); g.Color=gbg or ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(130,48,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(60,12,155))}); g.Rotation=135
+    local s=Instance.new("UIStroke",b); s.Color=C.ACC2; s.Thickness=1; s.Transparency=0.35
+    local ei=Instance.new("TextLabel",b); ei.Size=UDim2.new(0,30,1,0); ei.Position=UDim2.new(0,8,0,0); ei.BackgroundTransparency=1; ei.Text=ico; ei.TextSize=20; ei.Font=Enum.Font.GothamBold; ei.TextColor3=C.YEL
+    local lb=Instance.new("TextLabel",b); lb.Size=UDim2.new(1,-42,1,0); lb.Position=UDim2.new(0,40,0,0); lb.BackgroundTransparency=1; lb.Text=txt; lb.TextSize=11; lb.Font=Enum.Font.GothamBold; lb.TextColor3=C.TXT; lb.TextXAlignment=Enum.TextXAlignment.Left
+    return b,g,lb,ei
+end
+
+local function BuildMapSelector(par,yStart,selectedTbl,ac)
+    ac=ac or C.ACC2
+    local mpCtrl=Instance.new("Frame",par); mpCtrl.Size=UDim2.new(1,0,0,22); mpCtrl.Position=UDim2.new(0,0,0,yStart); mpCtrl.BackgroundTransparency=1
+    local ll=Instance.new("UIListLayout",mpCtrl); ll.FillDirection=Enum.FillDirection.Horizontal; ll.Padding=UDim.new(0,5)
+    local function SmBtn(txt,bg) local b=Instance.new("TextButton",mpCtrl); b.Size=UDim2.new(0,48,1,0); b.BackgroundColor3=bg or C.BOFF; b.BorderSizePixel=0; b.Text=txt; b.TextSize=7.5; b.Font=Enum.Font.GothamBold; b.TextColor3=C.TXT; b.AutoButtonColor=false; Instance.new("UICorner",b).CornerRadius=UDim.new(0,6); return b end
+    local mpAllB=SmBtn("✔ All",Color3.fromRGB(28,58,140))
+    local mpClrB=SmBtn("✖ Clear",Color3.fromRGB(72,14,14))
+    local mpCntL=L(par,"0 dipilih",0,yStart,1,22,6.5,C.DK,Enum.TextXAlignment.Right)
+    local mapBox=Instance.new("ScrollingFrame",par); mapBox.Size=UDim2.new(1,0,0,160); mapBox.Position=UDim2.new(0,0,0,yStart+26)
+    mapBox.BackgroundColor3=Color3.fromRGB(13,7,26); mapBox.BorderSizePixel=0; mapBox.ScrollBarThickness=3; mapBox.ScrollBarImageColor3=ac
+    mapBox.CanvasSize=UDim2.new(0,0,0,0); mapBox.AutomaticCanvasSize=Enum.AutomaticSize.Y
+    Instance.new("UICorner",mapBox).CornerRadius=UDim.new(0,9); Instance.new("UIStroke",mapBox).Color=C.BORD
+    local mbPad=Instance.new("UIPadding",mapBox); mbPad.PaddingTop=UDim.new(0,5); mbPad.PaddingBottom=UDim.new(0,5); mbPad.PaddingLeft=UDim.new(0,5); mbPad.PaddingRight=UDim.new(0,5)
+    local mbList=Instance.new("UIListLayout",mapBox); mbList.Padding=UDim.new(0,4); mbList.SortOrder=Enum.SortOrder.LayoutOrder
+    local mpRef={}
+    local mpIco={"🗡","⚔","🏹","🔱","💀","🌑","🔥","⚡","🌀","❄","🌊","🪄","👁","🐉","⭐","💫","🌙","☄"}
+    local function UpdMpCount() local n=0; for i=1,#MAPS do if selectedTbl[i] then n=n+1 end end; mpCntL.Text=n.." dipilih" end
+    local function SetMS(i,on)
+        selectedTbl[i]=on or nil; local r=mpRef[i]; if not r then return end
+        TweenService:Create(r.bg,TweenInfo.new(0.12),{BackgroundColor3=on and Color3.fromRGB(64,18,148) or Color3.fromRGB(18,10,36)}):Play()
+        r.stroke.Color=on and ac or C.BORD; r.chk.Text=on and "✓" or ""; r.lbl.TextColor3=on and C.TXT or C.DIM; UpdMpCount()
+    end
+    for i,m in ipairs(MAPS) do
+        local row=Instance.new("Frame",mapBox); row.LayoutOrder=i; row.Size=UDim2.new(1,0,0,26); row.BackgroundColor3=Color3.fromRGB(18,10,36); row.BorderSizePixel=0; Instance.new("UICorner",row).CornerRadius=UDim.new(0,7)
+        local rs=Instance.new("UIStroke",row); rs.Color=C.BORD; rs.Thickness=1
+        local btn=Instance.new("TextButton",row); btn.Size=UDim2.new(1,0,1,0); btn.BackgroundTransparency=1; btn.Text=""; btn.AutoButtonColor=false
+        L(row,mpIco[i] or"🗺",0,0,0,26,10,C.YEL).Size=UDim2.new(0,18,1,0)
+        local lbl=L(row,m.name,0,0,1,26,8,C.DIM); lbl.Size=UDim2.new(1,-32,1,0); lbl.Position=UDim2.new(0,20,0,0)
+        local chk=L(row,"",0,0,0,26,9,C.GRN,Enum.TextXAlignment.Right); chk.Size=UDim2.new(0,16,1,0); chk.Position=UDim2.new(1,-18,0,0)
+        mpRef[i]={bg=row,stroke=rs,chk=chk,lbl=lbl}
+        btn.MouseButton1Click:Connect(function() SetMS(i,not selectedTbl[i]) end)
+    end
+    mpAllB.MouseButton1Click:Connect(function() for i=1,#MAPS do SetMS(i,true) end end)
+    mpClrB.MouseButton1Click:Connect(function() for i=1,#MAPS do SetMS(i,false) end end)
+    return yStart+26+160
 end
 
 -- =====================================================
 -- PANEL: MASS ATTACK
+-- Dibungkus do...end agar local di dalamnya tidak
+-- menambah jumlah local di scope utama
 -- =====================================================
-local PanelMass = NewPanel("mass")
+local mBtn_ref   -- referensi tombol utama (untuk diakses di luar do block)
+do
+    local PM=NewPanel("mass")
+    local sBF=RC(PM,0,26)
+    local sDot=Instance.new("Frame",sBF); sDot.Size=UDim2.new(0,7,0,7); sDot.Position=UDim2.new(0,8,0.5,-3.5); sDot.BackgroundColor3=C.DK; sDot.BorderSizePixel=0; Instance.new("UICorner",sDot).CornerRadius=UDim.new(1,0)
+    local sTxt=L(sBF,"STANDBY",0,0,0.58,26,7,C.DIM); sTxt.Position=UDim2.new(0,20,0,0); sTxt.TextTruncate=Enum.TextTruncate.AtEnd
+    local kLbl=L(sBF,"0 kill  0 item",0.56,0,0.44,26,6.5,C.ACC2,Enum.TextXAlignment.Right)
+    local eLbl=L(PM,"🔍 Scanning...",0,30,1,12,6.5,C.DIM)
+    Sep(PM,46)
 
-local MassLeft = Instance.new("ScrollingFrame", PanelMass)
-MassLeft.Size                = UDim2.new(0.42, -2, 1, 0)
-MassLeft.Position            = UDim2.new(0, 0, 0, 0)
-MassLeft.BackgroundTransparency = 1
-MassLeft.BorderSizePixel     = 0
-MassLeft.ScrollBarThickness  = 2
-MassLeft.ScrollBarImageColor3= Color3.fromRGB(90, 38, 185)
-MassLeft.ScrollingDirection  = Enum.ScrollingDirection.Y
-MassLeft.CanvasSize          = UDim2.new(0, 0, 0, 0)
-MassLeft.AutomaticCanvasSize = Enum.AutomaticSize.Y
-MassLeft.ElasticBehavior     = Enum.ElasticBehavior.Always
--- Padding bawah agar konten tidak terpotong
-local mlPad = Instance.new("UIPadding", MassLeft)
-mlPad.PaddingBottom = UDim.new(0, 14)
+    SH(PM,50,"🎯","Target Kill per Map")
+    TBar2(PM,72,{0,5,6,7,8,9,10},{"All","5","6","7","8","9","10"},4,27,Color3.fromRGB(140,42,14),C.YEL,function(_,v) MA.killTarget=v end)
+    SH(PM,98,"⏱","Delay Pindah Map")
+    TBar2(PM,120,{1,2,3,5,7,10},{"1s","2s","3s","5s","7s","10s"},3,32,Color3.fromRGB(20,65,160),C.TXT,function(_,v) MR.nextMapDelay=v end)
+    Sep(PM,146)
 
-local MassDivider = Instance.new("Frame", PanelMass)
-MassDivider.Size             = UDim2.new(0, 1, 1, -10)
-MassDivider.Position         = UDim2.new(0.42, 0, 0, 5)
-MassDivider.BackgroundColor3 = Color3.fromRGB(42, 16, 80)
-MassDivider.BorderSizePixel  = 0
-
-local MassRight = Instance.new("Frame", PanelMass)
-MassRight.Size             = UDim2.new(0.58, -4, 1, 0)
-MassRight.Position         = UDim2.new(0.42, 4, 0, 0)
-MassRight.BackgroundTransparency = 1
-
-MakeLabel(MassLeft, 8, "⚔   MASS ATTACK", 9, Color3.fromRGB(160, 110, 255))
-MakeLabel(MassLeft, 22, "Kill semua musuh — karakter diam",
-    7, Color3.fromRGB(100, 78, 145))
-MakeSep(MassLeft, 40)
-
-local MassStatBar = Instance.new("Frame", MassLeft)
-MassStatBar.Size             = UDim2.new(1, -10, 0, 26)
-MassStatBar.Position         = UDim2.new(0, 5, 0, 46)
-MassStatBar.BackgroundColor3 = Color3.fromRGB(11, 6, 26)
-MassStatBar.BorderSizePixel  = 0
-Instance.new("UICorner", MassStatBar).CornerRadius = UDim.new(0, 7)
-local msbs = Instance.new("UIStroke", MassStatBar)
-msbs.Color = Color3.fromRGB(42, 16, 80); msbs.Thickness = 1
-
-local MassStatDot = Instance.new("Frame", MassStatBar)
-MassStatDot.Size             = UDim2.new(0, 6, 0, 6)
-MassStatDot.Position         = UDim2.new(0, 6, 0.5, -3)
-MassStatDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-MassStatDot.BorderSizePixel  = 0
-Instance.new("UICorner", MassStatDot).CornerRadius = UDim.new(1, 0)
-
-local MassStatTxt = Instance.new("TextLabel", MassStatBar)
-MassStatTxt.Size              = UDim2.new(1, -16, 1, 0)
-MassStatTxt.Position          = UDim2.new(0, 16, 0, 0)
-MassStatTxt.BackgroundTransparency = 1
-MassStatTxt.Text              = "STANDBY"
-MassStatTxt.TextSize          = 7
-MassStatTxt.Font              = Enum.Font.Gotham
-MassStatTxt.TextColor3        = Color3.fromRGB(108, 96, 138)
-MassStatTxt.TextXAlignment    = Enum.TextXAlignment.Left
-MassStatTxt.TextTruncate      = Enum.TextTruncate.AtEnd
-
-local MassKillTxt = Instance.new("TextLabel", MassLeft)
-MassKillTxt.Size              = UDim2.new(1, -10, 0, 14)
-MassKillTxt.Position          = UDim2.new(0, 5, 0, 76)
-MassKillTxt.BackgroundTransparency = 1
-MassKillTxt.Text              = "0 kills  |  0 items"
-MassKillTxt.TextSize          = 7
-MassKillTxt.Font              = Enum.Font.GothamBold
-MassKillTxt.TextColor3        = Color3.fromRGB(120, 80, 200)
-MassKillTxt.TextXAlignment    = Enum.TextXAlignment.Left
-
-local EnemyCountTxt = Instance.new("TextLabel", MassLeft)
-EnemyCountTxt.Size              = UDim2.new(1, -10, 0, 12)
-EnemyCountTxt.Position          = UDim2.new(0, 5, 0, 92)
-EnemyCountTxt.BackgroundTransparency = 1
-EnemyCountTxt.Text              = "🔍 Scanning..."
-EnemyCountTxt.TextSize          = 7
-EnemyCountTxt.Font              = Enum.Font.Gotham
-EnemyCountTxt.TextColor3        = Color3.fromRGB(130, 100, 190)
-EnemyCountTxt.TextXAlignment    = Enum.TextXAlignment.Left
-
-MakeSep(MassLeft, 110)
-
-local function SmallLabel(parent, y, txt)
-    local l = Instance.new("TextLabel", parent)
-    l.Size              = UDim2.new(1, -10, 0, 12)
-    l.Position          = UDim2.new(0, 5, 0, y)
-    l.BackgroundTransparency = 1
-    l.Text              = txt
-    l.TextSize          = 7
-    l.Font              = Enum.Font.Gotham
-    l.TextColor3        = Color3.fromRGB(130, 100, 175)
-    l.TextXAlignment    = Enum.TextXAlignment.Left
-    return l
-end
-
-SmallLabel(MassLeft, 116, "🎯 Kill target per map (lalu pindah):")
-local killTargetOpts   = {0, 5, 6, 7, 8, 9, 10}
-local killTargetLabels = {"All","5","6","7","8","9","10"}
-local killTargetSelIdx = 4
-MassAttack.killTarget  = killTargetOpts[killTargetSelIdx]
-local killTargetRefs   = {}
-
-local killTargetRow = Instance.new("Frame", MassLeft)
-killTargetRow.Size             = UDim2.new(1, -10, 0, 18)
-killTargetRow.Position         = UDim2.new(0, 5, 0, 130)
-killTargetRow.BackgroundTransparency = 1
-local ktL = Instance.new("UIListLayout", killTargetRow)
-ktL.FillDirection = Enum.FillDirection.Horizontal; ktL.Padding = UDim.new(0, 2)
-
-for ki, val in ipairs(killTargetOpts) do
-    local isAll = (val == 0)
-    local kb = Instance.new("TextButton", killTargetRow)
-    kb.Size             = UDim2.new(0, isAll and 24 or 21, 1, 0)
-    kb.BackgroundColor3 = ki==killTargetSelIdx and Color3.fromRGB(160,50,20) or Color3.fromRGB(16,9,34)
-    kb.BorderSizePixel  = 0
-    kb.Text             = killTargetLabels[ki]
-    kb.TextSize         = isAll and 6 or 7
-    kb.Font             = Enum.Font.GothamBold
-    kb.TextColor3       = ki==killTargetSelIdx and Color3.fromRGB(255,220,100) or Color3.fromRGB(180,120,80)
-    kb.AutoButtonColor  = false
-    Instance.new("UICorner", kb).CornerRadius = UDim.new(0, 5)
-    killTargetRefs[ki] = kb
-    kb.MouseButton1Click:Connect(function()
-        killTargetSelIdx      = ki
-        MassAttack.killTarget = val
-        for j, ref in ipairs(killTargetRefs) do
-            TweenService:Create(ref, TweenInfo.new(0.14), {
-                BackgroundColor3 = j==ki and Color3.fromRGB(160,50,20) or Color3.fromRGB(16,9,34)
-            }):Play()
-            ref.TextColor3 = j==ki and Color3.fromRGB(255,220,100) or Color3.fromRGB(180,120,80)
-        end
-    end)
-end
-
-SmallLabel(MassLeft, 154, "⏱ Delay pindah map (detik):")
-local nextDelayOpts = {1,2,3,5,7,10}
-local nextDelayLabels = {"1s","2s","3s","5s","7s","10s"}
-local nextDelayIdx  = 3
-MapRotation.nextMapDelay = nextDelayOpts[nextDelayIdx]
-local nextDelayRefs = {}
-
-local nextDelayRow = Instance.new("Frame", MassLeft)
-nextDelayRow.Size             = UDim2.new(1, -10, 0, 18)
-nextDelayRow.Position         = UDim2.new(0, 5, 0, 168)
-nextDelayRow.BackgroundTransparency = 1
-local ndL = Instance.new("UIListLayout", nextDelayRow)
-ndL.FillDirection = Enum.FillDirection.Horizontal; ndL.Padding = UDim.new(0, 2)
-
-for di, sec in ipairs(nextDelayOpts) do
-    local db = Instance.new("TextButton", nextDelayRow)
-    db.Size             = UDim2.new(0, 24, 1, 0)
-    db.BackgroundColor3 = di==nextDelayIdx and Color3.fromRGB(30,80,170) or Color3.fromRGB(16,9,34)
-    db.BorderSizePixel  = 0
-    db.Text             = nextDelayLabels[di]
-    db.TextSize         = 6
-    db.Font             = Enum.Font.GothamBold
-    db.TextColor3       = di==nextDelayIdx and Color3.fromRGB(255,255,255) or Color3.fromRGB(80,140,220)
-    db.AutoButtonColor  = false
-    Instance.new("UICorner", db).CornerRadius = UDim.new(0, 5)
-    nextDelayRefs[di]   = db
-    db.MouseButton1Click:Connect(function()
-        nextDelayIdx             = di
-        MapRotation.nextMapDelay = sec
-        for j, ref in ipairs(nextDelayRefs) do
-            TweenService:Create(ref, TweenInfo.new(0.14), {
-                BackgroundColor3 = j==di and Color3.fromRGB(30,80,170) or Color3.fromRGB(16,9,34)
-            }):Play()
-            ref.TextColor3 = j==di and Color3.fromRGB(255,255,255) or Color3.fromRGB(80,140,220)
-        end
-    end)
-end
-
-local CollectRow = Instance.new("Frame", MassLeft)
-CollectRow.Size             = UDim2.new(1, -10, 0, 18)
-CollectRow.Position         = UDim2.new(0, 5, 0, 196)
-CollectRow.BackgroundTransparency = 1
-
-local CollectLbl = Instance.new("TextLabel", CollectRow)
-CollectLbl.Size              = UDim2.new(1, -38, 1, 0)
-CollectLbl.BackgroundTransparency = 1
-CollectLbl.Text              = "💎 Auto Collect"
-CollectLbl.TextSize          = 7
-CollectLbl.Font              = Enum.Font.Gotham
-CollectLbl.TextColor3        = Color3.fromRGB(140, 108, 195)
-CollectLbl.TextXAlignment    = Enum.TextXAlignment.Left
-
-local CollectPill = Instance.new("TextButton", CollectRow)
-CollectPill.Size             = UDim2.new(0, 34, 0, 16)
-CollectPill.Position         = UDim2.new(1, -36, 0.5, -8)
-CollectPill.BackgroundColor3 = Color3.fromRGB(72, 28, 158)
-CollectPill.BorderSizePixel  = 0
-CollectPill.Text             = ""
-CollectPill.AutoButtonColor  = false
-Instance.new("UICorner", CollectPill).CornerRadius = UDim.new(1, 0)
-
-local CollectKnob = Instance.new("Frame", CollectPill)
-CollectKnob.Size             = UDim2.new(0, 11, 0, 11)
-CollectKnob.Position         = UDim2.new(1, -13, 0.5, -5)
-CollectKnob.BackgroundColor3 = Color3.fromRGB(255, 200, 55)
-CollectKnob.BorderSizePixel  = 0
-Instance.new("UICorner", CollectKnob).CornerRadius = UDim.new(1, 0)
-
-CollectPill.MouseButton1Click:Connect(function()
-    MassAttack.autoCollect = not MassAttack.autoCollect
-    local on = MassAttack.autoCollect
-    TweenService:Create(CollectPill, TweenInfo.new(0.18), {
-        BackgroundColor3 = on and Color3.fromRGB(72,28,158) or Color3.fromRGB(28,14,50)
-    }):Play()
-    TweenService:Create(CollectKnob, TweenInfo.new(0.18), {
-        Position         = on and UDim2.new(1,-13,0.5,-5) or UDim2.new(0,2,0.5,-5),
-        BackgroundColor3 = on and Color3.fromRGB(255,200,55) or Color3.fromRGB(80,55,110),
-    }):Play()
-end)
-
--- ── AUTO SKILL TOGGLES (Z X C V F) ───────────────────
-SmallLabel(MassLeft, 222, "⚡ Auto Skill  (PC: Z X C V F | Mobile: tap)")
-MakeSep(MassLeft, 234)
-
-local skillDefs = {
-    { name="Z", color=Color3.fromRGB(255,80,80)   },
-    { name="X", color=Color3.fromRGB(255,160,40)  },
-    { name="C", color=Color3.fromRGB(80,220,120)  },
-    { name="V", color=Color3.fromRGB(80,180,255)  },
-    { name="F", color=Color3.fromRGB(200,80,255)  },
-}
-
--- Baris 1: Z X C  (3 tombol)
-local skillRow1 = Instance.new("Frame", MassLeft)
-skillRow1.Size             = UDim2.new(1, -10, 0, 28)
-skillRow1.Position         = UDim2.new(0, 5, 0, 238)
-skillRow1.BackgroundTransparency = 1
-local sr1L = Instance.new("UIListLayout", skillRow1)
-sr1L.FillDirection = Enum.FillDirection.Horizontal
-sr1L.Padding       = UDim.new(0, 4)
-
--- Baris 2: V F  (2 tombol)
-local skillRow2 = Instance.new("Frame", MassLeft)
-skillRow2.Size             = UDim2.new(1, -10, 0, 28)
-skillRow2.Position         = UDim2.new(0, 5, 0, 270)
-skillRow2.BackgroundTransparency = 1
-local sr2L = Instance.new("UIListLayout", skillRow2)
-sr2L.FillDirection = Enum.FillDirection.Horizontal
-sr2L.Padding       = UDim.new(0, 4)
-
-local skillRefs = {}
-
-for i, def in ipairs(skillDefs) do
-    local parent = (i <= 3) and skillRow1 or skillRow2
-
-    local card = Instance.new("Frame", parent)
-    card.Size             = UDim2.new(0, 46, 1, 0)
-    card.BackgroundColor3 = Color3.fromRGB(11, 6, 26)
-    card.BorderSizePixel  = 0
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 7)
-    local cStroke = Instance.new("UIStroke", card)
-    cStroke.Color = Color3.fromRGB(42, 16, 80); cStroke.Thickness = 1
-
-    -- Tombol klik (seluruh card)
-    local btn = Instance.new("TextButton", card)
-    btn.Size             = UDim2.new(1, 0, 1, 0)
-    btn.BackgroundTransparency = 1
-    btn.Text             = ""
-    btn.AutoButtonColor  = false
-
-    -- Label huruf besar
-    local keyLbl = Instance.new("TextLabel", card)
-    keyLbl.Size              = UDim2.new(1, 0, 0, 16)
-    keyLbl.Position          = UDim2.new(0, 0, 0, 2)
-    keyLbl.BackgroundTransparency = 1
-    keyLbl.Text              = def.name
-    keyLbl.TextSize          = 11
-    keyLbl.Font              = Enum.Font.GothamBold
-    keyLbl.TextColor3        = def.color
-    keyLbl.TextXAlignment    = Enum.TextXAlignment.Center
-
-    -- Status ON/OFF
-    local statLbl = Instance.new("TextLabel", card)
-    statLbl.Size              = UDim2.new(1, 0, 0, 9)
-    statLbl.Position          = UDim2.new(0, 0, 1, -10)
-    statLbl.BackgroundTransparency = 1
-    statLbl.Text              = "OFF"
-    statLbl.TextSize          = 6
-    statLbl.Font              = Enum.Font.GothamBold
-    statLbl.TextColor3        = Color3.fromRGB(80, 55, 110)
-    statLbl.TextXAlignment    = Enum.TextXAlignment.Center
-
-    skillRefs[def.name] = { card=card, stroke=cStroke, stat=statLbl, color=def.color }
-
-    btn.MouseButton1Click:Connect(function()
-        local sk = AutoSkill[def.name]
-        local ref = skillRefs[def.name]
-        if sk.on then
-            StopSkill(def.name)
-            TweenService:Create(card, TweenInfo.new(0.15), {
-                BackgroundColor3 = Color3.fromRGB(11, 6, 26)
-            }):Play()
-            ref.stroke.Color   = Color3.fromRGB(42, 16, 80)
-            ref.stat.Text      = "OFF"
-            ref.stat.TextColor3= Color3.fromRGB(80, 55, 110)
-        else
-            StartSkill(def.name)
-            TweenService:Create(card, TweenInfo.new(0.15), {
-                BackgroundColor3 = Color3.fromRGB(22, 10, 45)
-            }):Play()
-            ref.stroke.Color   = def.color
-            ref.stat.Text      = "ON"
-            ref.stat.TextColor3= def.color
-        end
-    end)
-end
-
-local MassBtn, massBtnGrad, MassBtnLbl, MassBtnSub, MassBtnEmoji =
-    MakeBigBtn(MassLeft, 308, "⚔", "START MASS ATTACK", "DIAM + AUTO KILL + COLLECT")
-MassBtn.Size = UDim2.new(1, -10, 0, 44)
-MassBtn.Position = UDim2.new(0, 5, 0, 308)
-
-local massRunning = false
-
-local function SetMassUI(on)
-    if on then
-        massBtnGrad.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(195,42,42)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(135,16,16)),
-        })
-        MassBtnEmoji.Text  = "🛑"
-        MassBtnLbl.Text    = "STOP"
-        MassBtnSub.Text    = "KLIK UNTUK BERHENTI"
-        MassStatDot.BackgroundColor3 = Color3.fromRGB(52, 248, 95)
-        MassStatTxt.TextColor3       = Color3.fromRGB(52, 248, 95)
-    else
-        massBtnGrad.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(130,48,255)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(68,14,165)),
-        })
-        MassBtnEmoji.Text  = "⚔"
-        MassBtnLbl.Text    = "START MASS ATTACK"
-        MassBtnSub.Text    = "KILL TARGET → DELAY → NEXT MAP"
-        MassStatDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-        MassStatTxt.TextColor3       = Color3.fromRGB(108, 96, 138)
-        MassStatTxt.Text             = "STANDBY — Tekan START"
+    do -- Auto Collect
+        local r=RC(PM,150,34); L(r,"💎 Auto Collect Gold/Item",0.03,2,0.72,14,8,C.DIM)
+        local sub=L(r,"Destroyer: AKTIF",0.03,18,0.72,12,6.5,C.GRN)
+        local pp,kk=TP(r); SetPill(pp,kk,true)
+        pp.MouseButton1Click:Connect(function()
+            MA.autoCollect=not MA.autoCollect; SetPill(pp,kk,MA.autoCollect)
+            sub.Text=MA.autoCollect and "Destroyer: AKTIF" or "Destroyer: NONAKTIF"
+            sub.TextColor3=MA.autoCollect and C.GRN or C.RED
+        end)
     end
-end
 
-MassBtn.MouseButton1Click:Connect(function()
-    TweenService:Create(MassBtn, TweenInfo.new(0.07), {Size=UDim2.new(1,-14,0,40)}):Play()
-    task.wait(0.07)
-    TweenService:Create(MassBtn, TweenInfo.new(0.10), {Size=UDim2.new(1,-10,0,44)}):Play()
-
-    if massRunning then
-        StopMassAttack(); massRunning = false; SetMassUI(false)
-    else
-        massRunning = true; SetMassUI(true)
-        StartMassAttack(
-            function(msg, active)
-                MassStatTxt.Text = msg
-                MassKillTxt.Text = MassAttack.killed.." kills  |  "..MassAttack.collected.." items"
-                if not active then
-                    MassStatDot.BackgroundColor3 = Color3.fromRGB(255, 180, 50)
-                end
-            end,
-            function(on)
-                massRunning = false; SetMassUI(false)
-            end
-        )
-    end
-end)
-
-task.spawn(function()
-    while ScreenGui.Parent do
-        local n = #GetEnemies()
-        if n > 0 then
-            EnemyCountTxt.Text      = "👾 "..n.." musuh di map"
-            EnemyCountTxt.TextColor3= Color3.fromRGB(80, 230, 120)
-        else
-            EnemyCountTxt.Text      = "⚠ Tidak ada musuh"
-            EnemyCountTxt.TextColor3= Color3.fromRGB(220, 130, 60)
-        end
-        MassKillTxt.Text = MassAttack.killed.." kills  |  "..MassAttack.collected.." items"
-        task.wait(1.5)
-    end
-end)
-
--- === MAP SELECTOR (KANAN) ============================
-local function MakeRightLabel(y, txt, size, col)
-    local l = Instance.new("TextLabel", MassRight)
-    l.Size              = UDim2.new(1, -6, 0, 14)
-    l.Position          = UDim2.new(0, 3, 0, y)
-    l.BackgroundTransparency = 1
-    l.Text              = txt
-    l.TextSize          = size or 8
-    l.Font              = Enum.Font.GothamBold
-    l.TextColor3        = col or Color3.fromRGB(160, 110, 255)
-    l.TextXAlignment    = Enum.TextXAlignment.Left
-    return l
-end
-
-MakeRightLabel(6, "🗺 MAP ROTATION", 8, Color3.fromRGB(160, 110, 255))
-MakeRightLabel(20, "Pilih map tujuan farming", 7, Color3.fromRGB(100, 78, 145))
-
-local rSep = Instance.new("Frame", MassRight)
-rSep.Size             = UDim2.new(1, -6, 0, 1)
-rSep.Position         = UDim2.new(0, 3, 0, 36)
-rSep.BackgroundColor3 = Color3.fromRGB(42, 16, 80)
-rSep.BorderSizePixel  = 0
-
-local function RSmallBtn(x, y, w, txt, col)
-    local b = Instance.new("TextButton", MassRight)
-    b.Size             = UDim2.new(0, w, 0, 14)
-    b.Position         = UDim2.new(0, x, 0, y)
-    b.BackgroundColor3 = col or Color3.fromRGB(46, 20, 90)
-    b.BorderSizePixel  = 0
-    b.Text             = txt; b.TextSize = 6
-    b.Font             = Enum.Font.GothamBold
-    b.TextColor3       = Color3.fromRGB(185, 145, 255)
-    b.AutoButtonColor  = false
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
-    return b
-end
-
-local RSABtn = RSmallBtn(3,  40, 44, "All", Color3.fromRGB(40,18,88))
-local RCLBtn = RSmallBtn(50, 40, 34, "Clear", Color3.fromRGB(26,10,48))
-
-local RMapCntLbl = Instance.new("TextLabel", MassRight)
-RMapCntLbl.Size              = UDim2.new(0, 44, 0, 14)
-RMapCntLbl.Position          = UDim2.new(1, -46, 0, 40)
-RMapCntLbl.BackgroundTransparency = 1
-RMapCntLbl.Text              = "0 dipilih"
-RMapCntLbl.TextSize          = 6
-RMapCntLbl.Font              = Enum.Font.Gotham
-RMapCntLbl.TextColor3        = Color3.fromRGB(110, 82, 162)
-RMapCntLbl.TextXAlignment    = Enum.TextXAlignment.Right
-
-local RMapScroll = Instance.new("ScrollingFrame", MassRight)
-RMapScroll.Size                = UDim2.new(1, -3, 1, -58)
-RMapScroll.Position            = UDim2.new(0, 2, 0, 58)
-RMapScroll.BackgroundColor3    = Color3.fromRGB(10, 5, 22)
-RMapScroll.BorderSizePixel     = 0
-RMapScroll.ScrollBarThickness  = 2
-RMapScroll.ScrollBarImageColor3= Color3.fromRGB(90, 38, 185)
-RMapScroll.CanvasSize          = UDim2.new(0,0,0,0)
-RMapScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-Instance.new("UICorner", RMapScroll).CornerRadius = UDim.new(0, 7)
-local rmsS = Instance.new("UIStroke", RMapScroll)
-rmsS.Color = Color3.fromRGB(42, 16, 80); rmsS.Thickness = 1
-
-local RMapGrid = Instance.new("UIGridLayout", RMapScroll)
-RMapGrid.CellSize    = UDim2.new(1, -8, 0, 22)
-RMapGrid.CellPadding = UDim2.new(0, 0, 0, 3)
-RMapGrid.SortOrder   = Enum.SortOrder.LayoutOrder
-
-local rPad = Instance.new("UIPadding", RMapScroll)
-rPad.PaddingTop    = UDim.new(0, 4)
-rPad.PaddingLeft   = UDim.new(0, 4)
-rPad.PaddingRight  = UDim.new(0, 4)
-rPad.PaddingBottom = UDim.new(0, 4)
-
-local RMapBtnRefs = {}
-local function UpdateRMapCount()
-    local n = 0
-    for i=1,#MAPS do if MapRotation.selected[i] then n=n+1 end end
-    RMapCntLbl.Text = n.." dipilih"
-end
-
-local function SetRMapSel(i, on)
-    MapRotation.selected[i] = on or nil
-    local r = RMapBtnRefs[i]
-    if not r then return end
-    TweenService:Create(r.btn, TweenInfo.new(0.12), {
-        BackgroundColor3 = on and Color3.fromRGB(78,24,172) or Color3.fromRGB(14,7,30)
-    }):Play()
-    r.stroke.Color   = on and Color3.fromRGB(140,62,245) or Color3.fromRGB(34,12,58)
-    r.chk.Text       = on and "✓" or ""
-    r.lbl.TextColor3 = on and Color3.fromRGB(255,255,255) or Color3.fromRGB(125,95,178)
-    UpdateRMapCount()
-end
-
-local icons = {"🗡","⚔","🏹","🔱","💀","🌑","🔥","⚡","🌀","❄","🌊","🪄","👁","🐉","⭐","💫","🌙","☄"}
-for i, mapData in ipairs(MAPS) do
-    local btn = Instance.new("TextButton", RMapScroll)
-    btn.LayoutOrder      = i
-    btn.BackgroundColor3 = Color3.fromRGB(14, 7, 30)
-    btn.BorderSizePixel  = 0
-    btn.Text             = ""; btn.AutoButtonColor = false
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-
-    local stk = Instance.new("UIStroke", btn)
-    stk.Color = Color3.fromRGB(34, 12, 58); stk.Thickness = 1
-
-    local ic = Instance.new("TextLabel", btn)
-    ic.Size = UDim2.new(0,16,1,0); ic.Position = UDim2.new(0,3,0,0)
-    ic.BackgroundTransparency = 1
-    ic.Text = icons[i] or "🗡"; ic.TextSize = 9
-    ic.Font = Enum.Font.GothamBold; ic.TextColor3 = Color3.fromRGB(255,200,55)
-
-    local lbl = Instance.new("TextLabel", btn)
-    lbl.Size = UDim2.new(1,-32,1,0); lbl.Position = UDim2.new(0,20,0,0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = mapData.name; lbl.TextSize = 7
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextColor3 = Color3.fromRGB(125,95,178)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-
-    local chk = Instance.new("TextLabel", btn)
-    chk.Size = UDim2.new(0,12,1,0); chk.Position = UDim2.new(1,-14,0,0)
-    chk.BackgroundTransparency = 1
-    chk.Text = ""; chk.TextSize = 8
-    chk.Font = Enum.Font.GothamBold
-    chk.TextColor3 = Color3.fromRGB(62,245,110)
-
-    RMapBtnRefs[i] = {btn=btn, stroke=stk, chk=chk, lbl=lbl}
-    btn.MouseButton1Click:Connect(function()
-        SetRMapSel(i, not MapRotation.selected[i])
-    end)
-end
-
-RSABtn.MouseButton1Click:Connect(function() for i=1,#MAPS do SetRMapSel(i,true) end end)
-RCLBtn.MouseButton1Click:Connect(function() for i=1,#MAPS do SetRMapSel(i,false) end end)
-
--- =====================================================
--- PANEL: AUTO RAID / ROLL (Coming Soon)
--- =====================================================
-local PanelRaid = NewPanel("raid")
-MakeLabel(PanelRaid, 14, "⚡   AUTO RAID", 11, Color3.fromRGB(160, 110, 255))
-MakeLabel(PanelRaid, 34, "Auto masuk dan clear raid dungeon otomatis", 9, Color3.fromRGB(100, 78, 145))
-MakeSep(PanelRaid, 60)
-MakeComingSoon(PanelRaid, "Auto Raid")
-
-local PanelEquip = NewPanel("equip")
-MakeLabel(PanelEquip, 14, "🎲   AUTO ROLL EQUIPMENT", 11, Color3.fromRGB(160, 110, 255))
-MakeLabel(PanelEquip, 34, "Auto roll equipment hero hingga dapat yang diinginkan", 9, Color3.fromRGB(100, 78, 145))
-MakeSep(PanelEquip, 60)
-MakeComingSoon(PanelEquip, "Auto Roll Equipment")
-
-local PanelSword = NewPanel("sword")
-MakeLabel(PanelSword, 14, "🗡   AUTO ROLL SWORD", 11, Color3.fromRGB(160, 110, 255))
-MakeLabel(PanelSword, 34, "Auto roll sword hingga mendapat stat terbaik", 9, Color3.fromRGB(100, 78, 145))
-MakeSep(PanelSword, 60)
-MakeComingSoon(PanelSword, "Auto Roll Sword")
-
-local PanelAbility = NewPanel("ability")
-MakeLabel(PanelAbility, 14, "✨   AUTO ROLL HERO ABILITY", 11, Color3.fromRGB(160, 110, 255))
-MakeLabel(PanelAbility, 34, "Auto roll ability hero hingga mendapat yang terbaik", 9, Color3.fromRGB(100, 78, 145))
-MakeSep(PanelAbility, 60)
-MakeComingSoon(PanelAbility, "Auto Roll Hero Ability")
-
--- =====================================================
--- PANEL: PLAYER SETTINGS — dengan ScrollingFrame
--- =====================================================
-local PanelPlayerOuter = NewPanel("player")   -- frame luar (tetap di Panels)
-
--- ScrollingFrame di dalam, menampung semua konten
-local PanelPlayer = Instance.new("ScrollingFrame", PanelPlayerOuter)
-PanelPlayer.Size                = UDim2.new(1, 0, 1, 0)
-PanelPlayer.Position            = UDim2.new(0, 0, 0, 0)
-PanelPlayer.BackgroundTransparency = 1
-PanelPlayer.BorderSizePixel     = 0
-PanelPlayer.ScrollBarThickness  = 3
-PanelPlayer.ScrollBarImageColor3= Color3.fromRGB(100, 40, 220)
-PanelPlayer.ScrollingDirection  = Enum.ScrollingDirection.Y
-PanelPlayer.CanvasSize          = UDim2.new(0, 0, 0, 0)       -- akan di-set otomatis
-PanelPlayer.AutomaticCanvasSize = Enum.AutomaticSize.Y
-PanelPlayer.ElasticBehavior     = Enum.ElasticBehavior.Always  -- efek scroll elastis
--- Padding dalam scroll
-local spPad = Instance.new("UIPadding", PanelPlayer)
-spPad.PaddingBottom = UDim.new(0, 12)
-
--- Header
-MakeLabel(PanelPlayer, 8,  "👤   PLAYER SETTINGS", 9, Color3.fromRGB(160, 110, 255))
-MakeLabel(PanelPlayer, 22, "Pengaturan karakter & server", 7, Color3.fromRGB(100, 78, 145))
-MakeSep(PanelPlayer, 38)
-
--- ── WALK SPEED SLIDER ────────────────────────────────
-local speedLbl = MakeLabel(PanelPlayer, 46, "🏃 Walk Speed  —  100%", 8, Color3.fromRGB(200, 160, 255))
-
--- Track background
-local sliderTrackBg = Instance.new("Frame", PanelPlayer)
-sliderTrackBg.Size             = UDim2.new(1, -20, 0, 10)
-sliderTrackBg.Position         = UDim2.new(0, 10, 0, 66)
-sliderTrackBg.BackgroundColor3 = Color3.fromRGB(14, 7, 30)
-sliderTrackBg.BorderSizePixel  = 0
-Instance.new("UICorner", sliderTrackBg).CornerRadius = UDim.new(1, 0)
-local strkT = Instance.new("UIStroke", sliderTrackBg)
-strkT.Color = Color3.fromRGB(55, 20, 100); strkT.Thickness = 1
-
--- Track fill
-local sliderFill = Instance.new("Frame", sliderTrackBg)
-sliderFill.Size             = UDim2.new(0.1, 0, 1, 0)   -- 100% dari 0–1000% = 10%
-sliderFill.BackgroundColor3 = Color3.fromRGB(110, 42, 230)
-sliderFill.BorderSizePixel  = 0
-Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(1, 0)
-local sliderFillGrad = Instance.new("UIGradient", sliderFill)
-sliderFillGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(160, 80, 255)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(80, 22, 200)),
-})
-sliderFillGrad.Rotation = 0
-
--- Knob
-local sliderKnob = Instance.new("Frame", sliderTrackBg)
-sliderKnob.Size             = UDim2.new(0, 16, 0, 16)
-sliderKnob.Position         = UDim2.new(0.1, -8, 0.5, -8)
-sliderKnob.BackgroundColor3 = Color3.fromRGB(255, 215, 55)
-sliderKnob.BorderSizePixel  = 0
-sliderKnob.ZIndex           = 3
-Instance.new("UICorner", sliderKnob).CornerRadius = UDim.new(1, 0)
-local knobStroke = Instance.new("UIStroke", sliderKnob)
-knobStroke.Color = Color3.fromRGB(200, 160, 40); knobStroke.Thickness = 1.5
-
--- Tick labels (0% / 500% / 1000%)
-local function TickLbl(parent, x, txt)
-    local l = Instance.new("TextLabel", parent)
-    l.Size              = UDim2.new(0, 32, 0, 10)
-    l.Position          = UDim2.new(x, -16, 1, 3)
-    l.BackgroundTransparency = 1
-    l.Text              = txt
-    l.TextSize          = 6
-    l.Font              = Enum.Font.Gotham
-    l.TextColor3        = Color3.fromRGB(90, 66, 140)
-    l.TextXAlignment    = Enum.TextXAlignment.Center
-    return l
-end
-TickLbl(sliderTrackBg, 0,   "0%")
-TickLbl(sliderTrackBg, 0.5, "500%")
-TickLbl(sliderTrackBg, 1,   "1000%")
-
--- Preset speed buttons (0 / 100 / 300 / 600 / 1000)
-local speedPresetRow = Instance.new("Frame", PanelPlayer)
-speedPresetRow.Size             = UDim2.new(1, -20, 0, 18)
-speedPresetRow.Position         = UDim2.new(0, 10, 0, 90)
-speedPresetRow.BackgroundTransparency = 1
-local spL = Instance.new("UIListLayout", speedPresetRow)
-spL.FillDirection = Enum.FillDirection.Horizontal; spL.Padding = UDim.new(0, 4)
-
-local speedPresets = {
-    {pct=0,    lbl="STOP"},
-    {pct=100,  lbl="100%"},
-    {pct=300,  lbl="300%"},
-    {pct=600,  lbl="600%"},
-    {pct=1000, lbl="1000%"},
-}
-local speedPresetRefs = {}
-
-local SPEED_MAX = 1000   -- maksimum slider
-
-local function UpdateSpeedSlider(pct)
-    local ratio = pct / SPEED_MAX
-    sliderFill.Size        = UDim2.new(ratio, 0, 1, 0)
-    sliderKnob.Position    = UDim2.new(ratio, -8, 0.5, -8)
-    speedLbl.Text          = "🏃 Walk Speed  —  "..pct.."%"
-    ApplyWalkSpeed(pct)
-    for _, ref in ipairs(speedPresetRefs) do
-        local isActive = (ref.pct == pct)
-        TweenService:Create(ref.btn, TweenInfo.new(0.12), {
-            BackgroundColor3 = isActive and Color3.fromRGB(90,30,190) or Color3.fromRGB(16,9,34)
-        }):Play()
-        ref.btn.TextColor3 = isActive and Color3.fromRGB(255,220,100) or Color3.fromRGB(140,100,200)
-    end
-end
-
-for _, preset in ipairs(speedPresets) do
-    local pb = Instance.new("TextButton", speedPresetRow)
-    pb.Size             = UDim2.new(0, 38, 1, 0)
-    pb.BackgroundColor3 = preset.pct==100 and Color3.fromRGB(90,30,190) or Color3.fromRGB(16,9,34)
-    pb.BorderSizePixel  = 0
-    pb.Text             = preset.lbl
-    pb.TextSize         = 6
-    pb.Font             = Enum.Font.GothamBold
-    pb.TextColor3       = preset.pct==100 and Color3.fromRGB(255,220,100) or Color3.fromRGB(140,100,200)
-    pb.AutoButtonColor  = false
-    Instance.new("UICorner", pb).CornerRadius = UDim.new(0, 5)
-    table.insert(speedPresetRefs, {btn=pb, pct=preset.pct})
-    pb.MouseButton1Click:Connect(function()
-        UpdateSpeedSlider(preset.pct)
-    end)
-end
-
--- Slider drag logic (snap per 10%)
-local sliderDragging = false
-local function SliderFromInput(inputX)
-    local absPos  = sliderTrackBg.AbsolutePosition.X
-    local absSize = sliderTrackBg.AbsoluteSize.X
-    local ratio   = math.clamp((inputX - absPos) / absSize, 0, 1)
-    local pct     = math.floor(ratio * SPEED_MAX / 10 + 0.5) * 10  -- snap per 10%
-    UpdateSpeedSlider(pct)
-end
-
-sliderTrackBg.InputBegan:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1
-    or i.UserInputType == Enum.UserInputType.Touch then
-        sliderDragging = true
-        SliderFromInput(i.Position.X)
-    end
-end)
-UserInputService.InputChanged:Connect(function(i)
-    if sliderDragging and (
-        i.UserInputType == Enum.UserInputType.MouseMovement or
-        i.UserInputType == Enum.UserInputType.Touch) then
-        SliderFromInput(i.Position.X)
-    end
-end)
-UserInputService.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1
-    or i.UserInputType == Enum.UserInputType.Touch then
-        sliderDragging = false
-    end
-end)
-
-MakeSep(PanelPlayer, 116)
-
--- ── HIDE REWARD NOTIF TOGGLE ─────────────────────────
-local notifRow = Instance.new("Frame", PanelPlayer)
-notifRow.Size             = UDim2.new(1, -20, 0, 36)
-notifRow.Position         = UDim2.new(0, 10, 0, 122)
-notifRow.BackgroundColor3 = Color3.fromRGB(11, 6, 26)
-notifRow.BorderSizePixel  = 0
-Instance.new("UICorner", notifRow).CornerRadius = UDim.new(0, 8)
-local notifStroke = Instance.new("UIStroke", notifRow)
-notifStroke.Color = Color3.fromRGB(42, 16, 80); notifStroke.Thickness = 1
-
-local notifIcon = Instance.new("TextLabel", notifRow)
-notifIcon.Size               = UDim2.new(0, 24, 1, 0)
-notifIcon.Position           = UDim2.new(0, 6, 0, 0)
-notifIcon.BackgroundTransparency = 1
-notifIcon.Text               = "🔕"
-notifIcon.TextSize           = 14
-notifIcon.Font               = Enum.Font.GothamBold
-notifIcon.TextColor3         = Color3.fromRGB(255, 200, 55)
-
-local notifMainLbl = Instance.new("TextLabel", notifRow)
-notifMainLbl.Size              = UDim2.new(1, -80, 0, 14)
-notifMainLbl.Position          = UDim2.new(0, 34, 0, 5)
-notifMainLbl.BackgroundTransparency = 1
-notifMainLbl.Text              = "Sembunyikan Reward Notif"
-notifMainLbl.TextSize          = 8
-notifMainLbl.Font              = Enum.Font.GothamBold
-notifMainLbl.TextColor3        = Color3.fromRGB(220, 180, 255)
-notifMainLbl.TextXAlignment    = Enum.TextXAlignment.Left
-
-local notifSubLbl = Instance.new("TextLabel", notifRow)
-notifSubLbl.Size              = UDim2.new(1, -80, 0, 11)
-notifSubLbl.Position          = UDim2.new(0, 34, 0, 20)
-notifSubLbl.BackgroundTransparency = 1
-notifSubLbl.Text              = "Hilangkan popup reward & boss"
-notifSubLbl.TextSize          = 6
-notifSubLbl.Font              = Enum.Font.Gotham
-notifSubLbl.TextColor3        = Color3.fromRGB(130, 90, 190)
-notifSubLbl.TextXAlignment    = Enum.TextXAlignment.Left
-
-local notifPill, notifKnob = MakeTogglePill(notifRow, -42, 10)
-notifPill.Position = UDim2.new(1, -42, 0.5, -8)
--- Default: OFF → popup tampil normal (pill gelap)
-SetPill(notifPill, notifKnob, false)
-
-notifPill.MouseButton1Click:Connect(function()
-    PlayerSettings.hideNotif = not PlayerSettings.hideNotif
-    local on = PlayerSettings.hideNotif
-    SetPill(notifPill, notifKnob, on)
-    -- Update sub-label sesuai status
-    notifSubLbl.Text = on
-        and "✅ Aktif — popup reward dihilangkan"
-        or  "❌ Nonaktif — popup muncul normal"
-    notifSubLbl.TextColor3 = on
-        and Color3.fromRGB(80, 220, 120)
-        or  Color3.fromRGB(130, 90, 190)
-    if on then
-        StartHideNotif()
-    else
-        StopHideNotif()
-    end
-end)
-
-MakeSep(PanelPlayer, 166)
-
--- ── REJOIN SERVER ────────────────────────────────────
-local rejoinFrame = Instance.new("Frame", PanelPlayer)
-rejoinFrame.Size             = UDim2.new(1, -20, 0, 36)
-rejoinFrame.Position         = UDim2.new(0, 10, 0, 172)
-rejoinFrame.BackgroundColor3 = Color3.fromRGB(11, 6, 26)
-rejoinFrame.BorderSizePixel  = 0
-Instance.new("UICorner", rejoinFrame).CornerRadius = UDim.new(0, 8)
-local rejoinStroke = Instance.new("UIStroke", rejoinFrame)
-rejoinStroke.Color = Color3.fromRGB(42, 16, 80); rejoinStroke.Thickness = 1
-
-local rejoinIcon = Instance.new("TextLabel", rejoinFrame)
-rejoinIcon.Size               = UDim2.new(0, 24, 1, 0)
-rejoinIcon.Position           = UDim2.new(0, 6, 0, 0)
-rejoinIcon.BackgroundTransparency = 1
-rejoinIcon.Text               = "🔄"
-rejoinIcon.TextSize           = 14
-rejoinIcon.Font               = Enum.Font.GothamBold
-rejoinIcon.TextColor3         = Color3.fromRGB(80, 200, 255)
-
-local rejoinMainLbl = Instance.new("TextLabel", rejoinFrame)
-rejoinMainLbl.Size              = UDim2.new(1, -80, 0, 14)
-rejoinMainLbl.Position          = UDim2.new(0, 34, 0, 5)
-rejoinMainLbl.BackgroundTransparency = 1
-rejoinMainLbl.Text              = "Rejoin Server"
-rejoinMainLbl.TextSize          = 8
-rejoinMainLbl.Font              = Enum.Font.GothamBold
-rejoinMainLbl.TextColor3        = Color3.fromRGB(180, 230, 255)
-rejoinMainLbl.TextXAlignment    = Enum.TextXAlignment.Left
-
-local rejoinSubLbl = Instance.new("TextLabel", rejoinFrame)
-rejoinSubLbl.Size              = UDim2.new(1, -80, 0, 11)
-rejoinSubLbl.Position          = UDim2.new(0, 34, 0, 20)
-rejoinSubLbl.BackgroundTransparency = 1
-rejoinSubLbl.Text              = "Kembali ke server yang sama"
-rejoinSubLbl.TextSize          = 6
-rejoinSubLbl.Font              = Enum.Font.Gotham
-rejoinSubLbl.TextColor3        = Color3.fromRGB(90, 150, 200)
-rejoinSubLbl.TextXAlignment    = Enum.TextXAlignment.Left
-
--- Tombol Rejoin
-local rejoinBtn = Instance.new("TextButton", rejoinFrame)
-rejoinBtn.Size             = UDim2.new(0, 50, 0, 20)
-rejoinBtn.Position         = UDim2.new(1, -56, 0.5, -10)
-rejoinBtn.BackgroundColor3 = Color3.fromRGB(25, 80, 160)
-rejoinBtn.BorderSizePixel  = 0
-rejoinBtn.Text             = "REJOIN"
-rejoinBtn.TextSize         = 6
-rejoinBtn.Font             = Enum.Font.GothamBold
-rejoinBtn.TextColor3       = Color3.fromRGB(180, 230, 255)
-rejoinBtn.AutoButtonColor  = false
-Instance.new("UICorner", rejoinBtn).CornerRadius = UDim.new(0, 6)
-local rejoinBtnGrad = Instance.new("UIGradient", rejoinBtn)
-rejoinBtnGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(50, 130, 255)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 70, 180)),
-})
-rejoinBtnGrad.Rotation = 90
-
-rejoinBtn.MouseButton1Click:Connect(function()
-    -- Animasi tekan
-    TweenService:Create(rejoinBtn, TweenInfo.new(0.06), {Size=UDim2.new(0,46,0,18)}):Play()
-    task.wait(0.06)
-    TweenService:Create(rejoinBtn, TweenInfo.new(0.10), {Size=UDim2.new(0,50,0,20)}):Play()
-    -- Feedback teks
-    rejoinBtn.Text = "..."
-    rejoinBtn.TextColor3 = Color3.fromRGB(255, 240, 100)
-    task.wait(0.5)
-    RejoinServer()
-end)
-
-MakeSep(PanelPlayer, 216)
-
--- Info server ID
-local serverIdLbl = Instance.new("TextLabel", PanelPlayer)
-serverIdLbl.Size              = UDim2.new(1, -20, 0, 20)
-serverIdLbl.Position          = UDim2.new(0, 10, 0, 222)
-serverIdLbl.BackgroundTransparency = 1
-serverIdLbl.Text              = "🖥 Server: "..tostring(game.JobId):sub(1,18).."..."
-serverIdLbl.TextSize          = 6
-serverIdLbl.Font              = Enum.Font.Gotham
-serverIdLbl.TextColor3        = Color3.fromRGB(70, 50, 110)
-serverIdLbl.TextXAlignment    = Enum.TextXAlignment.Left
-serverIdLbl.TextTruncate      = Enum.TextTruncate.AtEnd
-
-MakeSep(PanelPlayer, 248)
-
--- ── ANTI AFK ─────────────────────────────────────────
--- Cara kerja: setiap 60 detik gerakkan karakter micro-movement
--- (jump sangat kecil via VirtualUser) agar game tidak deteksi AFK.
--- Juga pantau popup "Reconnect?" yang biasanya muncul saat AFK
--- dan langsung klik tombol dismiss-nya.
-
-local VirtualUser = game:GetService("VirtualUser")
-local PlayerSettings_afk = false
-local afkThread = nil
-
-local function StartAntiAFK()
-    if afkThread then return end
-    PlayerSettings_afk = true
-    afkThread = task.spawn(function()
-        while PlayerSettings_afk do
-            -- Simulasi input agar server tidak deteksi idle
-            pcall(function()
-                VirtualUser:CaptureController()
-                VirtualUser:ClickButton2(Vector2.new(0, 0))
+    SH(PM,188,"⚡","Auto Skill")
+    do -- Skill buttons
+        local skRow=Instance.new("Frame",PM); skRow.Size=UDim2.new(1,0,0,30); skRow.Position=UDim2.new(0,0,0,210); skRow.BackgroundTransparency=1
+        local skL=Instance.new("UIListLayout",skRow); skL.FillDirection=Enum.FillDirection.Horizontal; skL.Padding=UDim.new(0,6)
+        local skDefs={{n="Z",c=Color3.fromRGB(255,80,80)},{n="X",c=Color3.fromRGB(255,160,40)},{n="C",c=Color3.fromRGB(80,220,120)},{n="V",c=Color3.fromRGB(80,180,255)},{n="F",c=Color3.fromRGB(200,80,255)}}
+        for _,d in ipairs(skDefs) do
+            local cd=Instance.new("Frame",skRow); cd.Size=UDim2.new(0,44,1,0); cd.BackgroundColor3=C.BOFF; cd.BorderSizePixel=0; Instance.new("UICorner",cd).CornerRadius=UDim.new(0,8)
+            local csk=Instance.new("UIStroke",cd); csk.Color=C.BORD; csk.Thickness=1
+            local btn=Instance.new("TextButton",cd); btn.Size=UDim2.new(1,0,1,0); btn.BackgroundTransparency=1; btn.Text=""; btn.AutoButtonColor=false
+            L(cd,d.n,0,2,1,16,13,d.c,Enum.TextXAlignment.Center)
+            local sl=L(cd,"OFF",0,0,1,9,6,C.DK,Enum.TextXAlignment.Center); sl.Position=UDim2.new(0,0,1,-10)
+            local dn=d.n; local dc=d.c
+            btn.MouseButton1Click:Connect(function()
+                local s=SKL[dn]
+                if s.on then SkOff(dn); cd.BackgroundColor3=C.BOFF; csk.Color=C.BORD; sl.Text="OFF"; sl.TextColor3=C.DK
+                else SkOn(dn); cd.BackgroundColor3=Color3.fromRGB(20,10,42); csk.Color=dc; sl.Text="ON"; sl.TextColor3=dc end
             end)
-            task.wait(15)
         end
-        afkThread = nil
+    end
+
+    Sep(PM,244)
+    SH(PM,248,"🗺","Preferred Map (Rotation)")
+    local mpEndY=BuildMapSelector(PM,270,MR.selected,C.ACC2)
+
+    Sep(PM,mpEndY+4)
+    local mBtn,mBG,mLbl,mEm=BigBtn(PM,mpEndY+8,"⚔","MULAI MASS ATTACK")
+    mBtn_ref=mBtn
+    local mOn=false
+    local function SetMUI(on)
+        if on then mBG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(200,40,40)),ColorSequenceKeypoint.new(1,Color3.fromRGB(128,14,14))}); mEm.Text="🛑"; mLbl.Text="BERHENTI"; sDot.BackgroundColor3=C.GRN; sTxt.TextColor3=C.GRN
+        else mBG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(130,48,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(60,12,155))}); mEm.Text="⚔"; mLbl.Text="MULAI MASS ATTACK"; sDot.BackgroundColor3=C.DK; sTxt.TextColor3=C.DIM; sTxt.Text="STANDBY" end
+    end
+    mBtn.MouseButton1Click:Connect(function()
+        TweenService:Create(mBtn,TweenInfo.new(0.07),{Size=UDim2.new(1,0,0,36)}):Play(); task.wait(0.07); TweenService:Create(mBtn,TweenInfo.new(0.1),{Size=UDim2.new(1,0,0,40)}):Play()
+        if mOn then StopLoop(MA); mOn=false; SetMUI(false)
+        else mOn=true; SetMUI(true); RunLoop(MA,MR,AttackLoop_Mass,function(msg) sTxt.Text=msg; kLbl.Text=MA.killed.." kill  "..MA.collected.." item" end,function() mOn=false; SetMUI(false) end) end
     end)
-end
 
-local function StopAntiAFK()
-    PlayerSettings_afk = false
-    if afkThread then
-        pcall(function() task.cancel(afkThread) end)
-        afkThread = nil
-    end
-end
-
--- UI Anti AFK
-local afkFrame = Instance.new("Frame", PanelPlayer)
-afkFrame.Size             = UDim2.new(1, -20, 0, 36)
-afkFrame.Position         = UDim2.new(0, 10, 0, 254)
-afkFrame.BackgroundColor3 = Color3.fromRGB(11, 6, 26)
-afkFrame.BorderSizePixel  = 0
-Instance.new("UICorner", afkFrame).CornerRadius = UDim.new(0, 8)
-local afkStroke = Instance.new("UIStroke", afkFrame)
-afkStroke.Color = Color3.fromRGB(42, 16, 80); afkStroke.Thickness = 1
-
-local afkIcon = Instance.new("TextLabel", afkFrame)
-afkIcon.Size               = UDim2.new(0, 24, 1, 0)
-afkIcon.Position           = UDim2.new(0, 6, 0, 0)
-afkIcon.BackgroundTransparency = 1
-afkIcon.Text               = "⏰"
-afkIcon.TextSize           = 14
-afkIcon.Font               = Enum.Font.GothamBold
-afkIcon.TextColor3         = Color3.fromRGB(255, 200, 55)
-
-local afkMainLbl = Instance.new("TextLabel", afkFrame)
-afkMainLbl.Size              = UDim2.new(1, -80, 0, 14)
-afkMainLbl.Position          = UDim2.new(0, 34, 0, 5)
-afkMainLbl.BackgroundTransparency = 1
-afkMainLbl.Text              = "Anti AFK"
-afkMainLbl.TextSize          = 8
-afkMainLbl.Font              = Enum.Font.GothamBold
-afkMainLbl.TextColor3        = Color3.fromRGB(220, 180, 255)
-afkMainLbl.TextXAlignment    = Enum.TextXAlignment.Left
-
-local afkSubLbl = Instance.new("TextLabel", afkFrame)
-afkSubLbl.Size              = UDim2.new(1, -80, 0, 11)
-afkSubLbl.Position          = UDim2.new(0, 34, 0, 20)
-afkSubLbl.BackgroundTransparency = 1
-afkSubLbl.Text              = "Cegah kick saat farming otomatis"
-afkSubLbl.TextSize          = 6
-afkSubLbl.Font              = Enum.Font.Gotham
-afkSubLbl.TextColor3        = Color3.fromRGB(130, 90, 190)
-afkSubLbl.TextXAlignment    = Enum.TextXAlignment.Left
-
-local afkPill, afkKnob = MakeTogglePill(afkFrame, -42, 10)
-afkPill.Position = UDim2.new(1, -42, 0.5, -8)
-
-afkPill.MouseButton1Click:Connect(function()
-    PlayerSettings_afk = not PlayerSettings_afk
-    SetPill(afkPill, afkKnob, PlayerSettings_afk)
-    if PlayerSettings_afk then
-        StartAntiAFK()
-    else
-        StopAntiAFK()
-    end
-end)
-
--- =====================================================
--- SIDEBAR NAV  (+ tab Player Settings)
--- =====================================================
-local NAV_ITEMS = {
-    { icon="⚔",  label="Mass Attack",    tag="mass"   },
-    { icon="👤",  label="Player",         tag="player" },
-    { icon="⚡",  label="Auto Raid",      tag="raid"   },
-    { icon="🎲",  label="Roll Equip",     tag="equip"  },
-    { icon="🗡",  label="Roll Sword",     tag="sword"  },
-    { icon="✨",  label="Roll Ability",   tag="ability"},
-}
-
-local NavBtnRefs = {}
-local ActiveTag  = "mass"
-
-local function SwitchTab(tag)
-    ActiveTag = tag
-    for _, p in pairs(Panels) do p.Visible = false end
-    if Panels[tag] then Panels[tag].Visible = true end
-    for _, ref in pairs(NavBtnRefs) do
-        local on = (ref.tag == tag)
-        TweenService:Create(ref.bg, TweenInfo.new(0.16), {
-            BackgroundColor3 = on and Color3.fromRGB(72,24,165) or Color3.fromRGB(10,6,24)
-        }):Play()
-        ref.ibg.BackgroundColor3 = on and Color3.fromRGB(105,42,228) or Color3.fromRGB(20,10,44)
-        ref.lbl.TextColor3       = on and Color3.fromRGB(255,255,255) or Color3.fromRGB(110,84,158)
-        ref.stroke.Transparency  = on and 0.5 or 1
-    end
-end
-
-for idx, item in ipairs(NAV_ITEMS) do
-    local yOff = 6 + (idx-1)*38   -- sedikit dikecilkan agar 6 item muat
-
-    local bg = Instance.new("TextButton", Sidebar)
-    bg.Size             = UDim2.new(1, -10, 0, 34)
-    bg.Position         = UDim2.new(0, 5, 0, yOff)
-    bg.BackgroundColor3 = Color3.fromRGB(10, 6, 24)
-    bg.BorderSizePixel  = 0
-    bg.Text             = ""
-    bg.AutoButtonColor  = false
-    Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 9)
-
-    local bgS = Instance.new("UIStroke", bg)
-    bgS.Color = Color3.fromRGB(115,48,255); bgS.Thickness = 1.2; bgS.Transparency = 1
-
-    local ibg = Instance.new("Frame", bg)
-    ibg.Size             = UDim2.new(0, 20, 0, 20)
-    ibg.Position         = UDim2.new(0.5, -10, 0, 2)
-    ibg.BackgroundColor3 = Color3.fromRGB(20, 10, 44)
-    ibg.BorderSizePixel  = 0
-    Instance.new("UICorner", ibg).CornerRadius = UDim.new(0, 6)
-
-    local ic = Instance.new("TextLabel", ibg)
-    ic.Size = UDim2.new(1,0,1,0); ic.BackgroundTransparency = 1
-    ic.Text = item.icon; ic.TextSize = 10
-    ic.Font = Enum.Font.GothamBold
-    ic.TextColor3 = Color3.fromRGB(255, 210, 55)
-    ic.TextXAlignment = Enum.TextXAlignment.Center
-
-    local lbl = Instance.new("TextLabel", bg)
-    lbl.Size = UDim2.new(1,-4,0,9); lbl.Position = UDim2.new(0,2,0,23)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = item.label; lbl.TextSize = 5
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextColor3 = Color3.fromRGB(110, 84, 158)
-    lbl.TextXAlignment = Enum.TextXAlignment.Center
-    lbl.TextWrapped = true
-
-    NavBtnRefs[idx] = {tag=item.tag, bg=bg, ibg=ibg, lbl=lbl, stroke=bgS}
-
-    bg.MouseButton1Click:Connect(function()
-        SwitchTab(item.tag)
-        TweenService:Create(bg, TweenInfo.new(0.06), {Size=UDim2.new(1,-14,0,30)}):Play()
-        task.wait(0.06)
-        TweenService:Create(bg, TweenInfo.new(0.10), {Size=UDim2.new(1,-10,0,34)}):Play()
+    task.spawn(function()
+        while SG.Parent do
+            local n=#GetEnemies()
+            eLbl.Text=n>0 and("👾 "..n.." musuh di map") or "⚠ Tidak ada musuh"
+            eLbl.TextColor3=n>0 and C.GRN or Color3.fromRGB(220,130,60)
+            kLbl.Text=MA.killed.." kill  "..MA.collected.." item"
+            task.wait(1.5)
+        end
     end)
-end
-
-SwitchTab("mass")
+end -- END PANEL MASS ATTACK
 
 -- =====================================================
--- DRAG — PC & Mobile (menggunakan AbsolutePosition)
+-- PANEL: AUTO RANDOM ATTACK
 -- =====================================================
 do
-    local dragging   = false
-    local dragStartMouse = Vector2.new(0, 0)
-    local dragStartWin   = Vector2.new(0, 0)
+    local PG=NewPanel("goyang")
 
-    local function BeginDrag(inputPos)
-        dragging = true
-        dragStartMouse = Vector2.new(inputPos.X, inputPos.Y)
-        dragStartWin   = Vector2.new(Win.AbsolutePosition.X, Win.AbsolutePosition.Y)
+    -- Info box
+    do
+        local info=RC(PG,0,44,Color3.fromRGB(40,20,10)); Instance.new("UIStroke",info).Color=C.AG
+        L(info,"🕺 AUTO RANDOM ATTACK",0.03,3,0.95,14,9,C.AG)
+        L(info,"Teleport ke musuh 1-per-1, serang max speed.\nKarakter + Hero/Pet + Skill semua masuk.",0.03,19,0.95,24,6.5,C.DIM)
     end
 
-    local function UpdateDrag(inputPos)
-        if not dragging then return end
-        local dx = inputPos.X - dragStartMouse.X
-        local dy = inputPos.Y - dragStartMouse.Y
-        local vp = game:GetService("GuiService"):GetGuiInset()
-        local screenX = workspace.CurrentCamera.ViewportSize.X
-        local screenY = workspace.CurrentCamera.ViewportSize.Y
-        local newX = math.clamp(dragStartWin.X + dx, 0, screenX - Win.AbsoluteSize.X)
-        local newY = math.clamp(dragStartWin.Y + dy - vp.Y, 0, screenY - Win.AbsoluteSize.Y)
-        Win.Position = UDim2.new(0, newX, 0, newY)
+    -- Status bar
+    local agSBF=RC(PG,50,26,Color3.fromRGB(22,14,10))
+    local agDot=Instance.new("Frame",agSBF); agDot.Size=UDim2.new(0,7,0,7); agDot.Position=UDim2.new(0,8,0.5,-3.5); agDot.BackgroundColor3=C.DK; agDot.BorderSizePixel=0; Instance.new("UICorner",agDot).CornerRadius=UDim.new(1,0)
+    local agTxt=L(agSBF,"STANDBY",0,0,0.58,26,7,C.DIM); agTxt.Position=UDim2.new(0,20,0,0); agTxt.TextTruncate=Enum.TextTruncate.AtEnd
+    local agKLbl=L(agSBF,"0 kill  0 item",0.56,0,0.44,26,6.5,C.AG,Enum.TextXAlignment.Right)
+    local agELbl=L(PG,"🔍 Belum di-refresh",0,80,1,12,6.5,C.DIM)
+    Sep(PG,96)
+
+    -- Auto Collect
+    do
+        local r=RC(PG,100,34,Color3.fromRGB(22,14,10)); L(r,"💎 Auto Collect Gold/Item",0.03,2,0.72,14,8,C.DIM)
+        local sub=L(r,"Destroyer: AKTIF",0.03,18,0.72,12,6.5,C.GRN)
+        local pp,kk=TP(r); SetPill(pp,kk,true)
+        pp.MouseButton1Click:Connect(function()
+            AG.autoCollect=not AG.autoCollect; SetPill(pp,kk,AG.autoCollect)
+            sub.Text=AG.autoCollect and "Destroyer: AKTIF" or "Destroyer: NONAKTIF"
+            sub.TextColor3=AG.autoCollect and C.GRN or C.RED
+        end)
     end
 
-    -- TBar tangkap drag awal
-    TBar.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1
-        or i.UserInputType == Enum.UserInputType.Touch then
-            BeginDrag(i.Position)
+    Sep(PG,138)
+
+    -- ── ENEMY LIST ──────────────────────────────────
+    -- Header + tombol Refresh + counter
+    SH(PG,142,"👾","Target Musuh (pilih yang mau diserang)",C.AG)
+
+    -- Kontrol bar: Refresh | All | Clear | counter
+    local eCtrl=Instance.new("Frame",PG); eCtrl.Size=UDim2.new(1,0,0,24); eCtrl.Position=UDim2.new(0,0,0,164); eCtrl.BackgroundTransparency=1
+    local eCtrlL=Instance.new("UIListLayout",eCtrl); eCtrlL.FillDirection=Enum.FillDirection.Horizontal; eCtrlL.Padding=UDim.new(0,4)
+    local function EBtn(txt,bg,w)
+        local b=Instance.new("TextButton",eCtrl); b.Size=UDim2.new(0,w or 52,1,0); b.BackgroundColor3=bg or C.BOFF; b.BorderSizePixel=0; b.Text=txt; b.TextSize=7.5; b.Font=Enum.Font.GothamBold; b.TextColor3=C.TXT; b.AutoButtonColor=false; Instance.new("UICorner",b).CornerRadius=UDim.new(0,6); return b
+    end
+    local eBtnRefresh = EBtn("🔄 Refresh",Color3.fromRGB(20,80,40),84)
+    local eCntL=L(PG,"—",0,164,1,24,6.5,C.DK,Enum.TextXAlignment.Right)
+
+    -- Scroll box untuk daftar musuh
+    local eBox=Instance.new("ScrollingFrame",PG)
+    eBox.Size=UDim2.new(1,0,0,200); eBox.Position=UDim2.new(0,0,0,192)
+    eBox.BackgroundColor3=Color3.fromRGB(13,7,26); eBox.BorderSizePixel=0
+    eBox.ScrollBarThickness=3; eBox.ScrollBarImageColor3=C.AG
+    eBox.CanvasSize=UDim2.new(0,0,0,0); eBox.AutomaticCanvasSize=Enum.AutomaticSize.Y
+    Instance.new("UICorner",eBox).CornerRadius=UDim.new(0,9); Instance.new("UIStroke",eBox).Color=C.BORD
+    local ePad=Instance.new("UIPadding",eBox); ePad.PaddingTop=UDim.new(0,5); ePad.PaddingBottom=UDim.new(0,5); ePad.PaddingLeft=UDim.new(0,5); ePad.PaddingRight=UDim.new(0,5)
+    local eList=Instance.new("UIListLayout",eBox); eList.Padding=UDim.new(0,4); eList.SortOrder=Enum.SortOrder.LayoutOrder
+
+    -- Placeholder text saat belum refresh
+    local ePlaceholder=Instance.new("TextLabel",eBox)
+    ePlaceholder.Size=UDim2.new(1,0,0,40); ePlaceholder.BackgroundTransparency=1
+    ePlaceholder.Text="Tekan 🔄 Refresh untuk\nmemuat daftar musuh di map ini"
+    ePlaceholder.TextSize=7.5; ePlaceholder.Font=Enum.Font.Gotham; ePlaceholder.TextColor3=C.DK
+    ePlaceholder.TextXAlignment=Enum.TextXAlignment.Center; ePlaceholder.TextWrapped=true
+
+    -- ── Enemy list state ─────────────────────────────
+    -- eEnemyRows: name → {row, stroke, nameLbl, cntLbl, dot, enemies[]}
+    -- enemies[] = array entry dari GetEnemies() dengan nama itu
+    -- activeEnemyName: nama yang sedang aktif (radio button)
+    local eEnemyRows   = {}
+    local eEnemyNames  = {}   -- array nama urut (hasil refresh)
+    local activeEName  = nil  -- nama yg sedang dipilih/aktif
+
+    local function EnemyIco(name)
+        local n=name:lower()
+        if n:find("dragon") then return "🐉"
+        elseif n:find("wolf") or n:find("beast") then return "🐺"
+        elseif n:find("golem") or n:find("stone") then return "🪨"
+        elseif n:find("demon") or n:find("devil") then return "😈"
+        elseif n:find("slime") then return "🟢"
+        elseif n:find("ghost") or n:find("spirit") then return "👻"
+        elseif n:find("fire") or n:find("flame") then return "🔥"
+        elseif n:find("ice") or n:find("frost") then return "❄"
+        elseif n:find("boss") then return "💀"
+        else return "👾" end
+    end
+
+    -- Cari musuh hidup pertama dgn nama tertentu dari GetEnemies()
+    local function FindLiveEnemyByName(nm)
+        for _,e in ipairs(GetEnemies()) do
+            if e.model.Name==nm and not IsDead(e) then return e end
+        end
+        return nil
+    end
+
+    -- Set nama aktif → highlight row + langsung update AG.currentTarget
+    local function SelectEnemyName(nm)
+        -- Unhighlight row lama
+        if activeEName and eEnemyRows[activeEName] then
+            local old=eEnemyRows[activeEName]
+            TweenService:Create(old.row,TweenInfo.new(0.12),{BackgroundColor3=Color3.fromRGB(18,10,36)}):Play()
+            old.stroke.Color=C.BORD; old.nameLbl.TextColor3=C.DIM; old.dot.Visible=false
+        end
+        activeEName=nm
+        if not nm then AG.currentTarget=nil; eCntL.Text="—"; return end
+        -- Highlight row baru
+        local r=eEnemyRows[nm]
+        if r then
+            TweenService:Create(r.row,TweenInfo.new(0.12),{BackgroundColor3=Color3.fromRGB(90,38,10)}):Play()
+            r.stroke.Color=C.AG; r.nameLbl.TextColor3=C.TXT; r.dot.Visible=true
+        end
+        eCntL.Text="▶ "..nm
+        -- Set AG.currentTarget ke musuh hidup pertama dgn nama itu
+        local live=FindLiveEnemyByName(nm)
+        AG.currentTarget=live  -- bisa nil kalau lagi mati semua (loop akan standby)
+    end
+
+    -- Refresh → scrape nama unik musuh di map sekarang
+    local function RefreshEnemies()
+        -- Hapus row lama
+        for _,r in pairs(eEnemyRows) do
+            if r.row and r.row.Parent then r.row:Destroy() end
+        end
+        eEnemyRows={}; eEnemyNames={}
+        ePlaceholder.Visible=false
+        activeEName=nil; AG.currentTarget=nil; eCntL.Text="—"
+
+        local enemies=GetEnemies()
+        if #enemies==0 then
+            ePlaceholder.Text="⚠ Tidak ada musuh di map ini."
+            ePlaceholder.Visible=true
+            agELbl.Text="⚠ Tidak ada musuh di map ini"
+            agELbl.TextColor3=Color3.fromRGB(220,130,60)
+            return
+        end
+
+        -- Hitung jumlah per nama
+        local nameCount={}
+        for _,e in ipairs(enemies) do
+            nameCount[e.model.Name]=(nameCount[e.model.Name] or 0)+1
+        end
+        local names={}; for nm in pairs(nameCount) do table.insert(names,nm) end
+        table.sort(names); eEnemyNames=names
+
+        for idx,nm in ipairs(names) do
+            local cnt=nameCount[nm]; local ico=EnemyIco(nm)
+            local row=Instance.new("Frame",eBox); row.LayoutOrder=idx; row.Size=UDim2.new(1,0,0,34)
+            row.BackgroundColor3=Color3.fromRGB(18,10,36); row.BorderSizePixel=0; Instance.new("UICorner",row).CornerRadius=UDim.new(0,7)
+            local rs=Instance.new("UIStroke",row); rs.Color=C.BORD; rs.Thickness=1
+            local btn=Instance.new("TextButton",row); btn.Size=UDim2.new(1,0,1,0); btn.BackgroundTransparency=1; btn.Text=""; btn.AutoButtonColor=false
+            -- Dot indikator aktif (kiri)
+            local dot=Instance.new("Frame",row); dot.Size=UDim2.new(0,4,0.6,0); dot.Position=UDim2.new(0,2,0.2,0); dot.BackgroundColor3=C.AG; dot.BorderSizePixel=0; dot.Visible=false; Instance.new("UICorner",dot).CornerRadius=UDim.new(1,0)
+            -- Ikon
+            local iL=Instance.new("TextLabel",row); iL.Size=UDim2.new(0,22,1,0); iL.Position=UDim2.new(0,8,0,0); iL.BackgroundTransparency=1; iL.Text=ico; iL.TextSize=12; iL.Font=Enum.Font.GothamBold; iL.TextColor3=C.YEL; iL.TextXAlignment=Enum.TextXAlignment.Center
+            -- Nama
+            local nL=Instance.new("TextLabel",row); nL.Size=UDim2.new(1,-74,1,0); nL.Position=UDim2.new(0,32,0,0); nL.BackgroundTransparency=1; nL.Text=nm; nL.TextSize=8; nL.Font=Enum.Font.GothamBold; nL.TextColor3=C.DIM; nL.TextXAlignment=Enum.TextXAlignment.Left; nL.TextTruncate=Enum.TextTruncate.AtEnd
+            -- Counter hidup
+            local cL=Instance.new("TextLabel",row); cL.Size=UDim2.new(0,34,1,0); cL.Position=UDim2.new(1,-36,0,0); cL.BackgroundTransparency=1; cL.Text="x"..cnt; cL.TextSize=7.5; cL.Font=Enum.Font.GothamBold; cL.TextColor3=C.DK; cL.TextXAlignment=Enum.TextXAlignment.Right
+
+            eEnemyRows[nm]={row=row,stroke=rs,nameLbl=nL,cntLbl=cL,dot=dot}
+            local bnm=nm
+            btn.MouseButton1Click:Connect(function()
+                -- Radio: tap nama yg sudah aktif → deselect (stop attack)
+                if activeEName==bnm then SelectEnemyName(nil) else SelectEnemyName(bnm) end
+            end)
+        end
+
+        agELbl.Text="👾 "..#names.." jenis  |  "..#enemies.." total  —  tap untuk serang"
+        agELbl.TextColor3=C.GRN
+    end
+
+    -- Live update: counter hidup per nama + sync AG.currentTarget ke musuh hidup
+    task.spawn(function()
+        while SG.Parent do
+            if #eEnemyNames>0 then
+                local liveCnt={}
+                for _,e in ipairs(GetEnemies()) do
+                    if not IsDead(e) then liveCnt[e.model.Name]=(liveCnt[e.model.Name] or 0)+1 end
+                end
+                for _,nm in ipairs(eEnemyNames) do
+                    local r=eEnemyRows[nm]; if not r then continue end
+                    local alive=liveCnt[nm] or 0
+                    r.cntLbl.Text="x"..alive
+                    r.cntLbl.TextColor3=alive==0 and Color3.fromRGB(120,40,40) or C.DK
+                end
+                -- Kalau target aktif sedang mati, cari musuh hidup baru dgn nama yg sama
+                if activeEName and (AG.currentTarget==nil or IsDead(AG.currentTarget) or not AG.currentTarget.model.Parent) then
+                    AG.currentTarget=FindLiveEnemyByName(activeEName)
+                end
+            end
+            task.wait(0.5)
         end
     end)
 
-    -- Global InputChanged untuk update posisi
-    UserInputService.InputChanged:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseMovement
-        or i.UserInputType == Enum.UserInputType.Touch then
-            UpdateDrag(i.Position)
+    eBtnRefresh.MouseButton1Click:Connect(function()
+        eBtnRefresh.Text="⏳..."
+        task.spawn(function() RefreshEnemies(); task.wait(0.3); eBtnRefresh.Text="🔄 Refresh" end)
+    end)
+
+    Sep(PG,396)
+
+    -- Tombol START/STOP
+    local agBtn,agBG,agLbl,agEm=BigBtn(PG,400,"🕺","MULAI AUTO RANDOM ATTACK",
+        ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(200,100,10)),ColorSequenceKeypoint.new(1,Color3.fromRGB(100,40,5))}))
+    do local s=agBtn:FindFirstChildOfClass("UIStroke"); if s then s.Color=C.AG end end
+
+    local agOn=false
+    local function SetAGUI(on)
+        if on then
+            agBG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(200,40,40)),ColorSequenceKeypoint.new(1,Color3.fromRGB(128,14,14))})
+            agEm.Text="🛑"; agLbl.Text="BERHENTI GOYANG"; agDot.BackgroundColor3=C.AG; agTxt.TextColor3=C.AG
+        else
+            agBG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(200,100,10)),ColorSequenceKeypoint.new(1,Color3.fromRGB(100,40,5))})
+            agEm.Text="🕺"; agLbl.Text="MULAI AUTO RANDOM ATTACK"; agDot.BackgroundColor3=C.DK; agTxt.TextColor3=C.DIM; agTxt.Text="STANDBY"
+        end
+    end
+
+    agBtn.MouseButton1Click:Connect(function()
+        TweenService:Create(agBtn,TweenInfo.new(0.07),{Size=UDim2.new(1,0,0,36)}):Play(); task.wait(0.07)
+        TweenService:Create(agBtn,TweenInfo.new(0.1),{Size=UDim2.new(1,0,0,40)}):Play()
+        if agOn then
+            StopLoop(AG,ReturnHRPToOrigin); agOn=false; SetAGUI(false)
+        else
+            agOn=true; SetAGUI(true)
+            RunAG(
+                function(msg) agTxt.Text=msg; agKLbl.Text=AG.killed.." kill  "..AG.collected.." item" end,
+                function() agOn=false; SetAGUI(false) end
+            )
         end
     end)
 
-    -- Stop drag saat lepas
-    UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1
-        or i.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
+end -- END PANEL AUTO RANDOM ATTACK
+
+-- =====================================================
+-- PANEL: PLAYER SETTINGS
+-- =====================================================
+do
+    local PP=NewPanel("player")
+    SH(PP,0,"🏃","Kecepatan Jalan")
+    local spPctL=L(PP,"100%",0.82,0,0.18,14,8,C.YEL,Enum.TextXAlignment.Right)
+    local spTrk=Instance.new("Frame",PP); spTrk.Size=UDim2.new(1,0,0,12); spTrk.Position=UDim2.new(0,0,0,22); spTrk.BackgroundColor3=Color3.fromRGB(13,7,26); spTrk.BorderSizePixel=0; Instance.new("UICorner",spTrk).CornerRadius=UDim.new(1,0); Instance.new("UIStroke",spTrk).Color=C.BORD
+    local spFill=Instance.new("Frame",spTrk); spFill.Size=UDim2.new(0.1,0,1,0); spFill.BackgroundColor3=C.ACC; spFill.BorderSizePixel=0; Instance.new("UICorner",spFill).CornerRadius=UDim.new(1,0)
+    local spKnob=Instance.new("Frame",spTrk); spKnob.Size=UDim2.new(0,16,0,16); spKnob.Position=UDim2.new(0.1,-8,0.5,-8); spKnob.BackgroundColor3=C.YEL; spKnob.BorderSizePixel=0; spKnob.ZIndex=3; Instance.new("UICorner",spKnob).CornerRadius=UDim.new(1,0)
+    local spDrag=false
+    local function UpdSpd(pct)
+        local r=math.clamp(pct,0,1000)/1000; spFill.Size=UDim2.new(r,0,1,0); spKnob.Position=UDim2.new(r,-8,0.5,-8); spPctL.Text=pct.."%"; ApplySpd(pct)
+    end
+    spTrk.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then spDrag=true; UpdSpd(math.floor(math.clamp((i.Position.X-spTrk.AbsolutePosition.X)/spTrk.AbsoluteSize.X,0,1)*100+0.5)*10) end end)
+    UserInputService.InputChanged:Connect(function(i) if spDrag and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then UpdSpd(math.floor(math.clamp((i.Position.X-spTrk.AbsolutePosition.X)/spTrk.AbsoluteSize.X,0,1)*100+0.5)*10) end end)
+    UserInputService.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then spDrag=false end end)
+
+    do -- Speed presets
+        local spPreRow=Instance.new("Frame",PP); spPreRow.Size=UDim2.new(1,0,0,22); spPreRow.Position=UDim2.new(0,0,0,38); spPreRow.BackgroundTransparency=1
+        local spL=Instance.new("UIListLayout",spPreRow); spL.FillDirection=Enum.FillDirection.Horizontal; spL.Padding=UDim.new(0,4)
+        local spPre={{0,"STOP"},{100,"100%"},{300,"300%"},{600,"600%"},{1000,"Max"}}; local spPreRf={}
+        for _,sp in ipairs(spPre) do
+            local pb=Instance.new("TextButton",spPreRow); pb.Size=UDim2.new(0,40,1,0); pb.BackgroundColor3=sp[1]==100 and Color3.fromRGB(64,20,150) or C.BOFF; pb.BorderSizePixel=0; pb.Text=sp[2]; pb.TextSize=7; pb.Font=Enum.Font.GothamBold; pb.TextColor3=sp[1]==100 and C.YEL or C.DIM; pb.AutoButtonColor=false; Instance.new("UICorner",pb).CornerRadius=UDim.new(0,6)
+            table.insert(spPreRf,{b=pb,p=sp[1]})
+            pb.MouseButton1Click:Connect(function() UpdSpd(sp[1]); for _,r in ipairs(spPreRf) do r.b.BackgroundColor3=r.p==sp[1] and Color3.fromRGB(64,20,150) or C.BOFF; r.b.TextColor3=r.p==sp[1] and C.YEL or C.DIM end end)
         end
-    end)
+    end
+
+    Sep(PP,64)
+
+    do -- Hide Notif
+        local r=RC(PP,68,34); L(r,"🔕 Sembunyikan Reward Notif",0.03,3,0.72,14,8,C.DIM)
+        local sub=L(r,"Popup reward muncul normal",0.03,19,0.72,12,6.5,C.DK)
+        local pp,kk=TP(r); SetPill(pp,kk,false)
+        pp.MouseButton1Click:Connect(function()
+            PS.hideNotif=not PS.hideNotif; SetPill(pp,kk,PS.hideNotif)
+            if PS.hideNotif then StartHideNotif(); sub.Text="✅ Aktif — popup dihapus"; sub.TextColor3=C.GRN
+            else StopHideNotif(); sub.Text="Popup reward muncul normal"; sub.TextColor3=C.DK end
+        end)
+    end
+
+    do -- Rejoin
+        local r=RC(PP,108,34); L(r,"🔄 Rejoin Server",0.03,3,0.65,14,8,C.DIM); L(r,"Kembali ke server yang sama",0.03,19,0.65,12,6.5,C.DK)
+        local b=Instance.new("TextButton",r); b.Size=UDim2.new(0,50,0,22); b.Position=UDim2.new(1,-54,0.5,-11); b.BackgroundColor3=Color3.fromRGB(16,60,140); b.BorderSizePixel=0; b.Text="GO"; b.TextSize=9; b.Font=Enum.Font.GothamBold; b.TextColor3=C.BLU; b.AutoButtonColor=false; Instance.new("UICorner",b).CornerRadius=UDim.new(0,7)
+        b.MouseButton1Click:Connect(function() b.Text="..."; task.wait(0.5); Rejoin() end)
+    end
+
+    do -- Anti AFK
+        local r=RC(PP,148,38); AFK.labelRef=L(r,"⏰ Anti AFK",0.03,3,0.72,14,8,C.DIM)
+        local sub=L(r,"Cegah kick saat farming otomatis",0.03,19,0.72,16,6.5,C.DK); sub.TextWrapped=true
+        local pp,kk=TP(r)
+        pp.MouseButton1Click:Connect(function()
+            AFK.on=not AFK.on; SetPill(pp,kk,AFK.on)
+            if AFK.on then StartAFK(); sub.Text="✅ Aktif"; sub.TextColor3=C.GRN
+            else StopAFK(); sub.Text="Cegah kick saat farming otomatis"; sub.TextColor3=C.DK end
+        end)
+    end
+
+    Sep(PP,192)
+    L(PP,"🖥 Server: "..tostring(game.JobId):sub(1,16).."…",0,196,1,12,6,C.DK)
+end -- END PANEL PLAYER
+
+-- =====================================================
+-- COMING SOON PANELS
+-- =====================================================
+do
+    local function CSP(tag,ico,title)
+        local p=NewPanel(tag); SH(p,0,ico,title)
+        local f=RC(p,26,80); local sl=L(f,"⏳  Segera Hadir\nNantikan update berikutnya!",0,0,1,80,9,C.DK,Enum.TextXAlignment.Center)
+        sl.Size=UDim2.new(1,-16,1,0); sl.Position=UDim2.new(0,8,0,0); sl.TextWrapped=true
+    end
+    CSP("raid","⚡","Auto Raid")
+    CSP("equip","🎲","Roll Equipment")
+    CSP("sword","🗡","Roll Sword")
+    CSP("ability","✨","Roll Hero Ability")
 end
 
 -- =====================================================
--- MINIMIZE
+-- SIDEBAR NAV
 -- =====================================================
-local minimized = false
-MinBtn.MouseButton1Click:Connect(function()
-    minimized = not minimized
-    TweenService:Create(Win, TweenInfo.new(0.28, Enum.EasingStyle.Quart), {
-        Size = minimized and UDim2.new(0.62, 0, 0, 40) or UDim2.new(0.62, 0, 0.58, 0)
-    }):Play()
-    MinBtn.Text = minimized and "□" or "—"
+do
+    local NAV={
+        {ico="⚔", lbl="Mass Attack", tag="mass"},
+        {ico="🕺", lbl="AUTO RANDOM ATTACK", tag="goyang"},
+        {ico="👤", lbl="Player",      tag="player"},
+        {ico="⚡", lbl="Auto Raid",   tag="raid"},
+        {ico="🎲", lbl="Roll Equip",  tag="equip"},
+        {ico="🗡", lbl="Roll Sword",  tag="sword"},
+        {ico="✨", lbl="Roll Ability",tag="ability"},
+    }
+    local sbPad=Instance.new("UIPadding",Sidebar); sbPad.PaddingTop=UDim.new(0,6); sbPad.PaddingLeft=UDim.new(0,4); sbPad.PaddingRight=UDim.new(0,4)
+    local sbList=Instance.new("UIListLayout",Sidebar); sbList.Padding=UDim.new(0,3); sbList.SortOrder=Enum.SortOrder.LayoutOrder
+    local NAVH=34
+    local navRf={}
+    local function SwTab(tag)
+        for _,p in pairs(Panels) do p.Visible=false end
+        if Panels[tag] then Panels[tag].Visible=true end
+        for _,r in pairs(navRf) do
+            local on=(r.tag==tag)
+            TweenService:Create(r.bg,TweenInfo.new(0.14),{BackgroundColor3=on and C.NSEL or C.SIDE}):Play()
+            r.dot.Visible=on; r.lbl.TextColor3=on and C.TXT or C.DIM
+        end
+    end
+    for i,item in ipairs(NAV) do
+        local bg=Instance.new("TextButton",Sidebar); bg.LayoutOrder=i; bg.Size=UDim2.new(1,0,0,NAVH); bg.BackgroundColor3=i==1 and C.NSEL or C.SIDE; bg.BorderSizePixel=0; bg.Text=""; bg.AutoButtonColor=false; Instance.new("UICorner",bg).CornerRadius=UDim.new(0,9)
+        local dot=Instance.new("Frame",bg); dot.Size=UDim2.new(0,3,0.5,0); dot.Position=UDim2.new(0,0,0.25,0); dot.BackgroundColor3=C.ACC2; dot.BorderSizePixel=0; dot.Visible=(i==1); Instance.new("UICorner",dot).CornerRadius=UDim.new(0,3)
+        L(bg,item.ico,0,3,1,16,12,item.tag=="goyang" and C.AG or C.YEL,Enum.TextXAlignment.Center)
+        local lb=L(bg,item.lbl,0,0,1,9,5,i==1 and C.TXT or C.DIM,Enum.TextXAlignment.Center); lb.Position=UDim2.new(0,0,1,-10); lb.TextWrapped=true
+        navRf[i]={tag=item.tag,bg=bg,dot=dot,lbl=lb}
+        bg.MouseButton1Click:Connect(function()
+            SwTab(item.tag)
+            TweenService:Create(bg,TweenInfo.new(0.07),{Size=UDim2.new(1,0,0,NAVH-4)}):Play(); task.wait(0.07)
+            TweenService:Create(bg,TweenInfo.new(0.10),{Size=UDim2.new(1,0,0,NAVH)}):Play()
+        end)
+    end
+    SwTab("mass")
+end -- END SIDEBAR
+
+-- =====================================================
+-- ALWAYS ON TOP
+-- =====================================================
+task.spawn(function()
+    while SG and SG.Parent do SG.DisplayOrder=9999; task.wait(1) end
 end)
 
-print("[ ASH Hub v11.0 ] Loaded ✓  |  Notif: Destroy RewardFrame + klik semua sudut layar")
+print("[ ASH Hub v12.6 ] ✓ | Hero guid: live capture hookmetamethod")
