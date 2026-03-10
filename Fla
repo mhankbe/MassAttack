@@ -1,6 +1,6 @@
 -- =====================================================
---   Script Auto Farming by FLa Project | v1
---   Hero guid: live capture via hookmetamethod HeroMoveToEnemyPos
+--   Script Auto Farming by FLa Project | v13.0
+--   Fix No Clip: loop semua part tiap frame (bukan hanya HRP)
 --   Mass Attack: Original (fire remotes tanpa teleport)
 -- =====================================================
 
@@ -111,8 +111,28 @@ local AG  = { running=false, thread=nil, autoCollect=true, killed=0, collected=0
 -- AGR hanya menyimpan config collect untuk AG (tidak ada interval/delay lagi)
 local AGR = {}
 
+-- Auto Raid state
+-- RANK level data untuk Pick Mode
+local RAID_RANKS = {
+    {name="Easiest", minLv=1,  maxLv=4 },
+    {name="Medium",  minLv=5,  maxLv=9 },
+    {name="Hard",    minLv=10, maxLv=14},
+    {name="God",     minLv=15, maxLv=18},
+}
+local AR = {
+    running      = false,
+    thread       = nil,
+    pickMode     = "Preferred",  -- "Easiest"|"Medium"|"Hard"|"God"|"Preferred"
+    prefMaps     = {},            -- map IDs yang dipilih di Preferred mode
+    waitBoss     = 10,
+    cooldown     = 30,
+    completed    = 0,             -- raid berhasil penuh (boss + reward)
+    curMap       = nil,
+    curStatus    = "Waiting Raids...",
+}
+
 -- Player / AFK state (pakai tabel biar hemat local slots)
-local PS  = { speedPct=100, hideNotif=false }
+local PS  = { speedPct=100, hideNotif=false, noClip=false }
 local AFK = { on=false, t=nil, secs=0, timerTh=nil, labelRef=nil }
 
 -- =====================================================
@@ -205,7 +225,7 @@ local function FireHeroRemotes(enemyGuid, enemyPos)
 end
 
 -- =====================================================
--- HRP TELEPORT HELPERS (AUTO RANDOM ATTACK saja)
+-- HRP TELEPORT HELPERS (Auto Goyang saja)
 -- =====================================================
 local ORIGIN_POS = Vector3.new(0,0,0)
 
@@ -227,34 +247,77 @@ local function ReturnHRPToOrigin()
 end
 
 -- =====================================================
--- MASS ATTACK LOOP (ORIGINAL — hanya fire remotes)
+-- MASS ATTACK LOOP
+-- Stuck detection:
+--   • Musuh tinggal 1 → langsung skip map
+--   • Kill count tidak naik selama 1 detik → skip map
+--   • Berlaku semua map 1–18
 -- =====================================================
 local function AttackLoop_Mass(onStatus)
     deadG={}; colG={}; dstQ={}
-    local start=MA.killed; local wt=0
-    while wt<6 and MA.running do
-        if #GetEnemies()>0 then break end
+    local start    = MA.killed
+    local wt       = 0
+
+    -- Tunggu musuh spawn max 6 detik
+    while wt < 6 and MA.running do
+        if #GetEnemies() > 0 then break end
         if onStatus then onStatus("⚠ Tidak ada musuh ("..math.floor(6-wt).."s)") end
-        task.wait(0.4); wt=wt+0.4
+        task.wait(0.4); wt = wt + 0.4
     end
     if not MA.running then return false end
-    if #GetEnemies()==0 then if onStatus then onStatus("⏭ Map kosong, skip...") end; return true end
-    local emptyT=0
+    if #GetEnemies() == 0 then
+        if onStatus then onStatus("⏭ Map kosong, skip...") end; return true
+    end
+
+    local emptyT   = 0          -- timer musuh hidup = 0 (Kill All mode)
+    local lastKill = MA.killed  -- snapshot kill count
+    local stuckT   = 0          -- akumulasi waktu tanpa kill baru
+
     while MA.running do
-        local isAll=(MA.killTarget==0); local here=MA.killed-start
-        local alive=0; for _,e in ipairs(GetEnemies()) do if not IsDead(e) then alive=alive+1 end end
+        local isAll = (MA.killTarget == 0)
+        local here  = MA.killed - start
+        local alive = 0
+        for _,e in ipairs(GetEnemies()) do if not IsDead(e) then alive = alive + 1 end end
+
+        -- ── Kondisi selesai normal ─────────────────────
         if isAll then
-            if alive==0 then emptyT=emptyT+0.08; if emptyT>=1.5 then return true end; task.wait(0.08); continue end
-            emptyT=0; if onStatus then onStatus("⚔ Kill All: "..alive.." sisa  💎"..MA.collected) end
+            if alive == 0 then
+                emptyT = emptyT + 0.08
+                if emptyT >= 1.5 then return true end
+                task.wait(0.08); continue
+            end
+            emptyT = 0
+            if onStatus then onStatus("⚔ Kill All: "..alive.." sisa  💎"..MA.collected) end
         else
-            emptyT=0; if here>=MA.killTarget then task.wait(0.05); return true end
+            if here >= MA.killTarget then task.wait(0.05); return true end
             if onStatus then onStatus("⚔ "..alive.." hidup  🎯"..here.."/"..MA.killTarget.."  💎"..MA.collected) end
         end
+
+        -- ── Stuck detection ────────────────────────────
+        -- Kasus 1: musuh tinggal 1 → langsung skip, tidak perlu tunggu
+        if alive == 1 then
+            if onStatus then onStatus("⏭ Musuh tinggal 1, skip map...") end
+            return true
+        end
+
+        -- Kasus 2: kill count tidak naik selama 1 detik → stuck
+        if MA.killed > lastKill then
+            lastKill = MA.killed
+            stuckT   = 0
+        else
+            stuckT = stuckT + 0.08
+            if stuckT >= 1.0 then
+                if onStatus then onStatus("⏭ Tidak bisa menyerang (stuck 1s), skip map...") end
+                return true
+            end
+        end
+
+        -- ── Fire attack semua musuh hidup ──────────────
         for _,e in ipairs(GetEnemies()) do
             if not IsDead(e) then
-                local hrp=e.model and e.model:FindFirstChild("HumanoidRootPart")
+                local hrp = e.model and e.model:FindFirstChild("HumanoidRootPart")
                 if hrp then
-                    local g,p=e.guid,hrp.Position
+                    local g,p = e.guid, hrp.Position
                     task.spawn(function()
                         pcall(function() RE_Click:InvokeServer({enemyGuid=g,enemyPos=p}) end)
                         pcall(function() RE_Atk:FireServer({attackEnemyGUID=g}) end)
@@ -269,7 +332,7 @@ local function AttackLoop_Mass(onStatus)
 end
 
 -- =====================================================
--- AUTO RANDOM ATTACK
+-- AUTO GOYANG
 -- AG.currentTarget = entry dari GetEnemies() yg dipilih
 -- user di Enemy List. Bisa diganti kapanpun (mid-attack).
 -- Loop: teleport ke target, attack di tempat.
@@ -474,6 +537,73 @@ local function StopHideNotif()
     if hideLoop then pcall(function() hideLoop:Disconnect() end); hideLoop=nil end
 end
 
+-- =====================================================
+-- NO CLIP
+-- Fallback otomatis:
+--   Method 1: sethiddenproperty (CanCollide hidden prop)
+--   Method 2: Loop set CanCollide=false tiap Heartbeat
+-- Berlaku untuk karakter utama + auto re-apply saat respawn.
+-- =====================================================
+local ncLoop = nil
+local NC_METHOD = nil  -- akan di-detect saat pertama aktif
+
+local function SetPartNoCollide(part, state)
+    -- Coba method 1: sethiddenproperty
+    if NC_METHOD == nil or NC_METHOD == 1 then
+        local ok = pcall(function()
+            sethiddenproperty(part, "CanCollide", not state)
+        end)
+        if ok and NC_METHOD == nil then NC_METHOD = 1 end
+        if NC_METHOD == 1 then return end
+    end
+    -- Fallback method 2: langsung set property
+    pcall(function() part.CanCollide = not state end)
+    if NC_METHOD == nil then NC_METHOD = 2 end
+end
+
+local function ApplyNoClip(char, enable)
+    if not char then return end
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
+            SetPartNoCollide(p, enable)
+        end
+    end
+    -- HumanoidRootPart juga perlu no collide
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then SetPartNoCollide(hrp, enable) end
+end
+
+local function StartNoClip()
+    PS.noClip = true
+    -- Loop Heartbeat — re-apply ke SEMUA part tiap frame
+    -- supaya server tidak bisa reset collision
+    ncLoop = RunService.Heartbeat:Connect(function()
+        if not PS.noClip then return end
+        local char = LP.Character
+        if not char then return end
+        for _, p in ipairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then
+                SetPartNoCollide(p, true)
+            end
+        end
+    end)
+end
+
+local function StopNoClip()
+    PS.noClip = false
+    if ncLoop then pcall(function() ncLoop:Disconnect() end); ncLoop = nil end
+    -- Kembalikan collision normal
+    ApplyNoClip(LP.Character, false)
+end
+
+-- Re-apply saat respawn
+LP.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    if PS.noClip then
+        ApplyNoClip(char, true)
+    end
+end)
+
 local function Rejoin() pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,LP) end) end
 
 local function FmtTime(s)
@@ -532,8 +662,8 @@ local C={
     NSEL =Color3.fromRGB(72,26,158),
     BOFF =Color3.fromRGB(22,14,42),
     TBAR =Color3.fromRGB(20,10,44),
-    AG   =Color3.fromRGB(255,140,20),    -- AUTO RANDOM ATTACK accent
-    AGNSL=Color3.fromRGB(140,70,10),     -- AUTO RANDOM ATTACK selected
+    AG   =Color3.fromRGB(255,140,20),    -- Auto Goyang accent
+    AGNSL=Color3.fromRGB(140,70,10),     -- Auto Goyang selected
 }
 
 -- =====================================================
@@ -849,7 +979,7 @@ do
 end -- END PANEL MASS ATTACK
 
 -- =====================================================
--- PANEL: AUTO RANDOM ATTACK
+-- PANEL: AUTO GOYANG
 -- =====================================================
 do
     local PG=NewPanel("goyang")
@@ -857,7 +987,7 @@ do
     -- Info box
     do
         local info=RC(PG,0,44,Color3.fromRGB(40,20,10)); Instance.new("UIStroke",info).Color=C.AG
-        L(info,"🕺 AUTO RANDOM ATTACK",0.03,3,0.95,14,9,C.AG)
+        L(info,"🕺 AUTO GOYANG",0.03,3,0.95,14,9,C.AG)
         L(info,"Teleport ke musuh 1-per-1, serang max speed.\nKarakter + Hero/Pet + Skill semua masuk.",0.03,19,0.95,24,6.5,C.DIM)
     end
 
@@ -1050,7 +1180,7 @@ do
     Sep(PG,396)
 
     -- Tombol START/STOP
-    local agBtn,agBG,agLbl,agEm=BigBtn(PG,400,"🕺","MULAI AUTO RANDOM ATTACK",
+    local agBtn,agBG,agLbl,agEm=BigBtn(PG,400,"🕺","MULAI AUTO GOYANG",
         ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(200,100,10)),ColorSequenceKeypoint.new(1,Color3.fromRGB(100,40,5))}))
     do local s=agBtn:FindFirstChildOfClass("UIStroke"); if s then s.Color=C.AG end end
 
@@ -1061,7 +1191,7 @@ do
             agEm.Text="🛑"; agLbl.Text="BERHENTI GOYANG"; agDot.BackgroundColor3=C.AG; agTxt.TextColor3=C.AG
         else
             agBG.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(200,100,10)),ColorSequenceKeypoint.new(1,Color3.fromRGB(100,40,5))})
-            agEm.Text="🕺"; agLbl.Text="MULAI AUTO RANDOM ATTACK"; agDot.BackgroundColor3=C.DK; agTxt.TextColor3=C.DIM; agTxt.Text="STANDBY"
+            agEm.Text="🕺"; agLbl.Text="MULAI AUTO GOYANG"; agDot.BackgroundColor3=C.DK; agTxt.TextColor3=C.DIM; agTxt.Text="STANDBY"
         end
     end
 
@@ -1079,7 +1209,7 @@ do
         end
     end)
 
-end -- END PANEL AUTO RANDOM ATTACK
+end -- END PANEL AUTO GOYANG
 
 -- =====================================================
 -- PANEL: PLAYER SETTINGS
@@ -1123,14 +1253,30 @@ do
         end)
     end
 
+    do -- No Clip
+        local r=RC(PP,108,34); L(r,"👻 No Clip",0.03,3,0.72,14,8,C.DIM)
+        local sub=L(r,"Tembus tembok & barrier map",0.03,19,0.72,12,6.5,C.DK)
+        local pp,kk=TP(r); SetPill(pp,kk,false)
+        pp.MouseButton1Click:Connect(function()
+            PS.noClip=not PS.noClip; SetPill(pp,kk,PS.noClip)
+            if PS.noClip then
+                StartNoClip()
+                sub.Text="✅ Aktif — karakter tembus tembok"; sub.TextColor3=C.GRN
+            else
+                StopNoClip()
+                sub.Text="Tembus tembok & barrier map"; sub.TextColor3=C.DK
+            end
+        end)
+    end
+
     do -- Rejoin
-        local r=RC(PP,108,34); L(r,"🔄 Rejoin Server",0.03,3,0.65,14,8,C.DIM); L(r,"Kembali ke server yang sama",0.03,19,0.65,12,6.5,C.DK)
+        local r=RC(PP,148,34); L(r,"🔄 Rejoin Server",0.03,3,0.65,14,8,C.DIM); L(r,"Kembali ke server yang sama",0.03,19,0.65,12,6.5,C.DK)
         local b=Instance.new("TextButton",r); b.Size=UDim2.new(0,50,0,22); b.Position=UDim2.new(1,-54,0.5,-11); b.BackgroundColor3=Color3.fromRGB(16,60,140); b.BorderSizePixel=0; b.Text="GO"; b.TextSize=9; b.Font=Enum.Font.GothamBold; b.TextColor3=C.BLU; b.AutoButtonColor=false; Instance.new("UICorner",b).CornerRadius=UDim.new(0,7)
         b.MouseButton1Click:Connect(function() b.Text="..."; task.wait(0.5); Rejoin() end)
     end
 
     do -- Anti AFK
-        local r=RC(PP,148,38); AFK.labelRef=L(r,"⏰ Anti AFK",0.03,3,0.72,14,8,C.DIM)
+        local r=RC(PP,188,38); AFK.labelRef=L(r,"⏰ Anti AFK",0.03,3,0.72,14,8,C.DIM)
         local sub=L(r,"Cegah kick saat farming otomatis",0.03,19,0.72,16,6.5,C.DK); sub.TextWrapped=true
         local pp,kk=TP(r)
         pp.MouseButton1Click:Connect(function()
@@ -1140,9 +1286,348 @@ do
         end)
     end
 
-    Sep(PP,192)
-    L(PP,"🖥 Server: "..tostring(game.JobId):sub(1,16).."…",0,196,1,12,6,C.DK)
+    Sep(PP,232)
+    L(PP,"🖥 Server: "..tostring(game.JobId):sub(1,16).."…",0,236,1,12,6,C.DK)
 end -- END PANEL PLAYER
+
+
+-- =====================================================
+-- AUTO RAID LOGIC
+-- =====================================================
+local AR_statusCb = nil  -- callback untuk update UI
+
+local function AR_GetMapIdsForMode()
+    -- Return list mapId yang akan dicoba sesuai pickMode
+    if AR.pickMode == "Preferred" then
+        if #AR.prefMaps > 0 then return AR.prefMaps end
+        -- fallback: semua map
+        local all={}; for i=1,18 do all[i]=i end; return all
+    end
+    for _, rk in ipairs(RAID_RANKS) do
+        if rk.name == AR.pickMode then
+            local list={}
+            for i=rk.minLv, rk.maxLv do list[#list+1]=i end
+            return list
+        end
+    end
+    local all={}; for i=1,18 do all[i]=i end; return all
+end
+
+local function AR_GetRankName(mapId)
+    for _, rk in ipairs(RAID_RANKS) do
+        if mapId >= rk.minLv and mapId <= rk.maxLv then return rk.name end
+    end
+    return "?"
+end
+
+local function AR_GetPortalPos(mapId)
+    local Map = workspace:FindFirstChild("Map")
+    local RE = Map and Map:FindFirstChild("RaidEnter")
+    if not RE then return nil end
+    for _, folder in ipairs(RE:GetChildren()) do
+        for _, model in ipairs(folder:GetChildren()) do
+            if model.Name == "RaidEnter"..mapId then
+                local rp = model:FindFirstChild("RootPart")
+                if rp then return rp.Position end
+                for _, p in ipairs(model:GetDescendants()) do
+                    if p:IsA("BasePart") then return p.Position end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function AR_GetBossParts()
+    local Map = workspace:FindFirstChild("Map")
+    local MB = Map and Map:FindFirstChild("MapBoss")
+    if not MB then return {} end
+    local list={}
+    for _, p in ipairs(MB:GetChildren()) do
+        if p:IsA("BasePart") then list[#list+1]=p end
+    end
+    return list
+end
+
+local function AR_GetRaidEnemies()
+    local Map = workspace:FindFirstChild("Map")
+    local RE = Map and Map:FindFirstChild("RaidsEnemys")
+    if not RE then return {} end
+    local list={}
+    for _, p in ipairs(RE:GetChildren()) do
+        if p:IsA("BasePart") then
+            local sid=p:GetAttribute("SpawnId"); local eid=p:GetAttribute("EnemyId")
+            if sid then list[#list+1]={part=p,spawnId=sid,enemyId=eid} end
+        end
+    end
+    return list
+end
+
+local function AR_FireDmg(spawnId, enemyId, pos)
+    pcall(function() RE_Click:InvokeServer({enemyGuid=tostring(spawnId),enemyPos=pos}) end)
+    pcall(function() RE_Atk:FireServer({attackEnemyGUID=tostring(spawnId)}) end)
+    pcall(function() RE_Atk:FireServer(tostring(spawnId)) end)
+    if enemyId then pcall(function() RE_Click:InvokeServer({enemyGuid=tostring(enemyId),enemyPos=pos}) end) end
+    for _, hGuid in ipairs(HERO_GUIDS) do
+        pcall(function() RE_HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=tostring(spawnId),skillType=1,masterId=MY_USER_ID}) end)
+        pcall(function() RE_HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=tostring(spawnId),skillType=2,masterId=MY_USER_ID}) end)
+        pcall(function() RE_HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=tostring(spawnId),skillType=3,masterId=MY_USER_ID}) end)
+        pcall(function() RE_HeroStand:FireServer({masterId=MY_USER_ID,cframe=CFrame.new(pos+Vector3.new(2,0,2)),guid=hGuid}) end)
+    end
+end
+
+local function AR_SetStatus(msg)
+    AR.curStatus = msg
+    if AR_statusCb then AR_statusCb() end
+end
+
+local function AutoRaidLoop()
+    while AR.running do
+        local mapIds = AR_GetMapIdsForMode()
+
+        -- ── STEP 1: Cari portal raid yang aktif ──
+        local foundMapId = nil
+        local portalPos  = nil
+        local waitSec    = 0
+
+        AR_SetStatus("Menunggu event raid...")
+        while AR.running do
+            -- Cek semua map yang diizinkan, cari yang punya portal aktif
+            for _, mid in ipairs(mapIds) do
+                local pos = AR_GetPortalPos(mid)
+                if pos then foundMapId=mid; portalPos=pos; break end
+            end
+            if foundMapId then break end
+            waitSec = waitSec + 1
+            AR_SetStatus("Menunggu raid... ("..waitSec.."s)")
+            task.wait(1)
+        end
+        if not AR.running then break end
+
+        local rankName = AR_GetRankName(foundMapId)
+        AR.curMap = foundMapId
+
+        -- ── STEP 2: Teleport ke portal ──
+        AR_SetStatus("Masuk portal Map "..foundMapId.." | "..rankName)
+        local char = LP.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then hrp.CFrame = CFrame.new(portalPos + Vector3.new(0,3,0)) end
+
+        -- Tunggu raid room load
+        for i=AR.waitBoss, 1, -1 do
+            if not AR.running then break end
+            AR_SetStatus("Masuk Map "..foundMapId.." | "..rankName.." | Loading "..i.."s...")
+            task.wait(1)
+        end
+        if not AR.running then break end
+
+        -- ── STEP 3: Attack boss + musuh ──
+        AR_SetStatus("Menyerang boss | Map "..foundMapId.." | "..rankName)
+        local bossTimer = 0
+        local maxBoss   = 90
+        local gotReward = false
+
+        while AR.running and bossTimer < maxBoss do
+            local bossParts = AR_GetBossParts()
+            if #bossParts == 0 then break end  -- boss mati
+
+            local bp = bossParts[1]
+            char = LP.Character; hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then hrp.CFrame = CFrame.new(bp.Position + Vector3.new(0,3,3)) end
+
+            for _, bossPart in ipairs(bossParts) do
+                local sid=bossPart:GetAttribute("SpawnId"); local eid=bossPart:GetAttribute("EnemyId")
+                if sid then AR_FireDmg(sid, eid, bossPart.Position) end
+            end
+            for _, e in ipairs(AR_GetRaidEnemies()) do
+                AR_FireDmg(e.spawnId, e.enemyId, e.part.Position)
+            end
+            task.wait(0.1); bossTimer = bossTimer + 0.1
+        end
+
+        -- ── STEP 4: Collect reward ──
+        AR_SetStatus("Mengambil reward | Map "..foundMapId)
+        local colF = workspace:FindFirstChild("Collects")
+        local rewardCount = 0
+        if colF then
+            for _, item in ipairs(colF:GetChildren()) do
+                local ig = item:GetAttribute("Guid") or item:GetAttribute("ItemGuid")
+                if ig then
+                    pcall(function() RE_Col:FireServer({itemGuid=ig}) end)
+                    rewardCount = rewardCount + 1
+                end
+            end
+        end
+        -- Hitung sebagai completed HANYA jika dapat reward
+        if rewardCount > 0 then
+            gotReward = true
+            AR.completed = AR.completed + 1
+        end
+        task.wait(1)
+
+        -- ── STEP 5: Cooldown ──
+        local resultMsg = gotReward
+            and ("✅ Raid selesai! Map "..foundMapId.." | "..rankName.." | Reward: "..rewardCount)
+            or  ("⚠ Raid selesai tanpa reward | Map "..foundMapId)
+
+        for i=AR.cooldown, 1, -1 do
+            if not AR.running then break end
+            AR_SetStatus(resultMsg.."\nDelay masuk raid lagi: "..i.."s")
+            task.wait(1)
+        end
+        AR.curMap = nil
+    end
+    AR_SetStatus("Waiting Raids...")
+    AR.curMap = nil
+end
+
+-- =====================================================
+-- PANEL: AUTO RAID
+-- =====================================================
+do
+    local PM = NewPanel("raid"); SH(PM,0,"⚡","Auto Raid")
+
+    -- ── Row: Status ──
+    local rStatus = RC(PM,26,52)
+    L(rStatus,"Status",4,2,0.5,11,6,C.DIM)
+    local lblStatus = L(rStatus,"Waiting Raids...",4,18,1,11,6,C.TXT)
+    lblStatus.TextWrapped=true; lblStatus.Size=UDim2.new(1,-8,0,30)
+
+    -- ── Row: Active Raid ──
+    local rActive = RC(PM,82,36)
+    L(rActive,"ActiveRaid",4,2,0.5,11,6,C.DIM)
+    local lblActive = L(rActive,"None",4,18,0.5,12,7,C.YEL)
+
+    -- ── Row: Raid Completed ──
+    local rComp = RC(PM,122,36)
+    L(rComp,"Raid Completed",4,2,0.5,11,6,C.DIM)
+    local lblComp = L(rComp,"0",4,18,0.5,14,8,C.GRN)
+
+    Sep(PM,162)
+
+    -- ── Row: Pick Mode ──
+    local rPick = RC(PM,168,36)
+    L(rPick,"Pick Mode",4,2,0.5,11,6,C.DIM)
+    local MODES = {"Easiest","Medium","Hard","God","Preferred"}
+    local modeW = 1/#MODES
+    local modeBtns = {}
+    for i,m in ipairs(MODES) do
+        local b=Instance.new("TextButton",rPick)
+        b.Size=UDim2.new(modeW,-2,0,18); b.Position=UDim2.new(modeW*(i-1),1,1,-20)
+        b.Text=m; b.Font=Enum.Font.GothamBold; b.TextSize=8; b.TextColor3=C.TXT
+        b.BorderSizePixel=0; b.AutoButtonColor=false
+        b.BackgroundColor3=(m==AR.pickMode) and C.ACC or C.DK
+        Instance.new("UICorner",b).CornerRadius=UDim.new(0,5)
+        modeBtns[m]=b
+        b.MouseButton1Click:Connect(function()
+            AR.pickMode=m
+            for _,rb in pairs(modeBtns) do rb.BackgroundColor3=C.DK end
+            b.BackgroundColor3=C.ACC
+            -- tampilkan/sembunyikan Preferred Maps section
+            local pm_frame = PM:FindFirstChild("PrefMapsSection")
+            if pm_frame then pm_frame.Visible=(m=="Preferred") end
+        end)
+    end
+
+    Sep(PM,208)
+
+    -- ── Preferred Maps section ──
+    local prefSection = Instance.new("Frame",PM)
+    prefSection.Name="PrefMapsSection"; prefSection.BackgroundTransparency=1
+    prefSection.Size=UDim2.new(1,0,0,90); prefSection.Position=UDim2.new(0,0,0,212)
+    prefSection.Visible=(AR.pickMode=="Preferred")
+
+    L(prefSection,"Preferred Maps (pilih satu atau lebih)",4,0,1,11,6,C.DIM)
+
+    local prefBtns={}
+    local colW6=1/6
+    for i=1,18 do
+        local col=(i-1)%6; local row=math.floor((i-1)/6)
+        local b=Instance.new("TextButton",prefSection)
+        b.Size=UDim2.new(colW6,-3,0,20); b.Position=UDim2.new(colW6*col,2,0,16+row*24)
+        b.Text=tostring(i); b.Font=Enum.Font.GothamBold; b.TextSize=9; b.TextColor3=C.TXT
+        b.BorderSizePixel=0; b.AutoButtonColor=false; b.BackgroundColor3=C.DK
+        Instance.new("UICorner",b).CornerRadius=UDim.new(0,5)
+        prefBtns[i]=b
+        b.MouseButton1Click:Connect(function()
+            -- toggle
+            local found=false
+            for j,v in ipairs(AR.prefMaps) do
+                if v==i then table.remove(AR.prefMaps,j); found=true; break end
+            end
+            if not found then AR.prefMaps[#AR.prefMaps+1]=i end
+            b.BackgroundColor3=not found and C.ACC or C.DK
+        end)
+    end
+
+    -- ── Wait Boss delay ──
+    -- posisi dinamis: 212 + 90 = 302 jika prefSection visible, tapi kita layout fixed
+    local yOpt = 306
+    Sep(PM,yOpt-2)
+    L(PM,"Delay setelah masuk portal",4,yOpt+4,0.7,11,6,C.DIM)
+    local waitVals={5,8,10,15,20}; local waitLbls={"5s","8s","10s","15s","20s"}
+    local waitRow=RC(PM,yOpt+20,22,Color3.fromRGB(0,0,0)); waitRow.BackgroundTransparency=1
+    for i,v in ipairs(waitVals) do
+        local b=Instance.new("TextButton",waitRow)
+        b.Size=UDim2.new(1/#waitVals,-3,1,0); b.Position=UDim2.new((i-1)/#waitVals,0,0,0)
+        b.Text=waitLbls[i]; b.Font=Enum.Font.GothamBold; b.TextSize=9; b.TextColor3=C.TXT
+        b.BorderSizePixel=0; b.AutoButtonColor=false
+        b.BackgroundColor3=(v==AR.waitBoss) and C.ACC or C.DK
+        Instance.new("UICorner",b).CornerRadius=UDim.new(0,5)
+        b.MouseButton1Click:Connect(function()
+            AR.waitBoss=v
+            for _,rb in ipairs(waitRow:GetChildren()) do if rb:IsA("TextButton") then rb.BackgroundColor3=C.DK end end
+            b.BackgroundColor3=C.ACC
+        end)
+    end
+
+    -- ── Cooldown ──
+    L(PM,"Cooldown antar raid",4,yOpt+48,0.7,11,6,C.DIM)
+    local cdVals={15,20,30,45,60}; local cdLbls={"15s","20s","30s","45s","60s"}
+    local cdRow=RC(PM,yOpt+64,22,Color3.fromRGB(0,0,0)); cdRow.BackgroundTransparency=1
+    for i,v in ipairs(cdVals) do
+        local b=Instance.new("TextButton",cdRow)
+        b.Size=UDim2.new(1/#cdVals,-3,1,0); b.Position=UDim2.new((i-1)/#cdVals,0,0,0)
+        b.Text=cdLbls[i]; b.Font=Enum.Font.GothamBold; b.TextSize=9; b.TextColor3=C.TXT
+        b.BorderSizePixel=0; b.AutoButtonColor=false
+        b.BackgroundColor3=(v==AR.cooldown) and C.ACC or C.DK
+        Instance.new("UICorner",b).CornerRadius=UDim.new(0,5)
+        b.MouseButton1Click:Connect(function()
+            AR.cooldown=v
+            for _,rb in ipairs(cdRow:GetChildren()) do if rb:IsA("TextButton") then rb.BackgroundColor3=C.DK end end
+            b.BackgroundColor3=C.ACC
+        end)
+    end
+
+    -- ── Enable Toggle ──
+    Sep(PM,yOpt+92)
+    local arOn=false
+    local rToggle=RC(PM,yOpt+98,34); L(rToggle,"Enable AutoRaid",4,2,0.6,13,7,C.TXT)
+    local tBtn,tDot=TP(rToggle)
+    tBtn.MouseButton1Click:Connect(function()
+        arOn=not arOn
+        SetPill(tBtn,tDot,arOn)
+        if arOn then
+            AR.running=true
+            AR.thread=task.spawn(AutoRaidLoop)
+        else
+            AR.running=false
+        end
+    end)
+
+    -- UI refresh loop
+    AR_statusCb = function()
+        lblStatus.Text = AR.curStatus
+        lblActive.Text = AR.curMap and ("Map "..AR.curMap.." | "..AR_GetRankName(AR.curMap)) or "None"
+        lblComp.Text   = tostring(AR.completed)
+    end
+    task.spawn(function()
+        while PM.Parent do
+            if AR_statusCb then AR_statusCb() end
+            task.wait(0.5)
+        end
+    end)
+end
 
 -- =====================================================
 -- COMING SOON PANELS
@@ -1153,7 +1638,6 @@ do
         local f=RC(p,26,80); local sl=L(f,"⏳  Segera Hadir\nNantikan update berikutnya!",0,0,1,80,9,C.DK,Enum.TextXAlignment.Center)
         sl.Size=UDim2.new(1,-16,1,0); sl.Position=UDim2.new(0,8,0,0); sl.TextWrapped=true
     end
-    CSP("raid","⚡","Auto Raid")
     CSP("equip","🎲","Roll Equipment")
     CSP("sword","🗡","Roll Sword")
     CSP("ability","✨","Roll Hero Ability")
@@ -1165,7 +1649,7 @@ end
 do
     local NAV={
         {ico="⚔", lbl="Mass Attack", tag="mass"},
-        {ico="🕺", lbl="AUTO RANDOM ATTACK", tag="goyang"},
+        {ico="🕺", lbl="Auto Goyang", tag="goyang"},
         {ico="👤", lbl="Player",      tag="player"},
         {ico="⚡", lbl="Auto Raid",   tag="raid"},
         {ico="🎲", lbl="Roll Equip",  tag="equip"},
@@ -1207,4 +1691,4 @@ task.spawn(function()
     while SG and SG.Parent do SG.DisplayOrder=9999; task.wait(1) end
 end)
 
-print("[ ASH Hub v12.6 ] ✓ | Hero guid: live capture hookmetamethod")
+print("[ ASH Hub v13.0 ] ✓ | Auto Raid: portal teleport + boss attack + cooldown")
