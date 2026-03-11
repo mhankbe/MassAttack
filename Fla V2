@@ -1,517 +1,413 @@
 -- =====================================================
---   Auto Farming GUI
---   Theme: Full Orange iPhone 17 Pro Max
---   By FLa Project
+--   Arise Shadow Hunt — Auto Farming GUI
+--   Theme : Full Orange iPhone 17 Pro Max
+--   By    : FLa Project
+--   Xeno  : Compatible
 -- =====================================================
 
-local Players           = game:GetService("Players")
-local TweenService      = game:GetService("TweenService")
-local UserInputService  = game:GetService("UserInputService")
-local GuiService        = game:GetService("GuiService")
+local Players          = game:GetService("Players")
+local TweenService     = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+local RS               = game:GetService("ReplicatedStorage")
 
-local LP = Players.LocalPlayer
+local LP  = Players.LocalPlayer
+local PG  = LP.PlayerGui
 
 -- =====================================================
--- DESTROY OLD GUI
+-- CLEANUP OLD GUI
 -- =====================================================
-pcall(function()
-    local old = LP.PlayerGui:FindFirstChild("ASH_GUI")
-    if old then old:Destroy() end
-    local oldDD = LP.PlayerGui:FindFirstChild("ASH_DD")
-    if oldDD then oldDD:Destroy() end
-end)
+for _, name in ipairs({"ASH_GUI", "ASH_DD"}) do
+    pcall(function()
+        local old = PG:FindFirstChild(name)
+        if old then old:Destroy() end
+    end)
+end
 task.wait(0.05)
 
 -- =====================================================
--- WARNA — Full Orange iPhone 17 Pro Max
+-- REMOTES
+-- =====================================================
+local Remotes        = RS:WaitForChild("Remotes")
+local RE_CollectItem = Remotes:WaitForChild("CollectItem")
+local RE_ExtraReward = Remotes:WaitForChild("ExtraReward")
+local RE_AutoHeroQuirk = Remotes:WaitForChild("AutoRandomHeroQuirk")
+
+-- =====================================================
+-- WARNA
 -- =====================================================
 local C = {
-    -- Background utama: oranye penuh
-    BG        = Color3.fromRGB(210, 85, 10),
-    BG2       = Color3.fromRGB(185, 70, 5),
-    BG3       = Color3.fromRGB(165, 58, 2),
-
-    -- Surface card
-    SURFACE   = Color3.fromRGB(175, 65, 5),
-    SURFACE2  = Color3.fromRGB(195, 75, 8),
-
-    -- Sidebar
-    SIDEBAR   = Color3.fromRGB(155, 55, 2),
-
-    -- Accent highlight
-    ACC       = Color3.fromRGB(255, 160, 60),
-    ACC2      = Color3.fromRGB(255, 200, 100),
-    ACC3      = Color3.fromRGB(255, 220, 140),
-    ACCGLOW   = Color3.fromRGB(140, 45, 0),
-
-    -- Border
-    BORD      = Color3.fromRGB(230, 110, 30),
-    BORD2     = Color3.fromRGB(255, 150, 55),
-
-    -- Text
-    TXT       = Color3.fromRGB(255, 250, 240),
-    TXT2      = Color3.fromRGB(255, 220, 170),
-    TXT3      = Color3.fromRGB(220, 160, 90),
-
-    -- Status
-    GRN       = Color3.fromRGB(60, 215, 100),
-    RED       = Color3.fromRGB(220, 55, 65),
-    YEL       = Color3.fromRGB(255, 200, 60),
-    BLU       = Color3.fromRGB(65, 160, 255),
-
-    -- Sidebar item aktif
-    SEL_BG    = Color3.fromRGB(140, 48, 0),
-    SEL_BORD  = Color3.fromRGB(255, 190, 80),
-
-    -- Window controls
-    WIN_CLOSE = Color3.fromRGB(220, 55, 65),
-    WIN_MIN   = Color3.fromRGB(255, 190, 50),
-    WIN_MAX   = Color3.fromRGB(60, 210, 80),
-
-    -- Titlebar
-    TBAR      = Color3.fromRGB(145, 50, 0),
+    BG       = Color3.fromRGB(210, 85, 10),
+    BG2      = Color3.fromRGB(185, 70,  5),
+    BG3      = Color3.fromRGB(165, 58,  2),
+    SURFACE  = Color3.fromRGB(175, 65,  5),
+    SURFACE2 = Color3.fromRGB(195, 75,  8),
+    SIDEBAR  = Color3.fromRGB(145, 50,  0),
+    ACC      = Color3.fromRGB(255, 160, 60),
+    ACC2     = Color3.fromRGB(255, 200,100),
+    ACC3     = Color3.fromRGB(255, 220,140),
+    BORD     = Color3.fromRGB(230, 110, 30),
+    BORD2    = Color3.fromRGB(255, 150, 55),
+    TXT      = Color3.fromRGB(255, 250,240),
+    TXT2     = Color3.fromRGB(255, 210,160),
+    TXT3     = Color3.fromRGB(255, 180,100),
+    TBAR     = Color3.fromRGB(140, 48,  0),
+    SEL_BG   = Color3.fromRGB(130, 45,  0),
+    SEL_BORD = Color3.fromRGB(255, 190, 80),
+    WIN_CLOSE= Color3.fromRGB(220, 55, 65),
+    WIN_MIN  = Color3.fromRGB(255, 190, 50),
+    WIN_MAX  = Color3.fromRGB(60,  210, 80),
+    BLACK    = Color3.fromRGB(0,   0,   0),
 }
 
 -- =====================================================
--- HELPER FUNCTIONS
+-- UI HELPERS
 -- =====================================================
-local function Corner(parent, radius)
-    local c = Instance.new("UICorner", parent)
-    c.CornerRadius = UDim.new(0, radius or 8)
-    return c
+local function New(class, props)
+    local obj = Instance.new(class)
+    for k, v in pairs(props) do
+        pcall(function() obj[k] = v end)
+    end
+    return obj
 end
 
-local function Stroke(parent, color, thickness, transparency)
-    local s = Instance.new("UIStroke", parent)
-    s.Color = color or C.BORD
-    s.Thickness = thickness or 1
-    s.Transparency = transparency or 0
-    return s
-end
-
-local function Gradient(parent, c0, c1, rotation)
-    local g = Instance.new("UIGradient", parent)
-    g.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, c0),
-        ColorSequenceKeypoint.new(1, c1),
+local function Frame(parent, color, size)
+    return New("Frame", {
+        Parent = parent,
+        BackgroundColor3 = color,
+        Size = size or UDim2.new(1,0,1,0),
+        BorderSizePixel = 0,
     })
-    g.Rotation = rotation or 90
-    return g
 end
 
-local function Label(parent, text, size, color, font, xAlign)
-    local l = Instance.new("TextLabel", parent)
-    l.BackgroundTransparency = 1
-    l.Text = text
-    l.TextSize = size or 10
-    l.TextColor3 = color or C.TXT
-    l.Font = font or Enum.Font.GothamBold
-    l.TextXAlignment = xAlign or Enum.TextXAlignment.Left
-    l.TextWrapped = true
-    l.Size = UDim2.new(1, 0, 1, 0)
-    return l
+local function Btn(parent, color, size)
+    return New("TextButton", {
+        Parent = parent,
+        BackgroundColor3 = color,
+        Size = size or UDim2.new(1,0,1,0),
+        BorderSizePixel = 0,
+        Text = "",
+        AutoButtonColor = false,
+    })
 end
 
-local function Frame(parent, bg, size, pos)
-    local f = Instance.new("Frame", parent)
-    f.BackgroundColor3 = bg or C.SURFACE
-    f.BorderSizePixel = 0
-    if size then f.Size = size end
-    if pos  then f.Position = pos end
-    return f
+local function Label(parent, text, size, color, font, xalign)
+    return New("TextLabel", {
+        Parent = parent,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1,0,1,0),
+        Text = text,
+        TextSize = size or 12,
+        TextColor3 = color or C.TXT,
+        Font = font or Enum.Font.Gotham,
+        TextXAlignment = xalign or Enum.TextXAlignment.Left,
+        BorderSizePixel = 0,
+    })
 end
 
-local function Btn(parent, bg, size, pos)
-    local b = Instance.new("TextButton", parent)
-    b.BackgroundColor3 = bg or C.SURFACE
-    b.BorderSizePixel = 0
-    b.Text = ""
-    b.AutoButtonColor = false
-    if size then b.Size = size end
-    if pos  then b.Position = pos end
-    return b
+local function Corner(obj, r)
+    New("UICorner", {Parent=obj, CornerRadius=UDim.new(0, r or 8)})
+end
+
+local function Stroke(obj, color, thickness, transparency)
+    New("UIStroke", {
+        Parent=obj,
+        Color=color or C.BORD,
+        Thickness=thickness or 1,
+        Transparency=transparency or 0,
+    })
+end
+
+local function Padding(obj, top, bottom, left, right)
+    New("UIPadding", {
+        Parent=obj,
+        PaddingTop=UDim.new(0,top or 6),
+        PaddingBottom=UDim.new(0,bottom or 6),
+        PaddingLeft=UDim.new(0,left or 8),
+        PaddingRight=UDim.new(0,right or 8),
+    })
+end
+
+local function ListLayout(parent, dir, align, spacing)
+    return New("UIListLayout", {
+        Parent=parent,
+        FillDirection=dir or Enum.FillDirection.Vertical,
+        HorizontalAlignment=align or Enum.HorizontalAlignment.Left,
+        SortOrder=Enum.SortOrder.LayoutOrder,
+        Padding=UDim.new(0, spacing or 4),
+    })
 end
 
 -- =====================================================
 -- SCREEN GUI
 -- =====================================================
-local SG = Instance.new("ScreenGui")
-SG.Name = "ASH_GUI"
-SG.ResetOnSpawn = false
-SG.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-SG.DisplayOrder = 9999
-SG.Parent = LP.PlayerGui
-
-local DD_SG = Instance.new("ScreenGui")
-DD_SG.Name = "ASH_DD"
-DD_SG.ResetOnSpawn = false
-DD_SG.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-DD_SG.DisplayOrder = 19999
-DD_SG.IgnoreGuiInset = false
-DD_SG.Parent = LP.PlayerGui
-
--- =====================================================
--- BUBBLE — tulisan "FLa" oranye, tanpa teks lain
--- =====================================================
-local Bubble = Btn(SG, C.TBAR, UDim2.new(0, 52, 0, 52))
-Bubble.Position = UDim2.new(0.5, -26, 0, 60)
-Bubble.Visible = false
-Corner(Bubble, 26)
-do
-    Gradient(Bubble, Color3.fromRGB(200, 80, 8), Color3.fromRGB(130, 40, 0), 135)
-    Stroke(Bubble, C.ACC, 1.8, 0)
-    local lFLa = Label(Bubble, "FLa", 17, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-    lFLa.Size = UDim2.new(1, 0, 1, 0)
-end
-
--- Bubble drag
-do
-    local bd, bsm, bsp = false, Vector2.new(), Vector2.new()
-    Bubble.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            bd = true
-            bsm = Vector2.new(i.Position.X, i.Position.Y)
-            bsp = Vector2.new(Bubble.AbsolutePosition.X, Bubble.AbsolutePosition.Y)
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(i)
-        if bd and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-            local inset = GuiService:GetGuiInset()
-            local vp = workspace.CurrentCamera.ViewportSize
-            Bubble.Position = UDim2.new(0,
-                math.clamp(bsp.X + (i.Position.X - bsm.X), 0, vp.X - 52), 0,
-                math.clamp(bsp.Y + (i.Position.Y - bsm.Y) - inset.Y, 0, vp.Y - 52))
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            bd = false
-        end
-    end)
-end
+local ScreenGui = New("ScreenGui", {
+    Parent = PG,
+    Name = "ASH_GUI",
+    ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    DisplayOrder = 9999,
+})
 
 -- =====================================================
 -- MAIN WINDOW
 -- =====================================================
-local WIN_W = 480
-local WIN_H = 340
-local TBAR_H = 42
-local SIDE_W = 130
-
--- State fullscreen
-local isFullscreen = false
-local normalSize   = UDim2.new(0, WIN_W, 0, WIN_H)
-local normalPos    = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2)
-
-local Win = Frame(SG, C.BG, normalSize)
-Win.Position = normalPos
-Win.ClipsDescendants = false
-Corner(Win, 14)
-Stroke(Win, C.BORD2, 1.5, 0)
-do
-    -- outer glow oranye
-    local glow = Frame(Win, C.ACC, UDim2.new(1, 6, 1, 6), UDim2.new(0, -3, 0, -3))
-    glow.ZIndex = 0; Corner(glow, 17)
-    glow.BackgroundTransparency = 0.82
-end
--- gradient oranye penuh di background window
-Gradient(Win, Color3.fromRGB(230, 95, 15), Color3.fromRGB(155, 55, 2), 135)
-
--- Window drag (hanya saat bukan fullscreen)
-do
-    local wd, wdm, wdp = false, Vector2.new(), Vector2.new()
-    Win.InputBegan:Connect(function(i)
-        if not isFullscreen and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then
-            wd = true
-            wdm = Vector2.new(i.Position.X, i.Position.Y)
-            wdp = Vector2.new(Win.AbsolutePosition.X, Win.AbsolutePosition.Y)
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(i)
-        if wd and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-            local inset = GuiService:GetGuiInset()
-            local vp = workspace.CurrentCamera.ViewportSize
-            Win.Position = UDim2.new(0,
-                math.clamp(wdp.X + (i.Position.X - wdm.X), 0, vp.X - WIN_W), 0,
-                math.clamp(wdp.Y + (i.Position.Y - wdm.Y) - inset.Y, 0, vp.Y - WIN_H))
-            normalPos = Win.Position
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            wd = false
-        end
-    end)
-end
+local WIN_W, WIN_H = 500, 360
+local Window = Frame(ScreenGui, C.BG, UDim2.new(0, WIN_W, 0, WIN_H))
+Window.Position = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2)
+Window.ClipsDescendants = true
+Corner(Window, 14)
+Stroke(Window, C.BORD2, 1.5, 0)
+New("UIGradient", {
+    Parent = Window,
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, C.BG),
+        ColorSequenceKeypoint.new(1, C.BG3),
+    }),
+    Rotation = 135,
+})
 
 -- =====================================================
--- TITLEBAR
+-- TOPBAR
 -- =====================================================
-local TBar = Frame(Win, C.TBAR, UDim2.new(1, 0, 0, TBAR_H))
-TBar.Position = UDim2.new(0, 0, 0, 0)
-do
-    Corner(TBar, 14)
-    local fix = Frame(TBar, C.TBAR, UDim2.new(1, 0, 0, 14))
-    fix.Position = UDim2.new(0, 0, 1, -14)
-    Gradient(TBar, Color3.fromRGB(160, 58, 2), Color3.fromRGB(120, 38, 0), 90)
+local TopBar = Frame(Window, C.TBAR, UDim2.new(1,0,0,40))
+Corner(TopBar, 14)
+local TBFix = Frame(TopBar, C.TBAR, UDim2.new(1,0,0,14))
+TBFix.Position = UDim2.new(0,0,1,-14)
 
-    -- ── ICON DUA PEDANG SILANG ────────────────────────
-    local iconBg = Frame(TBar, Color3.fromRGB(200, 80, 8), UDim2.new(0, 28, 0, 28))
-    iconBg.Position = UDim2.new(0, 10, 0.5, -14)
-    Corner(iconBg, 7)
-    Gradient(iconBg, Color3.fromRGB(255, 140, 40), Color3.fromRGB(160, 55, 5), 135)
-    Stroke(iconBg, C.ACC, 1, 0.1)
-    local iconL = Label(iconBg, "⚔", 15, Color3.fromRGB(255, 245, 220), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-    iconL.Size = UDim2.new(1, 0, 1, 0)
+local IconBg = Frame(TopBar, C.SEL_BG, UDim2.new(0,28,0,28))
+IconBg.Position = UDim2.new(0,8,0.5,-14)
+Corner(IconBg, 7)
+Stroke(IconBg, C.ACC, 1, 0.3)
+local IconLbl = Label(IconBg, "⚔", 14, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+IconLbl.Size = UDim2.new(1,0,1,0)
 
-    -- ── TITLE: "Auto Farming" + "by FLa" (1 baris judul) ──
-    local titleF = Frame(TBar, Color3.fromRGB(0,0,0), UDim2.new(0, 200, 0, TBAR_H))
-    titleF.Position = UDim2.new(0, 44, 0, 0)
-    titleF.BackgroundTransparency = 1
-    local t1 = Label(titleF, "Auto Farming", 11, C.TXT, Enum.Font.GothamBold)
-    t1.Size = UDim2.new(1, 0, 0, 16); t1.Position = UDim2.new(0, 0, 0, 7)
-    local t2 = Label(titleF, "by FLa", 8, C.ACC2, Enum.Font.GothamBold)
-    t2.Size = UDim2.new(1, 0, 0, 12); t2.Position = UDim2.new(0, 0, 0, 24)
+local TitleLbl = Label(TopBar, "Auto Farming", 13, C.ACC2, Enum.Font.GothamBold)
+TitleLbl.Size = UDim2.new(0,160,0,22)
+TitleLbl.Position = UDim2.new(0,44,0,5)
+local SubLbl = Label(TopBar, "Arise Shadow Hunt  •  by FLa", 9, C.TXT3, Enum.Font.Gotham)
+SubLbl.Size = UDim2.new(0,220,0,14)
+SubLbl.Position = UDim2.new(0,44,0,23)
 
-    -- ── WINDOW CONTROLS ──────────────────────────────
-    -- kanan → kiri: ✕ merah | □ hijau (fullscreen) | — kuning (minimize)
-    local function WinBtn(xOff, bg, txt, txtCol)
-        local b = Btn(TBar, bg, UDim2.new(0, 22, 0, 22))
-        b.Position = UDim2.new(1, xOff, 0.5, -11)
-        Corner(b, 6)
-        Label(b, txt, 11, txtCol or C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-        return b
-    end
-
-    local btnClose = WinBtn(-28, C.WIN_CLOSE, "✕",  Color3.fromRGB(255,255,255))
-    local btnMax   = WinBtn(-54, C.WIN_MAX,   "⛶",  Color3.fromRGB(255,255,255))
-    local btnMin   = WinBtn(-80, C.WIN_MIN,   "—",  Color3.fromRGB(40,20,0))
-
-    -- ── CLOSE: hentikan script total ─────────────────
-    btnClose.MouseButton1Click:Connect(function()
-        TweenService:Create(Win, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
-            Size     = UDim2.new(0, 0, 0, 0),
-            Position = UDim2.new(0,
-                Win.AbsolutePosition.X + Win.AbsoluteSize.X/2, 0,
-                Win.AbsolutePosition.Y + Win.AbsoluteSize.Y/2),
-        }):Play()
-        task.wait(0.2)
-        pcall(function() DD_SG:Destroy() end)
-        pcall(function() SG:Destroy() end)
-        -- cleanup sisa di PlayerGui
-        pcall(function()
-            for _, v in ipairs(LP.PlayerGui:GetChildren()) do
-                if v.Name == "ASH_GUI" or v.Name == "ASH_DD" then v:Destroy() end
-            end
-        end)
-        print("[ Auto Farming GUI ] Ditutup — semua script dihentikan.")
-    end)
-
-    -- ── FULLSCREEN / NORMAL ───────────────────────────
-    btnMax.MouseButton1Click:Connect(function()
-        isFullscreen = not isFullscreen
-        if isFullscreen then
-            normalPos  = Win.Position
-            normalSize = Win.Size
-            local vp    = workspace.CurrentCamera.ViewportSize
-            local inset = GuiService:GetGuiInset()
-            TweenService:Create(Win, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-                Size     = UDim2.new(0, vp.X, 0, vp.Y - inset.Y),
-                Position = UDim2.new(0, 0, 0, 0),
-            }):Play()
-        else
-            TweenService:Create(Win, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-                Size     = normalSize,
-                Position = normalPos,
-            }):Play()
-        end
-    end)
-
-    -- ── MINIMIZE ──────────────────────────────────────
-    local function DoMinimize()
-        Win.Visible = false
-        local vp = workspace.CurrentCamera.ViewportSize
-        Bubble.Position = UDim2.new(0, vp.X/2-26, 0, 60)
-        Bubble.Size = UDim2.new(0, 0, 0, 0)
-        Bubble.Visible = true
-        TweenService:Create(Bubble, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-            {Size=UDim2.new(0,52,0,52)}):Play()
-        task.spawn(function()
-            local t = 0
-            while Bubble.Visible do
-                t = t + task.wait(0.03)
-                local p = Bubble.Position
-                Bubble.Position = UDim2.new(p.X.Scale, p.X.Offset, p.Y.Scale,
-                    p.Y.Offset + math.sin(t*2)*3.5 - math.sin((t-0.03)*2)*3.5)
-            end
-        end)
-    end
-
-    local function DoRestore()
-        TweenService:Create(Bubble, TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-            {Size=UDim2.new(0,0,0,0)}):Play()
-        task.wait(0.17)
-        Bubble.Visible = false
-        Bubble.Size = UDim2.new(0,52,0,52)
-        Win.Visible = true
-    end
-
-    btnMin.MouseButton1Click:Connect(DoMinimize)
-    Bubble.MouseButton1Click:Connect(DoRestore)
+-- Window buttons
+local function WinBtn(x, color, symbol)
+    local b = Btn(TopBar, color, UDim2.new(0,14,0,14))
+    b.Position = UDim2.new(1, x, 0.5, -7)
+    Corner(b, 7)
+    local l = Label(b, symbol, 8, C.BLACK, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+    l.Size = UDim2.new(1,0,1,0)
+    l.Visible = false
+    b.MouseEnter:Connect(function() l.Visible = true end)
+    b.MouseLeave:Connect(function() l.Visible = false end)
+    return b
 end
+local BtnClose = WinBtn(-22, C.WIN_CLOSE, "✕")
+local BtnMin   = WinBtn(-42, C.WIN_MIN,   "—")
+local BtnMax   = WinBtn(-62, C.WIN_MAX,   "□")
+
+-- Drag
+local dragging, dragStart, startPos = false, nil, nil
+TopBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true; dragStart = input.Position; startPos = Window.Position
+    end
+end)
+TopBar.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement or
+        input.UserInputType == Enum.UserInputType.Touch) then
+        local d = input.Position - dragStart
+        Window.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + d.X,
+            startPos.Y.Scale, startPos.Y.Offset + d.Y)
+    end
+end)
+
+-- =====================================================
+-- FLOATING BUBBLE
+-- =====================================================
+local Bubble = Btn(ScreenGui, C.TBAR, UDim2.new(0,60,0,60))
+Bubble.Position = UDim2.new(0,20,0.5,-30)
+Bubble.Visible = false
+Corner(Bubble, 30)
+Stroke(Bubble, C.ACC, 2, 0)
+local BubbleLbl = Label(Bubble, "FLa", 20, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+BubbleLbl.Size = UDim2.new(1,0,1,0)
+
+local bubbleConn
+local function StartFloat()
+    local t = 0
+    local base = Bubble.Position.Y.Scale
+    bubbleConn = RunService.Heartbeat:Connect(function(dt)
+        t = t + dt
+        Bubble.Position = UDim2.new(
+            Bubble.Position.X.Scale,
+            Bubble.Position.X.Offset,
+            base,
+            -30 + math.sin(t*2)*8
+        )
+    end)
+end
+local function StopFloat()
+    if bubbleConn then bubbleConn:Disconnect(); bubbleConn = nil end
+end
+
+local bDrag, bDragStart, bStartPos = false, nil, nil
+Bubble.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        bDrag=true; bDragStart=input.Position; bStartPos=Bubble.Position; StopFloat()
+    end
+end)
+Bubble.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        bDrag=false
+        if Bubble.Visible then StartFloat() end
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if bDrag and (
+        input.UserInputType == Enum.UserInputType.MouseMovement or
+        input.UserInputType == Enum.UserInputType.Touch) then
+        local d = input.Position - bDragStart
+        Bubble.Position = UDim2.new(
+            bStartPos.X.Scale, bStartPos.X.Offset+d.X,
+            bStartPos.Y.Scale, bStartPos.Y.Offset+d.Y)
+    end
+end)
+
+BtnMin.MouseButton1Click:Connect(function()
+    Window.Visible = false; Bubble.Visible = true; StartFloat()
+end)
+Bubble.MouseButton1Click:Connect(function()
+    if bDrag then return end
+    StopFloat(); Bubble.Visible=false; Window.Visible=true
+end)
+
+local isFS, prevSz, prevPs = false, Window.Size, Window.Position
+BtnMax.MouseButton1Click:Connect(function()
+    isFS = not isFS
+    if isFS then
+        prevSz=Window.Size; prevPs=Window.Position
+        TweenService:Create(Window,TweenInfo.new(0.2),{Size=UDim2.new(1,0,1,0),Position=UDim2.new(0,0,0,0)}):Play()
+    else
+        TweenService:Create(Window,TweenInfo.new(0.2),{Size=prevSz,Position=prevPs}):Play()
+    end
+end)
+
+BtnClose.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
 
 -- =====================================================
 -- BODY
 -- =====================================================
-local Body = Frame(Win, C.BG2, UDim2.new(1, 0, 1, -TBAR_H))
-Body.Position = UDim2.new(0, 0, 0, TBAR_H)
-Body.ClipsDescendants = true
-Corner(Body, 14)
-Gradient(Body, Color3.fromRGB(195, 72, 6), Color3.fromRGB(145, 48, 0), 135)
+local Body = Frame(Window, C.BG3, UDim2.new(1,0,1,-40))
+Body.Position = UDim2.new(0,0,0,40)
+
+local SideBar = Frame(Body, C.SIDEBAR, UDim2.new(0,100,1,0))
+
+local SideScroll = New("ScrollingFrame", {
+    Parent = SideBar,
+    Size = UDim2.new(1,0,1,-8),
+    Position = UDim2.new(0,0,0,4),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 2,
+    ScrollBarImageColor3 = C.ACC,
+    CanvasSize = UDim2.new(0,0,0,0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+})
+ListLayout(SideScroll, nil, Enum.HorizontalAlignment.Center, 2)
+Padding(SideScroll, 4, 4, 4, 4)
+
+local ContentFrame = Frame(Body, C.BLACK, UDim2.new(1,-100,1,0))
+ContentFrame.Position = UDim2.new(0,100,0,0)
+ContentFrame.BackgroundTransparency = 1
 
 -- =====================================================
--- SIDEBAR
--- =====================================================
-local Sidebar = Frame(Body, C.SIDEBAR, UDim2.new(0, SIDE_W, 1, 0))
-Sidebar.ZIndex = 2
-Gradient(Sidebar, Color3.fromRGB(148, 54, 2), Color3.fromRGB(112, 36, 0), 90)
-
-local Div = Frame(Body, C.BORD, UDim2.new(0, 1, 1, 0))
-Div.Position = UDim2.new(0, SIDE_W, 0, 0)
-Div.BackgroundTransparency = 0.4
-
-local SideScroll = Instance.new("ScrollingFrame", Sidebar)
-SideScroll.Size = UDim2.new(1, 0, 1, 0)
-SideScroll.BackgroundTransparency = 1
-SideScroll.BorderSizePixel = 0
-SideScroll.ScrollBarThickness = 0
-SideScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-SideScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-
-local SidePad = Instance.new("UIPadding", SideScroll)
-SidePad.PaddingTop = UDim.new(0, 8)
-SidePad.PaddingLeft = UDim.new(0, 6)
-SidePad.PaddingRight = UDim.new(0, 6)
-SidePad.PaddingBottom = UDim.new(0, 8)
-
-local SideList = Instance.new("UIListLayout", SideScroll)
-SideList.Padding = UDim.new(0, 2)
-SideList.SortOrder = Enum.SortOrder.LayoutOrder
-
--- =====================================================
--- CONTENT AREA
--- =====================================================
-local ContentArea = Frame(Body, Color3.fromRGB(0,0,0), UDim2.new(1, -SIDE_W-1, 1, 0))
-ContentArea.Position = UDim2.new(0, SIDE_W+1, 0, 0)
-ContentArea.BackgroundTransparency = 1
-ContentArea.ClipsDescendants = true
-
--- =====================================================
--- NAV ITEMS
+-- TAB SYSTEM
 -- =====================================================
 local NAV_ITEMS = {
-    { ico="⌂",  lbl="Main",          tag="main"    },
-    { ico="★",  lbl="Exclusive",     tag="excl"    },
-    { ico="⚔",  lbl="Farm",          tag="farm"    },
-    { ico="⚙",  lbl="Automation",    tag="auto"    },
-    { ico="✦",  lbl="Reroling",      tag="rerol"   },
-    { ico="⬡",  lbl="Potion",        tag="potion"  },
-    { ico="◎",  lbl="Raid Notifier", tag="raid"    },
-    { ico="≡",  lbl="Misc",          tag="misc"    },
-    { ico="◈",  lbl="Settings",      tag="set"     },
-    { ico="ℹ",  lbl="Info",          tag="info"    },
+    { tag="main",     ico="🏠", lbl="Main"      },
+    { tag="farm",     ico="⚔",  lbl="Farm"      },
+    { tag="collect",  ico="💰", lbl="Collect"   },
+    { tag="autoroll", ico="🎲", lbl="Auto Roll" },
+    { tag="settings", ico="⚙",  lbl="Settings"  },
+    { tag="info",     ico="ℹ",  lbl="Info"      },
 }
 
--- =====================================================
--- PANEL SYSTEM
--- =====================================================
-local Panels = {}
-local ActiveTab = nil
-local NavRefs = {}
+local Panels, NavRefs, ActiveTab = {}, {}, ""
 
 local function NewPanel(tag)
-    local p = Instance.new("ScrollingFrame", ContentArea)
-    p.Name = tag
-    p.Size = UDim2.new(1, 0, 1, 0)
-    p.BackgroundTransparency = 1
-    p.BorderSizePixel = 0
-    p.ScrollBarThickness = 3
-    p.ScrollBarImageColor3 = C.ACC
-    p.CanvasSize = UDim2.new(0, 0, 0, 0)
-    p.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    p.Visible = false
-    local pad = Instance.new("UIPadding", p)
-    pad.PaddingTop = UDim.new(0, 10)
-    pad.PaddingBottom = UDim.new(0, 16)
-    pad.PaddingLeft = UDim.new(0, 12)
-    pad.PaddingRight = UDim.new(0, 12)
-    local list = Instance.new("UIListLayout", p)
-    list.Padding = UDim.new(0, 6)
-    list.SortOrder = Enum.SortOrder.LayoutOrder
+    local p = New("ScrollingFrame", {
+        Parent = ContentFrame,
+        Size = UDim2.new(1,0,1,0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = C.ACC,
+        CanvasSize = UDim2.new(0,0,0,0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Visible = false,
+    })
+    ListLayout(p, nil, Enum.HorizontalAlignment.Center, 5)
+    Padding(p, 8, 8, 8, 8)
     Panels[tag] = p
     return p
 end
 
 local function SwitchTab(tag)
-    for _, p in pairs(Panels) do p.Visible = false end
-    if Panels[tag] then Panels[tag].Visible = true end
+    if ActiveTab == tag then return end
     ActiveTab = tag
-    for _, r in pairs(NavRefs) do
-        local on = (r.tag == tag)
-        TweenService:Create(r.bg, TweenInfo.new(0.14), {
-            BackgroundColor3       = on and C.SEL_BG or C.SIDEBAR,
-            BackgroundTransparency = on and 0 or 1,
+    for t, p in pairs(Panels) do p.Visible = (t==tag) end
+    for _, ref in ipairs(NavRefs) do
+        local sel = ref.tag == tag
+        TweenService:Create(ref.bg, TweenInfo.new(0.12), {
+            BackgroundTransparency = sel and 0 or 1,
+            BackgroundColor3 = sel and C.SEL_BG or C.SIDEBAR,
         }):Play()
-        r.bar.BackgroundColor3 = on and C.ACC or C.SIDEBAR
-        r.ico.TextColor3 = on and C.ACC2 or C.TXT3
-        r.lbl.TextColor3 = on and C.TXT or C.TXT2
-        r.lbl.Font = on and Enum.Font.GothamBold or Enum.Font.Gotham
-        if on then
-            Stroke(r.bg, C.SEL_BORD, 1, 0)
+        ref.bar.BackgroundColor3 = sel and C.ACC2 or C.SIDEBAR
+        ref.lbl.TextColor3 = sel and C.ACC2 or C.TXT2
+        ref.ico.TextColor3 = sel and C.ACC2 or C.TXT3
+        local s = ref.bg:FindFirstChildWhichIsA("UIStroke")
+        if sel then
+            if not s then
+                New("UIStroke",{Parent=ref.bg,Color=C.SEL_BORD,Thickness=1,Transparency=0.4})
+            end
         else
-            local s = r.bg:FindFirstChildOfClass("UIStroke")
             if s then s:Destroy() end
         end
     end
 end
 
--- =====================================================
--- BUILD NAV
--- =====================================================
 for i, item in ipairs(NAV_ITEMS) do
-    local NAV_H = 32
-    local bg = Btn(SideScroll, C.SIDEBAR, UDim2.new(1, 0, 0, NAV_H))
-    bg.LayoutOrder = i
-    bg.BackgroundTransparency = 1
-    Corner(bg, 8)
-
-    local bar = Frame(bg, C.SIDEBAR, UDim2.new(0, 3, 0.55, 0))
-    bar.Position = UDim2.new(0, 0, 0.22, 0)
-    Corner(bar, 2)
-
-    local icoL = Label(bg, item.ico, 12, C.TXT3, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-    icoL.Size = UDim2.new(0, 22, 1, 0); icoL.Position = UDim2.new(0, 8, 0, 0)
-
-    local lblL = Label(bg, item.lbl, 9.5, C.TXT2, Enum.Font.Gotham, Enum.TextXAlignment.Left)
-    lblL.Size = UDim2.new(1, -34, 1, 0); lblL.Position = UDim2.new(0, 33, 0, 0)
+    local NAV_H = 34
+    local bg = Btn(SideScroll, C.SIDEBAR, UDim2.new(1,-8,0,NAV_H))
+    bg.LayoutOrder = i; bg.BackgroundTransparency = 1; Corner(bg,8)
+    local bar = Frame(bg, C.SIDEBAR, UDim2.new(0,3,0.5,0))
+    bar.Position = UDim2.new(0,0,0.25,0); Corner(bar,2)
+    local icoL = Label(bg, item.ico, 13, C.TXT3, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+    icoL.Size = UDim2.new(0,24,1,0); icoL.Position = UDim2.new(0,6,0,0)
+    local lblL = Label(bg, item.lbl, 9, C.TXT2, Enum.Font.Gotham, Enum.TextXAlignment.Left)
+    lblL.Size = UDim2.new(1,-34,1,0); lblL.Position = UDim2.new(0,32,0,0)
     lblL.TextTruncate = Enum.TextTruncate.AtEnd
-
-    NavRefs[i] = { tag=item.tag, bg=bg, bar=bar, ico=icoL, lbl=lblL }
-
-    bg.MouseButton1Click:Connect(function()
-        SwitchTab(item.tag)
-        TweenService:Create(bg, TweenInfo.new(0.06), {Size=UDim2.new(1,0,0,NAV_H-2)}):Play()
-        task.wait(0.06)
-        TweenService:Create(bg, TweenInfo.new(0.09), {Size=UDim2.new(1,0,0,NAV_H)}):Play()
-    end)
+    NavRefs[i] = {tag=item.tag, bg=bg, bar=bar, ico=icoL, lbl=lblL}
+    bg.MouseButton1Click:Connect(function() SwitchTab(item.tag) end)
     bg.MouseEnter:Connect(function()
-        if ActiveTab ~= item.tag then
-            TweenService:Create(bg, TweenInfo.new(0.1), {BackgroundTransparency=0, BackgroundColor3=Color3.fromRGB(180,68,5)}):Play()
+        if ActiveTab~=item.tag then
+            TweenService:Create(bg,TweenInfo.new(0.1),{BackgroundTransparency=0,BackgroundColor3=Color3.fromRGB(170,62,4)}):Play()
         end
     end)
     bg.MouseLeave:Connect(function()
-        if ActiveTab ~= item.tag then
-            TweenService:Create(bg, TweenInfo.new(0.1), {BackgroundTransparency=1}):Play()
+        if ActiveTab~=item.tag then
+            TweenService:Create(bg,TweenInfo.new(0.1),{BackgroundTransparency=1}):Play()
         end
     end)
 end
@@ -519,204 +415,491 @@ end
 -- =====================================================
 -- PANEL HELPERS
 -- =====================================================
-local function PanelHeader(panel, title, order)
-    local f = Frame(panel, Color3.fromRGB(0,0,0), UDim2.new(1,0,0,20))
-    f.BackgroundTransparency = 1; f.LayoutOrder = order or 0
-    local l = Label(f, title, 9, C.ACC2, Enum.Font.GothamBold)
-    l.Size = UDim2.new(0.7, 0, 1, 0)
+local function SectionHeader(panel, title, order)
+    local f = Frame(panel, C.BLACK, UDim2.new(1,0,0,20))
+    f.BackgroundTransparency=1; f.LayoutOrder=order or 0
+    local l = Label(f, "  "..title, 9, C.ACC2, Enum.Font.GothamBold)
+    l.Size = UDim2.new(1,0,1,0)
     local line = Frame(f, C.ACC2, UDim2.new(1,0,0,1))
-    line.Position = UDim2.new(0,0,1,-1); line.BackgroundTransparency = 0.5
-    return f
+    line.Position=UDim2.new(0,0,1,-1); line.BackgroundTransparency=0.6
 end
 
-local function EmptyCard(panel, height, order)
-    local card = Frame(panel, C.SURFACE, UDim2.new(1,0,0,height or 38))
-    card.LayoutOrder = order or 1
-    Corner(card, 8); Stroke(card, C.BORD, 1, 0.3)
-    return card
-end
-
-local function SubItem(panel, ico, title, order)
-    local card = Btn(panel, C.SURFACE, UDim2.new(1,0,0,38))
-    card.LayoutOrder = order or 1
-    Corner(card, 8); Stroke(card, C.BORD, 1, 0.3)
-
-    local iconBg = Frame(card, C.SEL_BG, UDim2.new(0,28,0,28))
-    iconBg.Position = UDim2.new(0,6,0.5,-14); Corner(iconBg, 7)
-    Label(iconBg, ico, 13, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-
-    local titleL = Label(card, title, 10, C.TXT, Enum.Font.GothamBold)
-    titleL.Size = UDim2.new(1,-70,1,0); titleL.Position = UDim2.new(0,40,0,0)
-
-    local arrow = Label(card, "›", 14, C.TXT3, Enum.Font.GothamBold, Enum.TextXAlignment.Right)
-    arrow.Size = UDim2.new(0,20,1,0); arrow.Position = UDim2.new(1,-24,0,0)
-
-    card.MouseEnter:Connect(function() TweenService:Create(card, TweenInfo.new(0.1), {BackgroundColor3=C.SURFACE2}):Play() end)
-    card.MouseLeave:Connect(function() TweenService:Create(card, TweenInfo.new(0.1), {BackgroundColor3=C.SURFACE}):Play() end)
-    return card
-end
-
--- =====================================================
--- REMOTE REFERENCES
--- =====================================================
-local RS             = game:GetService("ReplicatedStorage")
-local RE_CollectItem = RS:WaitForChild("Remotes"):WaitForChild("CollectItem")
-local RE_ExtraReward = RS:WaitForChild("Remotes"):WaitForChild("ExtraReward")
-
--- =====================================================
--- MAIN STATE
--- =====================================================
-local MAIN_STATE      = { autoCollectDrops = false }
-local _autoCollectLoop = nil
-local _collectedGuids  = {}  -- cache guid yg sudah di-collect, hindari double invoke
-
--- Scan Workspace.Golds, ambil Attribute "GUID" dari tiap OutGold
-local function GetAllDropGuids()
-    local guids = {}
-    local goldsFolder = workspace:FindFirstChild("Golds")
-    if not goldsFolder then return guids end
-
-    for _, obj in ipairs(goldsFolder:GetChildren()) do
-        local guid = nil
-        pcall(function()
-            guid = obj:GetAttribute("GUID")
-        end)
-        if guid and guid ~= "" and not _collectedGuids[guid] then
-            table.insert(guids, guid)
-        end
+local function ToggleRow(panel, title, desc, order, onToggle)
+    local h = desc and 50 or 38
+    local row = Frame(panel, C.SURFACE, UDim2.new(1,0,0,h))
+    row.LayoutOrder=order or 1; Corner(row,8); Stroke(row,C.BORD,1,0.4)
+    local lbl = Label(row, title, 10, C.TXT, Enum.Font.GothamBold)
+    lbl.Size=UDim2.new(1,-60,0,18); lbl.Position=UDim2.new(0,12,0, desc and 8 or 10)
+    if desc then
+        local sub=Label(row,desc,8,C.TXT2,Enum.Font.Gotham)
+        sub.Size=UDim2.new(1,-60,0,14); sub.Position=UDim2.new(0,12,0,26)
     end
-    return guids
-end
-
-local function DoAutoCollect(on)
-    if on then
-        _collectedGuids   = {}
-        _autoCollectLoop  = task.spawn(function()
-            while MAIN_STATE.autoCollectDrops do
-                local guids = GetAllDropGuids()
-
-                for _, guid in ipairs(guids) do
-                    if not MAIN_STATE.autoCollectDrops then break end
-
-                    _collectedGuids[guid] = true
-
-                    -- Collect item utama
-                    pcall(function()
-                        RE_CollectItem:InvokeServer(guid)
-                    end)
-
-                    -- Extra reward / bonus gold
-                    pcall(function()
-                        RE_ExtraReward:FireServer({
-                            isSell = true,
-                            guid   = guid,
-                        })
-                    end)
-
-                    task.wait(0.05) -- jeda kecil antar item
-                end
-
-                task.wait(0.2) -- interval scan ulang workspace
-            end
-        end)
-    else
-        if _autoCollectLoop then
-            pcall(function() task.cancel(_autoCollectLoop) end)
-            _autoCollectLoop = nil
-        end
-        _collectedGuids = {}
-    end
-end
-
--- =====================================================
--- MAIN PANEL
--- =====================================================
-do
-    local p = NewPanel("main")
-
-    local function MakePill(parent)
-        local pill = Btn(parent, Color3.fromRGB(130,45,0), UDim2.new(0,42,0,22))
-        pill.Position = UDim2.new(1,-50,0.5,-11); Corner(pill, 11)
-        local knob = Frame(pill, Color3.fromRGB(200,140,80), UDim2.new(0,16,0,16))
-        knob.Position = UDim2.new(0,3,0.5,-8); Corner(knob, 8)
-        return pill, knob
-    end
-
-    local function SetPill(pill, knob, on)
-        TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.ACC2 or Color3.fromRGB(130,45,0)}):Play()
-        TweenService:Create(knob, TweenInfo.new(0.16), {
-            Position = on and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,3,0.5,-8),
-            BackgroundColor3 = on and Color3.fromRGB(255,255,255) or Color3.fromRGB(200,140,80),
+    local pill=Btn(row,Color3.fromRGB(120,40,0),UDim2.new(0,44,0,24))
+    pill.Position=UDim2.new(1,-54,0.5,-12); Corner(pill,12)
+    local knob=Frame(pill,Color3.fromRGB(190,130,70),UDim2.new(0,18,0,18))
+    knob.Position=UDim2.new(0,3,0.5,-9); Corner(knob,9)
+    local state=false
+    local function SetState(v)
+        state=v
+        TweenService:Create(pill,TweenInfo.new(0.16),{BackgroundColor3=v and C.ACC2 or Color3.fromRGB(120,40,0)}):Play()
+        TweenService:Create(knob,TweenInfo.new(0.16),{
+            Position=v and UDim2.new(1,-21,0.5,-9) or UDim2.new(0,3,0.5,-9),
+            BackgroundColor3=v and Color3.fromRGB(255,255,255) or Color3.fromRGB(190,130,70),
         }):Play()
+        if onToggle then onToggle(v) end
     end
+    pill.MouseButton1Click:Connect(function() SetState(not state) end)
+    row.MouseEnter:Connect(function() TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=C.SURFACE2}):Play() end)
+    row.MouseLeave:Connect(function() TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=C.SURFACE}):Play() end)
+    return row, SetState
+end
 
-    local function ToggleRow(panel, title, order, onToggle)
-        local row = Frame(panel, C.SURFACE, UDim2.new(1,0,0,38))
-        row.LayoutOrder = order; Corner(row, 8); Stroke(row, C.BORD, 1, 0.3)
-        local lbl = Label(row, title, 10, C.TXT, Enum.Font.GothamBold)
-        lbl.Size = UDim2.new(1,-60,1,0); lbl.Position = UDim2.new(0,12,0,0)
-        local pill, knob = MakePill(row)
-        local state = false
-        pill.MouseButton1Click:Connect(function()
-            state = not state; SetPill(pill, knob, state)
-            if onToggle then onToggle(state) end
-        end)
-        row.MouseEnter:Connect(function() TweenService:Create(row, TweenInfo.new(0.1), {BackgroundColor3=C.SURFACE2}):Play() end)
-        row.MouseLeave:Connect(function() TweenService:Create(row, TweenInfo.new(0.1), {BackgroundColor3=C.SURFACE}):Play() end)
-        return row, pill, knob
+-- =====================================================
+-- STATE & LOOPS
+-- =====================================================
+local STATE = {
+    autoCollect   = false,
+    autoDestroyer = false,
+    autoArise     = false,
+    autoRoll      = false,
+}
+local LOOPS     = {}
+local COLLECTED = {}
+
+local function StopLoop(key)
+    if LOOPS[key] then
+        pcall(function() task.cancel(LOOPS[key]) end)
+        LOOPS[key] = nil
     end
+end
 
-    ToggleRow(p, "Auto Magnet Gold", 1, function(on)
-        MAIN_STATE.autoCollectDrops = on
-        DoAutoCollect(on)
+-- =====================================================
+-- STATUS DOTS (diisi setelah panel Main dibuat)
+-- =====================================================
+local StatusDots = {}
+local StatusLbls = {}
+
+local function RefreshStatus()
+    local map = {
+        collect={STATE.autoCollect,"Auto Collect Gold"},
+        destroyer={STATE.autoDestroyer,"Auto Destroyer"},
+        arise={STATE.autoArise,"Auto Arise"},
+        roll={STATE.autoRoll,"Auto Roll"},
+    }
+    for key, data in pairs(map) do
+        local active, label = data[1], data[2]
+        if StatusDots[key] then
+            StatusDots[key].BackgroundColor3 = active
+                and Color3.fromRGB(80,220,80)
+                or  Color3.fromRGB(100,100,100)
+        end
+        if StatusLbls[key] then
+            StatusLbls[key].Text = label..(active and "  —  ON" or "  —  OFF")
+            StatusLbls[key].TextColor3 = active and C.ACC2 or C.TXT2
+        end
+    end
+end
+
+-- =====================================================
+-- LOGIC : AUTO COLLECT GOLD
+-- =====================================================
+local function DoAutoCollect(on)
+    StopLoop("collect"); COLLECTED={}
+    if not on then return end
+    LOOPS["collect"] = task.spawn(function()
+        while STATE.autoCollect do
+            local golds = workspace:FindFirstChild("Golds")
+            if golds then
+                for _, obj in ipairs(golds:GetChildren()) do
+                    if not STATE.autoCollect then break end
+                    local guid = obj:GetAttribute("GUID")
+                    if guid and not COLLECTED[guid] then
+                        COLLECTED[guid] = true
+                        pcall(function() RE_CollectItem:InvokeServer(guid) end)
+                        pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end)
+                        task.wait(0.05)
+                    end
+                end
+            end
+            task.wait(0.25)
+        end
     end)
 end
 
 -- =====================================================
--- PANELS LAINNYA
+-- LOGIC : AUTO DESTROYER
 -- =====================================================
-do local p = NewPanel("excl");   PanelHeader(p,"EXCLUSIVE",0);    EmptyCard(p,38,1); EmptyCard(p,38,2) end
-do local p = NewPanel("farm");   PanelHeader(p,"FARM",0);         EmptyCard(p,38,1); EmptyCard(p,38,2); EmptyCard(p,38,3) end
-do local p = NewPanel("auto");   PanelHeader(p,"AUTOMATION",0);   EmptyCard(p,38,1); EmptyCard(p,38,2) end
-do
-    local p = NewPanel("rerol"); PanelHeader(p,"REROLING",0)
-    SubItem(p,"⚙","Hero Gear Fastroll",1)
-    SubItem(p,"⚒","Weapon Ability Fastroll",2)
-    SubItem(p,"✦","Hero Ability Fastroll",3)
-    SubItem(p,"◎","Auto Roll Halo",4)
+local _destroyerConn = nil
+local function DoAutoDestroyer(on)
+    StopLoop("destroyer")
+    if _destroyerConn then _destroyerConn:Disconnect(); _destroyerConn=nil end
+    if not on then return end
+    _destroyerConn = workspace.DescendantAdded:Connect(function(obj)
+        if not STATE.autoDestroyer then return end
+        task.wait(0.1)
+        local guid; pcall(function() guid=obj:GetAttribute("GUID") end)
+        if guid then
+            pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end)
+        end
+    end)
 end
-do local p = NewPanel("potion"); PanelHeader(p,"POTION",0);       EmptyCard(p,38,1) end
-do local p = NewPanel("raid");   PanelHeader(p,"RAID NOTIFIER",0); EmptyCard(p,38,1); EmptyCard(p,38,2) end
-do local p = NewPanel("misc");   PanelHeader(p,"MISC",0);         EmptyCard(p,38,1) end
-do local p = NewPanel("set");    PanelHeader(p,"SETTINGS",0);     EmptyCard(p,38,1); EmptyCard(p,38,2) end
+
+-- =====================================================
+-- LOGIC : AUTO ARISE
+-- =====================================================
+local _ariseConn = nil
+local function DoAutoArise(on)
+    StopLoop("arise")
+    if _ariseConn then _ariseConn:Disconnect(); _ariseConn=nil end
+    if not on then return end
+    _ariseConn = workspace.DescendantAdded:Connect(function(obj)
+        if not STATE.autoArise then return end
+        task.wait(0.1)
+        local guid; pcall(function() guid=obj:GetAttribute("GUID") end)
+        if guid then
+            pcall(function() RE_ExtraReward:FireServer({isSell=false, isAuto=false, guid=guid}) end)
+        end
+    end)
+end
+
+-- =====================================================
+-- QUIRK DATA — Stage 1 (ID → Nama)
+-- =====================================================
+local QUIRK_LIST = {
+    {id=99001, name="Silver Purse"},
+    {id=99002, name="Raw Strength"},
+    {id=99003, name="Tiny Luck"},
+    {id=99004, name="Precise Strike"},
+    {id=99005, name="Combo Rhythm"},
+    {id=99006, name="Lucky Charm"},
+    {id=99007, name="Gold Sense"},
+    {id=99008, name="Berserker's Rage"},
+    {id=99009, name="Rapid Slash"},
+    {id=99010, name="Godslayer"},
+    {id=99011, name="Phantom Rush"},
+    {id=99012, name="Legend Hunter"},
+    {id=99013, name="Midas Touch"},
+    {id=99014, name="Hyper Sprint"},
+    {id=99015, name="Time Skipper"},
+    {id=99016, name="Cosmic Luck"},
+    {id=99017, name="Destiny Rewriter"},
+    {id=99018, name="Final Judgment"},
+}
+
+-- =====================================================
+-- LOGIC : AUTO ROLL
+-- =====================================================
+local _rollHeroGuid   = ""
+local _rollTargetIds  = {}   -- {[id]=true} quirk yang jadi stop condition
+local _rollCaptured   = false
+local _rollStatusLbl  = nil  -- label status di panel (diisi nanti)
+
+-- Hook AutoRandomHeroQuirk untuk capture heroGuid otomatis
+-- Saat user klik StartReroll di game 1x → kita tangkap heroGuid-nya
+local _hookConn = nil
+local function SetupHeroGuidHook(onCapture)
+    pcall(function()
+        local remote = RE_AutoHeroQuirk
+        local oldInvoke
+        oldInvoke = hookfunction(remote.InvokeServer, function(self, args)
+            if args and args.heroGuid and not _rollCaptured then
+                _rollHeroGuid  = args.heroGuid
+                _rollCaptured  = true
+                if _rollStatusLbl then
+                    _rollStatusLbl.Text = "✓ heroGuid tertangkap!"
+                    _rollStatusLbl.TextColor3 = Color3.fromRGB(80,220,80)
+                end
+                if onCapture then onCapture(args.heroGuid) end
+                print("[ ASH Roll ] heroGuid captured: "..args.heroGuid)
+            end
+            return oldInvoke(self, args)
+        end)
+    end)
+end
+
+local function DoAutoRoll(on)
+    StopLoop("roll")
+    if not on then return end
+
+    if not _rollHeroGuid or _rollHeroGuid == "" then
+        print("[ ASH ] heroGuid belum tertangkap! Klik StartReroll di game dulu 1x.")
+        if _rollStatusLbl then
+            _rollStatusLbl.Text = "⚠ Klik StartReroll di game dulu 1x!"
+            _rollStatusLbl.TextColor3 = Color3.fromRGB(255,180,60)
+        end
+        STATE.autoRoll = false
+        RefreshStatus()
+        return
+    end
+
+    -- Kumpulkan semua stopQuirkIds dari pilihan user
+    local stopIds = {}
+    for id, selected in pairs(_rollTargetIds) do
+        if selected then
+            table.insert(stopIds, id)
+        end
+    end
+
+    -- Kalau tidak ada yang dicentang → pakai semua ID (stop di quirk apapun)
+    if #stopIds == 0 then
+        for _, q in ipairs(QUIRK_LIST) do
+            table.insert(stopIds, q.id)
+        end
+    end
+
+    if _rollStatusLbl then
+        _rollStatusLbl.Text = "⟳ Rolling... ("..#stopIds.." target)"
+        _rollStatusLbl.TextColor3 = Color3.fromRGB(255,200,100)
+    end
+
+    LOOPS["roll"] = task.spawn(function()
+        while STATE.autoRoll do
+            local result = nil
+            pcall(function()
+                result = RE_AutoHeroQuirk:InvokeServer({
+                    heroGuid     = _rollHeroGuid,
+                    drawId       = 920001,
+                    stopQuirkIds = stopIds,
+                })
+            end)
+
+            -- Cek apakah server return quirk yang match
+            if result then
+                local gotId = nil
+                if type(result) == "table" then
+                    gotId = result.quirkId or result.id or result[1]
+                elseif type(result) == "number" then
+                    gotId = result
+                end
+
+                if gotId and _rollTargetIds[gotId] then
+                    -- Target quirk didapat! Stop
+                    STATE.autoRoll = false
+                    StopLoop("roll")
+                    local name = ""
+                    for _, q in ipairs(QUIRK_LIST) do
+                        if q.id == gotId then name = q.name; break end
+                    end
+                    if _rollStatusLbl then
+                        _rollStatusLbl.Text = "✓ Dapat: "..name.."!"
+                        _rollStatusLbl.TextColor3 = Color3.fromRGB(80,220,80)
+                    end
+                    print("[ ASH Roll ] Target didapat: "..name)
+                    RefreshStatus()
+                    break
+                end
+            end
+
+            task.wait(0.5)
+        end
+    end)
+end
+
+-- =====================================================
+-- PANEL : MAIN
+-- =====================================================
 do
-    local p = NewPanel("info"); PanelHeader(p,"INFO",0)
-    local card = EmptyCard(p, 80, 1)
-    local lines = {
-        {"Script",  "Auto Farming GUI"},
-        {"Author",  "FLa Project"},
-        {"Version", "1.0"},
-        {"Game",    "Arise Shadow Hunt"},
+    local p = NewPanel("main")
+    SectionHeader(p, "STATUS FITUR", 0)
+
+    local keys = {
+        {key="collect",   label="Auto Collect Gold"},
+        {key="destroyer", label="Auto Destroyer"},
+        {key="arise",     label="Auto Arise"},
+        {key="roll",      label="Auto Roll"},
     }
-    for i, ln in ipairs(lines) do
-        local row = Frame(card, Color3.fromRGB(0,0,0), UDim2.new(1,0,0,16))
-        row.Position = UDim2.new(0,8,0,(i-1)*17+6); row.BackgroundTransparency = 1
-        local k = Label(row, ln[1]..":", 8.5, C.TXT3, Enum.Font.GothamBold); k.Size = UDim2.new(0,70,1,0)
-        local v = Label(row, ln[2], 8.5, C.TXT, Enum.Font.Gotham)
-        v.Size = UDim2.new(1,-74,1,0); v.Position = UDim2.new(0,74,0,0)
+    for i, item in ipairs(keys) do
+        local card = Frame(p, C.SURFACE, UDim2.new(1,0,0,36))
+        card.LayoutOrder=i; Corner(card,8); Stroke(card,C.BORD,1,0.4)
+        local dot = Frame(card, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
+        dot.Position=UDim2.new(0,12,0.5,-4); Corner(dot,4)
+        local lbl = Label(card, item.label.."  —  OFF", 10, C.TXT2, Enum.Font.Gotham)
+        lbl.Size=UDim2.new(1,-30,1,0); lbl.Position=UDim2.new(0,28,0,0)
+        StatusDots[item.key] = dot
+        StatusLbls[item.key] = lbl
     end
 end
 
 -- =====================================================
--- DEFAULT TAB & KEEP ON TOP
+-- PANEL : FARM (Destroyer & Arise)
+-- =====================================================
+do
+    local p = NewPanel("farm")
+    SectionHeader(p, "AUTO FARM", 0)
+
+    local _, setDestroyer = ToggleRow(p, "Auto Destroyer",
+        "Otomatis pilih Destroyer setiap bunuh mob", 1,
+        function(on)
+            STATE.autoDestroyer = on
+            if on and STATE.autoArise then
+                STATE.autoArise = false
+                DoAutoArise(false)
+            end
+            DoAutoDestroyer(on)
+            RefreshStatus()
+        end
+    )
+
+    local _, setArise = ToggleRow(p, "Auto Arise",
+        "Otomatis pilih Arise setiap bunuh mob", 2,
+        function(on)
+            STATE.autoArise = on
+            if on and STATE.autoDestroyer then
+                STATE.autoDestroyer = false
+                DoAutoDestroyer(false)
+            end
+            DoAutoArise(on)
+            RefreshStatus()
+        end
+    )
+end
+
+-- =====================================================
+-- PANEL : COLLECT
+-- =====================================================
+do
+    local p = NewPanel("collect")
+    SectionHeader(p, "AUTO COLLECT GOLD", 0)
+
+    ToggleRow(p, "Auto Magnet Gold",
+        "Collect semua gold di Workspace.Golds", 1,
+        function(on)
+            STATE.autoCollect = on
+            DoAutoCollect(on)
+            RefreshStatus()
+        end
+    )
+end
+
+-- =====================================================
+-- PANEL : AUTO ROLL
+-- =====================================================
+do
+    local p = NewPanel("autoroll")
+    SectionHeader(p, "AUTO ROLL HERO QUIRK — STAGE 1", 0)
+
+    -- Status card
+    local statusCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,38))
+    statusCard.LayoutOrder=1; Corner(statusCard,8); Stroke(statusCard,C.BORD,1,0.4)
+    local statusDot = Frame(statusCard, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
+    statusDot.Position=UDim2.new(0,12,0.5,-4); Corner(statusDot,4)
+    local statusLbl = Label(statusCard, "Belum capture heroGuid — klik StartReroll di game 1x", 9, C.TXT2, Enum.Font.Gotham)
+    statusLbl.Size=UDim2.new(1,-30,1,0); statusLbl.Position=UDim2.new(0,28,0,0)
+    statusLbl.TextWrapped=true
+    _rollStatusLbl = statusLbl
+
+    -- Setup hook saat panel dibuat
+    SetupHeroGuidHook(function(guid)
+        statusDot.BackgroundColor3 = Color3.fromRGB(80,220,80)
+    end)
+
+    -- Toggle Auto Roll
+    ToggleRow(p, "Auto Roll Quirk",
+        "Loop AutoRandomHeroQuirk sampai target didapat", 2,
+        function(on)
+            STATE.autoRoll = on
+            DoAutoRoll(on)
+            RefreshStatus()
+        end
+    )
+
+    -- Section checklist target quirk
+    SectionHeader(p, "STOP SAAT DAPAT (centang target):", 3)
+
+    -- Info
+    local infoCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,28))
+    infoCard.LayoutOrder=4; Corner(infoCard,8); Stroke(infoCard,C.BORD,1,0.5)
+    local infoLbl = Label(infoCard, "  Kosong = stop di quirk apapun", 8.5, C.TXT2, Enum.Font.Gotham)
+    infoLbl.Size=UDim2.new(1,0,1,0)
+
+    -- Quirk checklist
+    for i, quirk in ipairs(QUIRK_LIST) do
+        local checked = false
+        local row = Btn(p, C.SURFACE, UDim2.new(1,0,0,32))
+        row.LayoutOrder = 10+i; Corner(row,8); Stroke(row,C.BORD,1,0.5)
+
+        -- Checkbox
+        local box = Frame(row, C.SEL_BG, UDim2.new(0,18,0,18))
+        box.Position=UDim2.new(0,8,0.5,-9); Corner(box,4)
+        Stroke(box, C.BORD2, 1, 0.3)
+        local tick = Label(box, "", 12, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+        tick.Size=UDim2.new(1,0,1,0)
+
+        -- Nama quirk
+        local nameLbl = Label(row, quirk.name, 10, C.TXT, Enum.Font.Gotham)
+        nameLbl.Size=UDim2.new(1,-36,1,0); nameLbl.Position=UDim2.new(0,34,0,0)
+
+        local function SetChecked(v)
+            checked = v
+            _rollTargetIds[quirk.id] = v
+            tick.Text = v and "✓" or ""
+            TweenService:Create(box, TweenInfo.new(0.12), {
+                BackgroundColor3 = v and C.ACC2 or C.SEL_BG
+            }):Play()
+            TweenService:Create(row, TweenInfo.new(0.12), {
+                BackgroundColor3 = v and Color3.fromRGB(140,50,0) or C.SURFACE
+            }):Play()
+            tick.TextColor3 = v and C.BLACK or C.ACC2
+        end
+
+        row.MouseButton1Click:Connect(function() SetChecked(not checked) end)
+        row.MouseEnter:Connect(function()
+            if not checked then
+                TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=C.SURFACE2}):Play()
+            end
+        end)
+        row.MouseLeave:Connect(function()
+            if not checked then
+                TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=C.SURFACE}):Play()
+            end
+        end)
+    end
+end
+
+-- =====================================================
+-- PANEL : SETTINGS
+-- =====================================================
+do
+    local p = NewPanel("settings")
+    SectionHeader(p, "PENGATURAN", 0)
+
+    ToggleRow(p, "Auto Collect + Destroyer",
+        "Aktifkan Auto Collect otomatis saat Destroyer ON", 1,
+        function(on)
+            if STATE.autoDestroyer then
+                STATE.autoCollect = on
+                DoAutoCollect(on)
+                RefreshStatus()
+            end
+        end
+    )
+end
+
+-- =====================================================
+-- PANEL : INFO
+-- =====================================================
+do
+    local p = NewPanel("info")
+    SectionHeader(p, "INFO", 0)
+
+    local card = Frame(p, C.SURFACE, UDim2.new(1,0,0,130))
+    card.LayoutOrder=1; Corner(card,8); Stroke(card,C.BORD,1,0.4)
+    local txt = Label(card,
+        "Arise Shadow Hunt — Auto Farming GUI\nBy FLa Project\n\n"..
+        "Remotes:\n"..
+        "• CollectItem:InvokeServer(guid)\n"..
+        "• ExtraReward:FireServer({isSell, guid})\n"..
+        "• ExtraReward:FireServer({isSell=false, isAuto=false, guid})\n"..
+        "• RandomHeroQuirk:InvokeServer({heroGuid, drawId})",
+        9, C.TXT2, Enum.Font.Gotham)
+    txt.Size=UDim2.new(1,-16,1,0); txt.Position=UDim2.new(0,8,0,0)
+    txt.TextWrapped=true; txt.LineHeight=1.5
+end
+
+-- =====================================================
+-- DEFAULT TAB
 -- =====================================================
 SwitchTab("main")
+RefreshStatus()
 
-task.spawn(function()
-    while SG and SG.Parent do
-        SG.DisplayOrder = 9999
-        task.wait(2)
-    end
-end)
-
-print("[ Auto Farming GUI ] Loaded — Full Orange Theme | by FLa")
+print("[ ASH GUI ] Loaded — by FLa")
