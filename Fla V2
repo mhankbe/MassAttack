@@ -89,6 +89,15 @@ local C = {
     BLACK    = Color3.fromRGB(0,   0,   0),
     DD_BG    = Color3.fromRGB(100, 35,  0),
     DD_HOVER = Color3.fromRGB(160, 58,  3),
+    GRN      = Color3.fromRGB( 55, 210, 90),
+    RED      = Color3.fromRGB(215,  50, 60),
+    YEL      = Color3.fromRGB(255, 195, 60),
+    DIM      = Color3.fromRGB(160, 148,135),
+    DK       = Color3.fromRGB( 80,  72, 65),
+    AG       = Color3.fromRGB(255, 140, 20),
+    ROW      = Color3.fromRGB( 22,  22, 28),
+    NSEL     = Color3.fromRGB( 90,  35,  8),
+    BOFF     = Color3.fromRGB( 22,  20, 18),
 }
 
 -- =====================================================
@@ -426,21 +435,24 @@ local COLLECTED={}
 -- =====================================================
 -- STATE: MASS ATTACK & AUTO GOYANG
 -- =====================================================
-local MA = { running=false, thread=nil, killed=0, killTarget=7 }
-local AG = { running=false, thread=nil, killed=0, currentTarget=nil }
+local MA = { running=false, thread=nil, killed=0, killTarget=7, autoCollect=true, _pausedByRaid=false }
+local AG = { running=false, thread=nil, killed=0, collected=0, currentTarget=nil, autoCollect=true, _pausedByRaid=false }
 local _maStatusLbl=nil
-local _agStatusLbl=nil
 local _deadG={}
 
 local function GetEnemies()
     local list={}
-    local f=workspace:FindFirstChild("Enemys"); if not f then return list end
+    local f=workspace:FindFirstChild("Enemys")
+    if not f then return list end
     for _,e in ipairs(f:GetChildren()) do
         if e:IsA("Model") then
             local g=e:GetAttribute("EnemyGuid")
             local h=e:FindFirstChild("HumanoidRootPart")
             local hum=e:FindFirstChildOfClass("Humanoid")
-            if g and h and hum and hum.Health>0 then table.insert(list,{model=e,guid=g,hrp=h}) end
+            -- wajib ada HumanoidRootPart + Humanoid + EnemyGuid (filter non-enemy seperti PumpkinCount)
+            if g and h and hum and hum.Health>0 then
+                table.insert(list,{model=e, guid=g, hrp=h})
+            end
         end
     end
     return list
@@ -690,27 +702,14 @@ local function DoMassAttack(on)
     end
 end
 
-local function DoAutoGoyang(on)
-    if on then
-        _agOn=true
-        RunAG(
-            function(msg) if _agStatusLbl then _agStatusLbl.Text=msg end end,
-            function() _agOn=false; if _agStatusLbl then _agStatusLbl.Text="Selesai" end end)
-    else
-        _agOn=false; AG.running=false
-        if AG.thread then pcall(function() task.cancel(AG.thread) end); AG.thread=nil end
-        ReturnHRPToOrigin()
-        if _agStatusLbl then _agStatusLbl.Text="Idle" end
-    end
-end
+-- DoAutoGoyang dihapus: panel Farm baru handle langsung
 
 local function DoRejoin()
     pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,LP) end)
 end
 
-local function StopLoop(key)
-    if LOOPS[key] then pcall(function() task.cancel(LOOPS[key]) end); LOOPS[key]=nil end
-end
+-- StopLoop: deprecated, diganti inline
+
 
 local StatusDots,StatusLbls={},{}
 local function RefreshStatus()
@@ -1958,20 +1957,322 @@ do
 end
 
 -- =====================================================
--- PANEL : FARM
+-- =====================================================
+-- PANEL : FARM (Auto Goyang — dari sc_baru)
 -- =====================================================
 do
     local p=NewPanel("farm")
-    SectionHeader(p,"AUTO FARM",0)
-    ToggleRow(p,"Auto Magnet Gold","Collect semua gold di Workspace.Golds",1,function(on)
-        STATE.autoCollect=on; DoAutoCollect(on); RefreshStatus() end)
+
+    -- ── STATUS BAR ─────────────────────────────────────
+    local agSBF=Frame(p,C.SURFACE,UDim2.new(1,0,0,28))
+    agSBF.LayoutOrder=0; Corner(agSBF,7); Stroke(agSBF,C.AG,1,0.3)
+
+    local agDot=Frame(agSBF,C.DK,UDim2.new(0,8,0,8))
+    agDot.Position=UDim2.new(0,8,0.5,-4); agDot.BorderSizePixel=0
+    Instance.new("UICorner",agDot).CornerRadius=UDim.new(1,0)
+
+    local agTxtLbl=Label(agSBF,"STANDBY",10,C.DIM,Enum.Font.GothamBold)
+    agTxtLbl.Size=UDim2.new(0.5,0,1,0); agTxtLbl.Position=UDim2.new(0,22,0,0)
+    agTxtLbl.TextTruncate=Enum.TextTruncate.AtEnd
+
+    local agKLbl=Label(agSBF,"0 kill  0 item",9,C.AG,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
+    agKLbl.Size=UDim2.new(0.44,0,1,0); agKLbl.Position=UDim2.new(0.50,4,0,0)
+
+    -- ── INFO BARIS (jenis / total musuh) ───────────────
+    local agELbl=Label(p,"Belum di-refresh",9,C.DIM,Enum.Font.Gotham)
+    agELbl.Size=UDim2.new(1,0,0,14); agELbl.LayoutOrder=1
+
+    -- ── AUTO COLLECT ROW ───────────────────────────────
+    local acCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,36))
+    acCard.LayoutOrder=2; Corner(acCard,7); Stroke(acCard,C.BORD,1,0.4)
+    Padding(acCard,6,6,10,8)
+
+    local acLbl=Label(acCard,"Auto Collect Gold / Item",11,C.TXT,Enum.Font.GothamBold)
+    acLbl.Size=UDim2.new(0.7,0,0,16); acLbl.Position=UDim2.new(0,0,0,2)
+
+    local acSub=Label(acCard,"Destroyer: Aktif",9,C.GRN,Enum.Font.Gotham)
+    acSub.Size=UDim2.new(0.7,0,0,13); acSub.Position=UDim2.new(0,0,0,20)
+
+    local acToggle=Btn(acCard,C.NSEL,UDim2.new(0,36,0,20))
+    acToggle.Position=UDim2.new(1,-42,0.5,-10); Corner(acToggle,10)
+    local acKnob=Frame(acToggle,C.YEL,UDim2.new(0,14,0,14))
+    acKnob.Position=UDim2.new(1,-16,0.5,-7); Corner(acKnob,7)
+    local acOn=true
+    acToggle.MouseButton1Click:Connect(function()
+        acOn=not acOn; AG.autoCollect=acOn
+        TweenService:Create(acToggle,TweenInfo.new(0.14),{BackgroundColor3=acOn and C.NSEL or Color3.fromRGB(22,20,18)}):Play()
+        TweenService:Create(acKnob,TweenInfo.new(0.14),{Position=acOn and UDim2.new(1,-16,0.5,-7) or UDim2.new(0,2,0.5,-7),BackgroundColor3=acOn and C.YEL or C.DK}):Play()
+        acSub.Text=acOn and "Destroyer: Aktif" or "Destroyer: Nonaktif"
+        acSub.TextColor3=acOn and C.GRN or C.RED
+    end)
+
+    -- ── SECTION HEADER: TARGET MUSUH ───────────────────
+    local tgtHdr=Label(p,"Target Musuh (pilih yang mau diserang)",10,C.AG,Enum.Font.GothamBold)
+    tgtHdr.Size=UDim2.new(1,0,0,18); tgtHdr.LayoutOrder=3
+
+    -- ── ENEMY LIST CARD ────────────────────────────────
+    local eCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,260))
+    eCard.LayoutOrder=4; Corner(eCard,9); Stroke(eCard,C.BORD,1,0.4)
+    Padding(eCard,6,6,10,8)
+
+    -- Header row: counter kiri, tombol refresh kanan
+    local eHeaderRow=Frame(eCard,C.BLACK,UDim2.new(1,0,0,22))
+    eHeaderRow.BackgroundTransparency=1; eHeaderRow.Position=UDim2.new(0,0,0,0)
+
+    local eCntL=Label(eHeaderRow,"—",9,C.DK,Enum.Font.GothamBold)
+    eCntL.Size=UDim2.new(0.6,0,1,0); eCntL.Position=UDim2.new(0,0,0,0)
+
+    local eBtnRefresh=Btn(eHeaderRow,Color3.fromRGB(20,80,40),UDim2.new(0,80,0,20))
+    eBtnRefresh.Position=UDim2.new(1,-80,0,1); Corner(eBtnRefresh,6)
+    Stroke(eBtnRefresh,C.GRN,1,0.3)
+    local eBtnRefLbl=Label(eBtnRefresh,"Refresh",9,C.GRN,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    eBtnRefLbl.Size=UDim2.new(1,0,1,0)
+
+    -- ScrollingFrame list musuh
+    local eBox=Instance.new("ScrollingFrame",eCard)
+    eBox.Size=UDim2.new(1,0,0,224); eBox.Position=UDim2.new(0,0,0,28)
+    eBox.BackgroundColor3=Color3.fromRGB(13,7,26); eBox.BorderSizePixel=0
+    eBox.ScrollBarThickness=3; eBox.ScrollBarImageColor3=C.AG
+    eBox.CanvasSize=UDim2.new(0,0,0,0); eBox.AutomaticCanvasSize=Enum.AutomaticSize.Y
+    Corner(eBox,9); Stroke(eBox,C.BORD,1,0.4)
+    local ePad=Instance.new("UIPadding",eBox)
+    ePad.PaddingTop=UDim.new(0,5); ePad.PaddingBottom=UDim.new(0,5)
+    ePad.PaddingLeft=UDim.new(0,5); ePad.PaddingRight=UDim.new(0,5)
+    local eList=Instance.new("UIListLayout",eBox)
+    eList.Padding=UDim.new(0,4); eList.SortOrder=Enum.SortOrder.LayoutOrder
+
+    -- Placeholder awal
+    local ePlaceholder=Instance.new("TextLabel",eBox)
+    ePlaceholder.Size=UDim2.new(1,0,0,44); ePlaceholder.BackgroundTransparency=1
+    ePlaceholder.Text="Tekan Refresh untuk memuat daftar musuh di map ini"
+    ePlaceholder.TextSize=9; ePlaceholder.Font=Enum.Font.Gotham
+    ePlaceholder.TextColor3=C.DK; ePlaceholder.TextXAlignment=Enum.TextXAlignment.Center
+    ePlaceholder.TextWrapped=true
+
+    -- ── FUNGSI HELPER ──────────────────────────────────
+    local eEnemyRows={}; local eEnemyNames={}; local activeEName=nil
+
+    local function EnemyIco(name)
+        local n=name:lower()
+        if n:find("dragon") then return "🐉"
+        elseif n:find("wolf") or n:find("beast") then return "🐺"
+        elseif n:find("golem") or n:find("stone") then return "🪨"
+        elseif n:find("demon") or n:find("devil") then return "😈"
+        elseif n:find("slime") then return "🟢"
+        elseif n:find("ghost") or n:find("spirit") then return "👻"
+        elseif n:find("fire") or n:find("flame") then return "🔥"
+        elseif n:find("ice") or n:find("frost") then return "❄"
+        elseif n:find("boss") then return "💀"
+        elseif n:find("pumpkin") then return "🎃"
+        elseif n:find("bear") then return "🐻"
+        elseif n:find("elf") then return "🧝"
+        elseif n:find("swordsman") or n:find("sword") then return "⚔"
+        elseif n:find("archer") then return "🏹"
+        else return "👾" end
+    end
+
+    local function FindLiveEnemyByName(nm)
+        for _,e in ipairs(GetEnemies()) do
+            if e.model.Name==nm and not IsDead(e) then return e end
+        end
+        return nil
+    end
+
+    local function SelectEnemyName(nm)
+        -- Deselect yang lama
+        if activeEName and eEnemyRows[activeEName] then
+            local old=eEnemyRows[activeEName]
+            TweenService:Create(old.row,TweenInfo.new(0.12),{BackgroundColor3=Color3.fromRGB(18,10,36)}):Play()
+            old.stroke.Color=C.BORD; old.nameLbl.TextColor3=C.DIM; old.dot.Visible=false
+        end
+        activeEName=nm
+        if not nm then AG.currentTarget=nil; eCntL.Text="—"; return end
+        local r=eEnemyRows[nm]
+        if r then
+            TweenService:Create(r.row,TweenInfo.new(0.12),{BackgroundColor3=Color3.fromRGB(90,38,10)}):Play()
+            r.stroke.Color=C.AG; r.nameLbl.TextColor3=C.TXT; r.dot.Visible=true
+        end
+        eCntL.Text=">> "..nm
+        AG.currentTarget=FindLiveEnemyByName(nm)
+    end
+
+    local function RefreshEnemies()
+        -- Bersihkan list lama
+        for _,r in pairs(eEnemyRows) do
+            if r.row and r.row.Parent then r.row:Destroy() end
+        end
+        eEnemyRows={}; eEnemyNames={}
+        ePlaceholder.Visible=false
+        activeEName=nil; AG.currentTarget=nil; eCntL.Text="—"
+
+        local enemies=GetEnemies()
+        if #enemies==0 then
+            ePlaceholder.Text="Tidak ada musuh di map ini."
+            ePlaceholder.Visible=true
+            agELbl.Text="Tidak ada musuh di map ini"
+            agELbl.TextColor3=Color3.fromRGB(220,130,60)
+            return
+        end
+
+        local nameCount={}
+        for _,e in ipairs(enemies) do
+            nameCount[e.model.Name]=(nameCount[e.model.Name] or 0)+1
+        end
+        local names={}
+        for nm in pairs(nameCount) do table.insert(names,nm) end
+        table.sort(names)
+        eEnemyNames=names
+
+        for idx,nm in ipairs(names) do
+            local cnt=nameCount[nm]; local ico=EnemyIco(nm)
+            local row=Instance.new("Frame",eBox)
+            row.LayoutOrder=idx; row.Size=UDim2.new(1,0,0,36)
+            row.BackgroundColor3=Color3.fromRGB(18,10,36); row.BorderSizePixel=0
+            Instance.new("UICorner",row).CornerRadius=UDim.new(0,7)
+            local rs=Instance.new("UIStroke",row); rs.Color=C.BORD; rs.Thickness=1
+
+            local btn=Instance.new("TextButton",row)
+            btn.Size=UDim2.new(1,0,1,0); btn.BackgroundTransparency=1
+            btn.Text=""; btn.AutoButtonColor=false
+
+            local dot=Instance.new("Frame",row)
+            dot.Size=UDim2.new(0,4,0.6,0); dot.Position=UDim2.new(0,2,0.2,0)
+            dot.BackgroundColor3=C.AG; dot.BorderSizePixel=0; dot.Visible=false
+            Instance.new("UICorner",dot).CornerRadius=UDim.new(1,0)
+
+            local iL=Instance.new("TextLabel",row)
+            iL.Size=UDim2.new(0,24,1,0); iL.Position=UDim2.new(0,8,0,0)
+            iL.BackgroundTransparency=1; iL.Text=ico; iL.TextSize=14
+            iL.Font=Enum.Font.GothamBold; iL.TextColor3=C.YEL
+            iL.TextXAlignment=Enum.TextXAlignment.Center
+
+            local nL=Instance.new("TextLabel",row)
+            nL.Size=UDim2.new(1,-74,1,0); nL.Position=UDim2.new(0,34,0,0)
+            nL.BackgroundTransparency=1; nL.Text=nm; nL.TextSize=9.5
+            nL.Font=Enum.Font.GothamBold; nL.TextColor3=C.DIM
+            nL.TextXAlignment=Enum.TextXAlignment.Left
+            nL.TextTruncate=Enum.TextTruncate.AtEnd
+
+            local cL=Instance.new("TextLabel",row)
+            cL.Size=UDim2.new(0,34,1,0); cL.Position=UDim2.new(1,-36,0,0)
+            cL.BackgroundTransparency=1; cL.Text="x"..cnt; cL.TextSize=9
+            cL.Font=Enum.Font.GothamBold; cL.TextColor3=C.DK
+            cL.TextXAlignment=Enum.TextXAlignment.Right
+
+            eEnemyRows[nm]={row=row, stroke=rs, nameLbl=nL, cntLbl=cL, dot=dot}
+            local bnm=nm
+            btn.MouseButton1Click:Connect(function()
+                if activeEName==bnm then SelectEnemyName(nil)
+                else SelectEnemyName(bnm) end
+            end)
+        end
+        agELbl.Text=#names.." jenis  |  "..#enemies.." total  —  tap untuk serang"
+        agELbl.TextColor3=C.GRN
+    end
+
+    -- ── LIVE COUNTER UPDATE (update jumlah hidup tiap 0.5 detik) ────
+    task.spawn(function()
+        while ScreenGui.Parent do
+            if #eEnemyNames>0 then
+                local liveCnt={}
+                for _,e in ipairs(GetEnemies()) do
+                    if not IsDead(e) then
+                        liveCnt[e.model.Name]=(liveCnt[e.model.Name] or 0)+1
+                    end
+                end
+                for _,nm in ipairs(eEnemyNames) do
+                    local r=eEnemyRows[nm]; if not r then continue end
+                    local alive=liveCnt[nm] or 0
+                    r.cntLbl.Text="x"..alive
+                    r.cntLbl.TextColor3=alive==0 and Color3.fromRGB(120,40,40) or C.DK
+                end
+                -- Re-lock target jika instance mati, cari instance hidup lain
+                if activeEName and (AG.currentTarget==nil or IsDead(AG.currentTarget) or not AG.currentTarget.model.Parent) then
+                    AG.currentTarget=FindLiveEnemyByName(activeEName)
+                end
+            end
+            task.wait(0.5)
+        end
+    end)
+
+    -- ── TOMBOL REFRESH ─────────────────────────────────
+    eBtnRefresh.MouseButton1Click:Connect(function()
+        eBtnRefLbl.Text="Loading..."
+        task.spawn(function()
+            RefreshEnemies()
+            task.wait(0.3)
+            eBtnRefLbl.Text="Refresh"
+        end)
+    end)
+
+    -- ── TOMBOL MULAI AUTO GOYANG ───────────────────────
+    local agBtn=Btn(p,C.ACC,UDim2.new(1,0,0,44))
+    agBtn.LayoutOrder=5; Corner(agBtn,9)
+    do
+        local g=Instance.new("UIGradient",agBtn)
+        g.Color=ColorSequence.new({
+            ColorSequenceKeypoint.new(0,Color3.fromRGB(230,95,20)),
+            ColorSequenceKeypoint.new(1,Color3.fromRGB(140,45,5))
+        }); g.Rotation=135
+        local s=Instance.new("UIStroke",agBtn); s.Color=C.AG; s.Thickness=1; s.Transparency=0.35
+    end
+    local agBtnLbl=Label(agBtn,"MULAI AUTO GOYANG",13,C.TXT,Enum.Font.GothamBold)
+    agBtnLbl.Size=UDim2.new(1,0,1,0); agBtnLbl.TextXAlignment=Enum.TextXAlignment.Center
+
+    -- SetAGUI: update tampilan saat ON/OFF
+    local function SetAGUI(on)
+        if on then
+            TweenService:Create(agBtn,TweenInfo.new(0.15),{BackgroundColor3=Color3.fromRGB(200,40,40)}):Play()
+            agBtnLbl.Text="BERHENTI GOYANG"
+            agDot.BackgroundColor3=C.AG; agTxtLbl.TextColor3=C.AG
+        else
+            TweenService:Create(agBtn,TweenInfo.new(0.15),{BackgroundColor3=C.ACC}):Play()
+            agBtnLbl.Text="MULAI AUTO GOYANG"
+            agDot.BackgroundColor3=C.DK; agTxtLbl.TextColor3=C.DIM; agTxtLbl.Text="STANDBY"
+        end
+    end
+
+    agBtn.MouseButton1Click:Connect(function()
+        TweenService:Create(agBtn,TweenInfo.new(0.07),{Size=UDim2.new(1,0,0,40)}):Play()
+        task.wait(0.07)
+        TweenService:Create(agBtn,TweenInfo.new(0.1),{Size=UDim2.new(1,0,0,44)}):Play()
+        if _agOn then
+            _agOn=false; AG.running=false
+            if AG.thread then pcall(function() task.cancel(AG.thread) end); AG.thread=nil end
+            ReturnHRPToOrigin(); SetAGUI(false)
+        else
+            _agOn=true; SetAGUI(true)
+            RunAG(
+                function(msg) agTxtLbl.Text=msg; agKLbl.Text=AG.killed.." kill  "..AG.collected.." item" end,
+                function() _agOn=false; SetAGUI(false) end
+            )
+        end
+    end)
 end
 
 -- =====================================================
--- PANEL : ATTACK (Mass Attack & Auto Goyang)
+-- PANEL : ATTACK (Mass Attack)
 -- =====================================================
 do
     local p=NewPanel("attack")
+
+    -- Backdrop untuk menutup dropdown saat klik di luar
+    local ddBackdrop=Instance.new("TextButton",ScreenGui)
+    ddBackdrop.Size=UDim2.new(1,0,1,0); ddBackdrop.Position=UDim2.new(0,0,0,0)
+    ddBackdrop.BackgroundTransparency=1; ddBackdrop.Text=""; ddBackdrop.ZIndex=49
+    ddBackdrop.AutoButtonColor=false; ddBackdrop.Visible=false
+    local _openDDs={}
+    local function OpenDD(list)
+        for _,d in ipairs(_openDDs) do d.Visible=false end
+        _openDDs={}
+        list.Visible=true; table.insert(_openDDs,list)
+        ddBackdrop.Visible=true
+    end
+    local function CloseAllDD()
+        for _,d in ipairs(_openDDs) do d.Visible=false end
+        _openDDs={}; ddBackdrop.Visible=false
+    end
+    ddBackdrop.MouseButton1Click:Connect(CloseAllDD)
 
     -- ── MASS ATTACK ──────────────────────────────────
     SectionHeader(p,"MASS ATTACK",0)
@@ -1987,88 +2288,238 @@ do
     maStatusText.TextTruncate=Enum.TextTruncate.AtEnd
     _maStatusLbl=maStatusText
 
-    -- Kill Target row
-    local ktCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
-    ktCard.LayoutOrder=2; Corner(ktCard,8); Stroke(ktCard,C.BORD,1,0.4)
-    Padding(ktCard,6,6,12,8)
-    local ktLbl=Label(ktCard,"Kill Target",12,C.TXT,Enum.Font.GothamBold)
-    ktLbl.Size=UDim2.new(0.55,0,0,16); ktLbl.Position=UDim2.new(0,0,0,4)
-    local ktSub=Label(ktCard,"0 = Kill All",10,C.TXT3,Enum.Font.Gotham)
-    ktSub.Size=UDim2.new(0.55,0,0,13); ktSub.Position=UDim2.new(0,0,0,24)
+    -- ── KILL TARGET (dropdown) ──────────────────────
+    do
+        local ktCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
+        ktCard.LayoutOrder=2; Corner(ktCard,8); Stroke(ktCard,C.BORD,1,0.4)
+        Padding(ktCard,6,6,12,8)
+        local ktLbl=Label(ktCard,"Kill Target",12,C.TXT,Enum.Font.GothamBold)
+        ktLbl.Size=UDim2.new(0.5,0,1,0); ktLbl.Position=UDim2.new(0,0,0,0)
 
-    -- +/- buttons
-    local ktValLbl=Label(ktCard,tostring(MA.killTarget),14,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-    ktValLbl.Size=UDim2.new(0,30,0,28); ktValLbl.Position=UDim2.new(1,-80,0.5,-14)
+        local ktOpts={"5","10","15","20","Kill All"}
+        local ktVals={5,10,15,20,0}
+        local ktIdx=1; MA.killTarget=ktVals[1]
 
-    local ktMinus=Btn(ktCard,C.BG3,UDim2.new(0,26,0,26))
-    ktMinus.Position=UDim2.new(1,-110,0.5,-13); Corner(ktMinus,6)
-    local ktMinusLbl=Label(ktMinus,"−",14,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-    ktMinusLbl.Size=UDim2.new(1,0,1,0)
+        -- Dropdown button
+        local ktDDBtn=Btn(ktCard,C.BG3,UDim2.new(0.5,-4,1,-4))
+        ktDDBtn.Position=UDim2.new(0.5,0,0,2); Corner(ktDDBtn,6)
+        Stroke(ktDDBtn,C.BORD,1,0.2)
+        local ktDDLbl=Label(ktDDBtn,"  "..ktOpts[ktIdx],11,C.ACC2,Enum.Font.GothamBold)
+        ktDDLbl.Size=UDim2.new(1,-18,1,0)
+        local ktArrow=Label(ktDDBtn,"▾",11,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+        ktArrow.Size=UDim2.new(0,16,1,0); ktArrow.Position=UDim2.new(1,-18,0,0)
 
-    local ktPlus=Btn(ktCard,C.BG3,UDim2.new(0,26,0,26))
-    ktPlus.Position=UDim2.new(1,-48,0.5,-13); Corner(ktPlus,6)
-    local ktPlusLbl=Label(ktPlus,"+",14,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-    ktPlusLbl.Size=UDim2.new(1,0,1,0)
+        -- Dropdown list (overlay, ZIndex tinggi)
+        local ktList=Instance.new("Frame",ScreenGui)
+        ktList.Size=UDim2.new(0,120,0,#ktOpts*28+8)
+        ktList.BackgroundColor3=Color3.fromRGB(22,18,14); ktList.BorderSizePixel=0
+        ktList.ZIndex=50; ktList.Visible=false
+        Instance.new("UICorner",ktList).CornerRadius=UDim.new(0,8)
+        Instance.new("UIStroke",ktList).Color=C.BORD
+        local ktListLayout=Instance.new("UIListLayout",ktList)
+        ktListLayout.Padding=UDim.new(0,2); ktListLayout.SortOrder=Enum.SortOrder.LayoutOrder
+        Instance.new("UIPadding",ktList).PaddingTop=UDim.new(0,4)
 
-    ktMinus.MouseButton1Click:Connect(function()
-        MA.killTarget=math.max(0,MA.killTarget-1)
-        ktValLbl.Text=tostring(MA.killTarget)
-    end)
-    ktPlus.MouseButton1Click:Connect(function()
-        MA.killTarget=MA.killTarget+1
-        ktValLbl.Text=tostring(MA.killTarget)
-    end)
-
-    -- ── ROTATION MAP ─────────────────────────────────
-    local mapCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,54))
-    mapCard.LayoutOrder=3; Corner(mapCard,8); Stroke(mapCard,C.BORD,1,0.4)
-    Padding(mapCard,6,6,12,8)
-    local mapTitle=Label(mapCard,"Rotation Map (opsional)",12,C.TXT,Enum.Font.GothamBold)
-    mapTitle.Size=UDim2.new(1,0,0,16); mapTitle.Position=UDim2.new(0,0,0,2)
-    local mapSub=Label(mapCard,"Kosong = map saat ini saja",10,C.TXT3,Enum.Font.Gotham)
-    mapSub.Size=UDim2.new(1,0,0,13); mapSub.Position=UDim2.new(0,0,0,20)
-    -- Multi-select map 1-18
-    local mapSelScroll=New("ScrollingFrame",{Parent=mapCard,
-        Size=UDim2.new(1,0,0,24), Position=UDim2.new(0,0,0,34),
-        BackgroundTransparency=1, BorderSizePixel=0,
-        ScrollBarThickness=0, CanvasSize=UDim2.new(0,0,0,0),
-        AutomaticCanvasSize=Enum.AutomaticSize.X})
-    New("UIListLayout",{Parent=mapSelScroll, FillDirection=Enum.FillDirection.Horizontal,
-        SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,3)})
-    for i=1,18 do
-        local mb=Btn(mapSelScroll,C.BG3,UDim2.new(0,30,0,20))
-        mb.LayoutOrder=i; Corner(mb,4)
-        local ml=Label(mb,tostring(i),10,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-        ml.Size=UDim2.new(1,0,1,0)
-        mb.MouseButton1Click:Connect(function()
-            MR.selected[i]=not MR.selected[i]
-            mb.BackgroundColor3=MR.selected[i] and C.ACC or C.BG3
-            ml.TextColor3=MR.selected[i] and C.BLACK or C.TXT2
+        local ktItemRefs={}
+        for i,opt in ipairs(ktOpts) do
+            local item=Instance.new("TextButton",ktList)
+            item.Size=UDim2.new(1,-8,0,26); item.LayoutOrder=i
+            item.BackgroundColor3=i==ktIdx and Color3.fromRGB(90,35,8) or Color3.fromRGB(32,24,16)
+            item.BackgroundTransparency=i==ktIdx and 0 or 0.4
+            item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=51
+            Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
+            local iLbl=Instance.new("TextLabel",item)
+            iLbl.Size=UDim2.new(1,-8,1,0); iLbl.Position=UDim2.new(0,8,0,0)
+            iLbl.BackgroundTransparency=1; iLbl.Text=opt; iLbl.TextSize=11
+            iLbl.Font=Enum.Font.GothamBold; iLbl.TextColor3=i==ktIdx and C.ACC2 or C.TXT
+            iLbl.TextXAlignment=Enum.TextXAlignment.Left; iLbl.ZIndex=52
+            ktItemRefs[i]={btn=item,lbl=iLbl}
+            local ii=i
+            item.MouseButton1Click:Connect(function()
+                ktIdx=ii; MA.killTarget=ktVals[ii]
+                ktDDLbl.Text="  "..ktOpts[ii]
+                for j,r in ipairs(ktItemRefs) do
+                    r.btn.BackgroundColor3=j==ii and Color3.fromRGB(90,35,8) or Color3.fromRGB(32,24,16)
+                    r.btn.BackgroundTransparency=j==ii and 0 or 0.4
+                    r.lbl.TextColor3=j==ii and C.ACC2 or C.TXT
+                end
+                CloseAllDD()
+            end)
+        end
+        ktDDBtn.MouseButton1Click:Connect(function()
+            if ktList.Visible then CloseAllDD(); return end
+            local ap=ktDDBtn.AbsolutePosition; local as=ktDDBtn.AbsoluteSize
+            local inset=GuiService:GetGuiInset()
+            ktList.Position=UDim2.new(0,ap.X,0,ap.Y+as.Y+2-inset.Y)
+            ktList.Size=UDim2.new(0,as.X,0,#ktOpts*28+8)
+            OpenDD(ktList)
         end)
     end
 
-    -- ── DELAY PINDAH MAP ─────────────────────────────
-    local delayCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
-    delayCard.LayoutOrder=4; Corner(delayCard,8); Stroke(delayCard,C.BORD,1,0.4)
-    Padding(delayCard,6,6,12,8)
-    local delayTitle=Label(delayCard,"Delay Pindah Map",12,C.TXT,Enum.Font.GothamBold)
-    delayTitle.Size=UDim2.new(0.6,0,0,16); delayTitle.Position=UDim2.new(0,0,0,4)
-    local delayVals={1,2,3,5,7,10}
-    local delayIdx=3 -- default 3 detik
-    local delayValLbl=Label(delayCard,delayVals[delayIdx].." detik",12,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
-    delayValLbl.Size=UDim2.new(0.4,0,0,16); delayValLbl.Position=UDim2.new(0.6,0,0,4)
-    local delayMinus=Btn(delayCard,C.BG3,UDim2.new(0,26,0,22)); delayMinus.Position=UDim2.new(0,0,0,24); Corner(delayMinus,5)
-    Label(delayMinus,"−",12,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center).Size=UDim2.new(1,0,1,0)
-    local delayPlus=Btn(delayCard,C.BG3,UDim2.new(0,26,0,22)); delayPlus.Position=UDim2.new(0,30,0,24); Corner(delayPlus,5)
-    Label(delayPlus,"+",12,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center).Size=UDim2.new(1,0,1,0)
-    delayMinus.MouseButton1Click:Connect(function()
-        delayIdx=math.max(1,delayIdx-1); MR.nextMapDelay=delayVals[delayIdx]
-        delayValLbl.Text=delayVals[delayIdx].." detik"
-    end)
-    delayPlus.MouseButton1Click:Connect(function()
-        delayIdx=math.min(#delayVals,delayIdx+1); MR.nextMapDelay=delayVals[delayIdx]
-        delayValLbl.Text=delayVals[delayIdx].." detik"
-    end)
+    -- ── ROTATION MAP (dropdown scroll) ──────────────
+    do
+        local mapCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
+        mapCard.LayoutOrder=3; Corner(mapCard,8); Stroke(mapCard,C.BORD,1,0.4)
+        Padding(mapCard,6,6,12,8)
+        local mapLbl=Label(mapCard,"Rotation Map",12,C.TXT,Enum.Font.GothamBold)
+        mapLbl.Size=UDim2.new(0.5,0,1,0); mapLbl.Position=UDim2.new(0,0,0,0)
+
+        local mapOpts={"Semua Map"}
+        for i=1,18 do mapOpts[i+1]="Map "..i end
+        -- "Semua Map" = pilih semua, sisanya toggle per map
+        local mapSelSet={}
+        local mapDDBtn=Btn(mapCard,C.BG3,UDim2.new(0.5,-4,1,-4))
+        mapDDBtn.Position=UDim2.new(0.5,0,0,2); Corner(mapDDBtn,6)
+        Stroke(mapDDBtn,C.BORD,1,0.2)
+        local mapDDLbl=Label(mapDDBtn,"  Pilih Map",11,C.ACC2,Enum.Font.GothamBold)
+        mapDDLbl.Size=UDim2.new(1,-18,1,0)
+        local mapArrow=Label(mapDDBtn,"▾",11,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+        mapArrow.Size=UDim2.new(0,16,1,0); mapArrow.Position=UDim2.new(1,-18,0,0)
+
+        local function UpdateMapDDLbl()
+            local count=0; for _ in pairs(mapSelSet) do count=count+1 end
+            if count==0 then mapDDLbl.Text="  Map saat ini"
+            elseif count==18 then mapDDLbl.Text="  Semua Map"
+            else mapDDLbl.Text="  "..count.." Map dipilih" end
+        end
+
+        -- Dropdown list dengan scroll (max tinggi 180px untuk 18 item)
+        local mapListH=math.min(#mapOpts*28+8, 180)
+        local mapList=Instance.new("Frame",ScreenGui)
+        mapList.Size=UDim2.new(0,130,0,mapListH)
+        mapList.BackgroundColor3=Color3.fromRGB(22,18,14); mapList.BorderSizePixel=0
+        mapList.ZIndex=50; mapList.Visible=false; mapList.ClipsDescendants=true
+        Instance.new("UICorner",mapList).CornerRadius=UDim.new(0,8)
+        Instance.new("UIStroke",mapList).Color=C.BORD
+
+        local mapScroll=Instance.new("ScrollingFrame",mapList)
+        mapScroll.Size=UDim2.new(1,0,1,0); mapScroll.Position=UDim2.new(0,0,0,0)
+        mapScroll.BackgroundTransparency=1; mapScroll.BorderSizePixel=0
+        mapScroll.ScrollBarThickness=3; mapScroll.ScrollBarImageColor3=C.ACC
+        mapScroll.CanvasSize=UDim2.new(0,0,0,#mapOpts*28+8)
+        mapScroll.ZIndex=51
+        local mapScrollLayout=Instance.new("UIListLayout",mapScroll)
+        mapScrollLayout.Padding=UDim.new(0,2); mapScrollLayout.SortOrder=Enum.SortOrder.LayoutOrder
+        Instance.new("UIPadding",mapScroll).PaddingTop=UDim.new(0,4)
+
+        local mapItemRefs={}
+        for i,opt in ipairs(mapOpts) do
+            local item=Instance.new("TextButton",mapScroll)
+            item.Size=UDim2.new(1,-8,0,26); item.LayoutOrder=i
+            item.BackgroundColor3=Color3.fromRGB(32,24,16)
+            item.BackgroundTransparency=0.4; item.BorderSizePixel=0
+            item.Text=""; item.AutoButtonColor=false; item.ZIndex=52
+            Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
+            local chk=Instance.new("TextLabel",item)
+            chk.Size=UDim2.new(0,16,1,0); chk.Position=UDim2.new(0,4,0,0)
+            chk.BackgroundTransparency=1; chk.Text=""; chk.TextSize=11
+            chk.Font=Enum.Font.GothamBold; chk.TextColor3=C.GRN; chk.ZIndex=53
+            local iLbl=Instance.new("TextLabel",item)
+            iLbl.Size=UDim2.new(1,-24,1,0); iLbl.Position=UDim2.new(0,20,0,0)
+            iLbl.BackgroundTransparency=1; iLbl.Text=opt; iLbl.TextSize=11
+            iLbl.Font=Enum.Font.GothamBold; iLbl.TextColor3=C.TXT
+            iLbl.TextXAlignment=Enum.TextXAlignment.Left; iLbl.ZIndex=53
+            mapItemRefs[i]={btn=item,chk=chk,lbl=iLbl}
+            local ii=i
+            item.MouseButton1Click:Connect(function()
+                if ii==1 then
+                    -- Toggle semua
+                    local anyOff=false
+                    for j=1,18 do if not mapSelSet[j] then anyOff=true; break end end
+                    if anyOff then
+                        for j=1,18 do mapSelSet[j]=true; MR.selected[j]=true end
+                        for j=2,#mapItemRefs do mapItemRefs[j].chk.Text="✓"; mapItemRefs[j].lbl.TextColor3=C.ACC2 end
+                        mapItemRefs[1].chk.Text="✓"; mapItemRefs[1].lbl.TextColor3=C.ACC2
+                    else
+                        for j=1,18 do mapSelSet[j]=nil; MR.selected[j]=nil end
+                        for j=1,#mapItemRefs do mapItemRefs[j].chk.Text=""; mapItemRefs[j].lbl.TextColor3=C.TXT end
+                    end
+                else
+                    local mi=ii-1
+                    mapSelSet[mi]=not mapSelSet[mi]; MR.selected[mi]=mapSelSet[mi]
+                    mapItemRefs[ii].chk.Text=mapSelSet[mi] and "✓" or ""
+                    mapItemRefs[ii].lbl.TextColor3=mapSelSet[mi] and C.ACC2 or C.TXT
+                    -- Update "Semua Map" checkmark
+                    local allOn=true
+                    for j=1,18 do if not mapSelSet[j] then allOn=false; break end end
+                    mapItemRefs[1].chk.Text=allOn and "✓" or ""; mapItemRefs[1].lbl.TextColor3=allOn and C.ACC2 or C.TXT
+                end
+                UpdateMapDDLbl()
+            end)
+        end
+        mapDDBtn.MouseButton1Click:Connect(function()
+            if mapList.Visible then CloseAllDD(); return end
+            local ap=mapDDBtn.AbsolutePosition; local as=mapDDBtn.AbsoluteSize
+            local inset=GuiService:GetGuiInset()
+            mapList.Position=UDim2.new(0,ap.X,0,ap.Y+as.Y+2-inset.Y)
+            OpenDD(mapList)
+        end)
+    end
+
+    -- ── DELAY PINDAH MAP (dropdown) ──────────────────
+    do
+        local delayCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
+        delayCard.LayoutOrder=4; Corner(delayCard,8); Stroke(delayCard,C.BORD,1,0.4)
+        Padding(delayCard,6,6,12,8)
+        local delayTitle=Label(delayCard,"Delay Pindah Map",12,C.TXT,Enum.Font.GothamBold)
+        delayTitle.Size=UDim2.new(0.5,0,1,0); delayTitle.Position=UDim2.new(0,0,0,0)
+
+        local delayOpts={"1 detik","3 detik","5 detik","7 detik","10 detik"}
+        local delayVals={1,3,5,7,10}
+        local delayIdx=2; MR.nextMapDelay=delayVals[delayIdx]
+
+        local delayDDBtn=Btn(delayCard,C.BG3,UDim2.new(0.5,-4,1,-4))
+        delayDDBtn.Position=UDim2.new(0.5,0,0,2); Corner(delayDDBtn,6)
+        Stroke(delayDDBtn,C.BORD,1,0.2)
+        local delayDDLbl=Label(delayDDBtn,"  "..delayOpts[delayIdx],11,C.ACC2,Enum.Font.GothamBold)
+        delayDDLbl.Size=UDim2.new(1,-18,1,0)
+        local delayArrow=Label(delayDDBtn,"▾",11,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+        delayArrow.Size=UDim2.new(0,16,1,0); delayArrow.Position=UDim2.new(1,-18,0,0)
+
+        local delayList=Instance.new("Frame",ScreenGui)
+        delayList.Size=UDim2.new(0,130,0,#delayOpts*28+8)
+        delayList.BackgroundColor3=Color3.fromRGB(22,18,14); delayList.BorderSizePixel=0
+        delayList.ZIndex=50; delayList.Visible=false
+        Instance.new("UICorner",delayList).CornerRadius=UDim.new(0,8)
+        Instance.new("UIStroke",delayList).Color=C.BORD
+        local delayLayout=Instance.new("UIListLayout",delayList)
+        delayLayout.Padding=UDim.new(0,2); delayLayout.SortOrder=Enum.SortOrder.LayoutOrder
+        Instance.new("UIPadding",delayList).PaddingTop=UDim.new(0,4)
+
+        local delayItemRefs={}
+        for i,opt in ipairs(delayOpts) do
+            local item=Instance.new("TextButton",delayList)
+            item.Size=UDim2.new(1,-8,0,26); item.LayoutOrder=i
+            item.BackgroundColor3=i==delayIdx and Color3.fromRGB(90,35,8) or Color3.fromRGB(32,24,16)
+            item.BackgroundTransparency=i==delayIdx and 0 or 0.4
+            item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=51
+            Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
+            local iLbl=Instance.new("TextLabel",item)
+            iLbl.Size=UDim2.new(1,-8,1,0); iLbl.Position=UDim2.new(0,8,0,0)
+            iLbl.BackgroundTransparency=1; iLbl.Text=opt; iLbl.TextSize=11
+            iLbl.Font=Enum.Font.GothamBold; iLbl.TextColor3=i==delayIdx and C.ACC2 or C.TXT
+            iLbl.TextXAlignment=Enum.TextXAlignment.Left; iLbl.ZIndex=52
+            delayItemRefs[i]={btn=item,lbl=iLbl}
+            local ii=i
+            item.MouseButton1Click:Connect(function()
+                delayIdx=ii; MR.nextMapDelay=delayVals[ii]
+                delayDDLbl.Text="  "..delayOpts[ii]
+                for j,r in ipairs(delayItemRefs) do
+                    r.btn.BackgroundColor3=j==ii and Color3.fromRGB(90,35,8) or Color3.fromRGB(32,24,16)
+                    r.btn.BackgroundTransparency=j==ii and 0 or 0.4
+                    r.lbl.TextColor3=j==ii and C.ACC2 or C.TXT
+                end
+                CloseAllDD()
+            end)
+        end
+        delayDDBtn.MouseButton1Click:Connect(function()
+            if delayList.Visible then CloseAllDD(); return end
+            local ap=delayDDBtn.AbsolutePosition; local as=delayDDBtn.AbsoluteSize
+            local inset=GuiService:GetGuiInset()
+            delayList.Position=UDim2.new(0,ap.X,0,ap.Y+as.Y+2-inset.Y)
+            OpenDD(delayList)
+        end)
+    end
 
     -- ── AUTO SKILL ────────────────────────────────────
     local skillCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,52))
@@ -2101,67 +2552,6 @@ do
         DoMassAttack(on)
     end)
 
-    -- ── AUTO GOYANG ───────────────────────────────────
-    SectionHeader(p,"AUTO GOYANG",10)
-
-    -- Status card
-    local agCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
-    agCard.LayoutOrder=11; Corner(agCard,8); Stroke(agCard,C.BORD,1,0.4)
-    Padding(agCard,6,6,12,8)
-    local agTitleLbl=Label(agCard,"Status",12,C.TXT,Enum.Font.GothamBold)
-    agTitleLbl.Size=UDim2.new(0.4,0,0,16); agTitleLbl.Position=UDim2.new(0,0,0,4)
-    local agStatusText=Label(agCard,"Idle",11,C.TXT2,Enum.Font.Gotham,Enum.TextXAlignment.Right)
-    agStatusText.Size=UDim2.new(0.6,0,0,16); agStatusText.Position=UDim2.new(0.4,0,0,4)
-    agStatusText.TextTruncate=Enum.TextTruncate.AtEnd
-    _agStatusLbl=agStatusText
-
-    -- Enemy List (refresh tiap 1 detik)
-    local agListCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,120))
-    agListCard.LayoutOrder=12; Corner(agListCard,8); Stroke(agListCard,C.BORD,1,0.4)
-    Padding(agListCard,6,6,8,8)
-
-    local agListTitle=Label(agListCard,"Daftar Musuh  (tap untuk pilih target)",11,C.TXT3,Enum.Font.Gotham)
-    agListTitle.Size=UDim2.new(1,0,0,16); agListTitle.Position=UDim2.new(0,0,0,0)
-
-    local agScroll=New("ScrollingFrame",{Parent=agListCard,
-        Size=UDim2.new(1,0,1,-20), Position=UDim2.new(0,0,0,20),
-        BackgroundTransparency=1, BorderSizePixel=0,
-        ScrollBarThickness=3, ScrollBarImageColor3=C.ACC,
-        CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y})
-    ListLayout(agScroll,nil,Enum.HorizontalAlignment.Center,2)
-
-    -- Auto-refresh enemy list setiap 1 detik
-    task.spawn(function()
-        while agListCard.Parent do
-            for _,c in ipairs(agScroll:GetChildren()) do
-                if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
-            end
-            local enemies=GetEnemies()
-            for _,e in ipairs(enemies) do
-                if not IsDead(e) then
-                    local isSel = (AG.currentTarget and AG.currentTarget.guid==e.guid)
-                    local eBtn=Btn(agScroll, isSel and C.ACC or C.BG3, UDim2.new(1,-4,0,24))
-                    Corner(eBtn,5); Stroke(eBtn, isSel and C.ACC2 or C.BORD, 1, 0.3)
-                    local eLbl=Label(eBtn,"  "..e.model.Name,11,isSel and C.BLACK or C.TXT,Enum.Font.Gotham)
-                    eLbl.Size=UDim2.new(1,0,1,0)
-                    local ec=e
-                    eBtn.MouseButton1Click:Connect(function()
-                        AG.currentTarget=ec
-                        if _agStatusLbl then _agStatusLbl.Text="Target: "..ec.model.Name end
-                    end)
-                end
-            end
-            if #enemies==0 then
-                local noELbl=Label(agScroll,"  Tidak ada musuh",11,C.TXT3,Enum.Font.Gotham)
-                noELbl.Size=UDim2.new(1,0,0,24)
-            end
-            task.wait(1)
-        end
-    end)
-
-    ToggleRow(p,"Auto Goyang","Fokus serang 1 musuh dari list di atas",13,function(on)
-        DoAutoGoyang(on)
-    end)
 end
 
 -- =====================================================
