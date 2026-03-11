@@ -28,10 +28,11 @@ task.wait(0.05)
 -- =====================================================
 -- REMOTES
 -- =====================================================
-local Remotes        = RS:WaitForChild("Remotes")
-local RE_CollectItem = Remotes:WaitForChild("CollectItem")
-local RE_ExtraReward = Remotes:WaitForChild("ExtraReward")
-local RE_AutoHeroQuirk = Remotes:WaitForChild("AutoRandomHeroQuirk")
+local Remotes          = RS:WaitForChild("Remotes")
+local RE_CollectItem   = Remotes:WaitForChild("CollectItem")
+local RE_ExtraReward   = Remotes:WaitForChild("ExtraReward")
+local RE_AutoHeroQuirk  = Remotes:WaitForChild("AutoRandomHeroQuirk")
+local RE_RandomHeroQuirk = Remotes:WaitForChild("RandomHeroQuirk")
 
 -- =====================================================
 -- WARNA
@@ -58,6 +59,8 @@ local C = {
     WIN_MIN  = Color3.fromRGB(255, 190, 50),
     WIN_MAX  = Color3.fromRGB(60,  210, 80),
     BLACK    = Color3.fromRGB(0,   0,   0),
+    DD_BG    = Color3.fromRGB(100, 35,  0),
+    DD_HOVER = Color3.fromRGB(160, 58,  3),
 }
 
 -- =====================================================
@@ -65,375 +68,302 @@ local C = {
 -- =====================================================
 local function New(class, props)
     local obj = Instance.new(class)
-    for k, v in pairs(props) do
-        pcall(function() obj[k] = v end)
-    end
+    for k, v in pairs(props) do pcall(function() obj[k] = v end) end
     return obj
 end
 
 local function Frame(parent, color, size)
-    return New("Frame", {
-        Parent = parent,
-        BackgroundColor3 = color,
-        Size = size or UDim2.new(1,0,1,0),
-        BorderSizePixel = 0,
-    })
+    return New("Frame", {Parent=parent, BackgroundColor3=color,
+        Size=size or UDim2.new(1,0,1,0), BorderSizePixel=0})
 end
 
 local function Btn(parent, color, size)
-    return New("TextButton", {
-        Parent = parent,
-        BackgroundColor3 = color,
-        Size = size or UDim2.new(1,0,1,0),
-        BorderSizePixel = 0,
-        Text = "",
-        AutoButtonColor = false,
-    })
+    return New("TextButton", {Parent=parent, BackgroundColor3=color,
+        Size=size or UDim2.new(1,0,1,0), BorderSizePixel=0,
+        Text="", AutoButtonColor=false})
 end
 
 local function Label(parent, text, size, color, font, xalign)
-    return New("TextLabel", {
-        Parent = parent,
-        BackgroundTransparency = 1,
-        Size = UDim2.new(1,0,1,0),
-        Text = text,
-        TextSize = size or 12,
-        TextColor3 = color or C.TXT,
-        Font = font or Enum.Font.Gotham,
-        TextXAlignment = xalign or Enum.TextXAlignment.Left,
-        BorderSizePixel = 0,
-    })
+    return New("TextLabel", {Parent=parent, BackgroundTransparency=1,
+        Size=UDim2.new(1,0,1,0), Text=text, TextSize=size or 12,
+        TextColor3=color or C.TXT, Font=font or Enum.Font.Gotham,
+        TextXAlignment=xalign or Enum.TextXAlignment.Left, BorderSizePixel=0})
 end
 
-local function Corner(obj, r)
-    New("UICorner", {Parent=obj, CornerRadius=UDim.new(0, r or 8)})
-end
-
+local function Corner(obj, r) New("UICorner",{Parent=obj,CornerRadius=UDim.new(0,r or 8)}) end
 local function Stroke(obj, color, thickness, transparency)
-    New("UIStroke", {
-        Parent=obj,
-        Color=color or C.BORD,
-        Thickness=thickness or 1,
-        Transparency=transparency or 0,
-    })
+    New("UIStroke",{Parent=obj, Color=color or C.BORD,
+        Thickness=thickness or 1, Transparency=transparency or 0})
 end
-
 local function Padding(obj, top, bottom, left, right)
-    New("UIPadding", {
-        Parent=obj,
-        PaddingTop=UDim.new(0,top or 6),
+    New("UIPadding",{Parent=obj, PaddingTop=UDim.new(0,top or 6),
         PaddingBottom=UDim.new(0,bottom or 6),
         PaddingLeft=UDim.new(0,left or 8),
-        PaddingRight=UDim.new(0,right or 8),
-    })
+        PaddingRight=UDim.new(0,right or 8)})
 end
-
 local function ListLayout(parent, dir, align, spacing)
-    return New("UIListLayout", {
-        Parent=parent,
+    return New("UIListLayout",{Parent=parent,
         FillDirection=dir or Enum.FillDirection.Vertical,
         HorizontalAlignment=align or Enum.HorizontalAlignment.Left,
         SortOrder=Enum.SortOrder.LayoutOrder,
-        Padding=UDim.new(0, spacing or 4),
-    })
+        Padding=UDim.new(0,spacing or 4)})
 end
 
 -- =====================================================
 -- SCREEN GUI
 -- =====================================================
-local ScreenGui = New("ScreenGui", {
-    Parent = PG,
-    Name = "ASH_GUI",
-    ResetOnSpawn = false,
-    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-    DisplayOrder = 9999,
-})
+local ScreenGui = New("ScreenGui",{Parent=PG, Name="ASH_GUI",
+    ResetOnSpawn=false, ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
+    DisplayOrder=9999})
 
 -- =====================================================
 -- MAIN WINDOW
 -- =====================================================
 local WIN_W, WIN_H = 500, 360
-local Window = Frame(ScreenGui, C.BG, UDim2.new(0, WIN_W, 0, WIN_H))
-Window.Position = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2)
+local Window = Frame(ScreenGui, C.BG, UDim2.new(0,WIN_W,0,WIN_H))
+Window.Position = UDim2.new(0.5,-WIN_W/2,0.5,-WIN_H/2)
 Window.ClipsDescendants = true
 Corner(Window, 14)
 Stroke(Window, C.BORD2, 1.5, 0)
-New("UIGradient", {
-    Parent = Window,
-    Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, C.BG),
-        ColorSequenceKeypoint.new(1, C.BG3),
-    }),
-    Rotation = 135,
-})
+New("UIGradient",{Parent=Window,
+    Color=ColorSequence.new({
+        ColorSequenceKeypoint.new(0,C.BG),
+        ColorSequenceKeypoint.new(1,C.BG3)}),
+    Rotation=135})
 
 -- =====================================================
 -- TOPBAR
 -- =====================================================
 local TopBar = Frame(Window, C.TBAR, UDim2.new(1,0,0,40))
-Corner(TopBar, 14)
+Corner(TopBar,14)
 local TBFix = Frame(TopBar, C.TBAR, UDim2.new(1,0,0,14))
 TBFix.Position = UDim2.new(0,0,1,-14)
 
 local IconBg = Frame(TopBar, C.SEL_BG, UDim2.new(0,28,0,28))
 IconBg.Position = UDim2.new(0,8,0.5,-14)
-Corner(IconBg, 7)
-Stroke(IconBg, C.ACC, 1, 0.3)
-local IconLbl = Label(IconBg, "⚔", 14, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+Corner(IconBg,7); Stroke(IconBg,C.ACC,1,0.3)
+local IconLbl = Label(IconBg,"⚔",14,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
 IconLbl.Size = UDim2.new(1,0,1,0)
 
-local TitleLbl = Label(TopBar, "Auto Farming", 13, C.ACC2, Enum.Font.GothamBold)
-TitleLbl.Size = UDim2.new(0,160,0,22)
-TitleLbl.Position = UDim2.new(0,44,0,5)
-local SubLbl = Label(TopBar, "Arise Shadow Hunt  •  by FLa", 9, C.TXT3, Enum.Font.Gotham)
-SubLbl.Size = UDim2.new(0,220,0,14)
-SubLbl.Position = UDim2.new(0,44,0,23)
+local TitleLbl = Label(TopBar,"Auto Farming",13,C.ACC2,Enum.Font.GothamBold)
+TitleLbl.Size=UDim2.new(0,160,0,22); TitleLbl.Position=UDim2.new(0,44,0,5)
+local SubLbl = Label(TopBar,"Arise Shadow Hunt  •  by FLa",9,C.TXT3,Enum.Font.Gotham)
+SubLbl.Size=UDim2.new(0,220,0,14); SubLbl.Position=UDim2.new(0,44,0,23)
 
--- Window buttons
-local function WinBtn(x, color, symbol)
-    local b = Btn(TopBar, color, UDim2.new(0,14,0,14))
-    b.Position = UDim2.new(1, x, 0.5, -7)
-    Corner(b, 7)
-    local l = Label(b, symbol, 8, C.BLACK, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-    l.Size = UDim2.new(1,0,1,0)
-    l.Visible = false
-    b.MouseEnter:Connect(function() l.Visible = true end)
-    b.MouseLeave:Connect(function() l.Visible = false end)
+local function WinBtn(x,color,symbol)
+    local b = Btn(TopBar,color,UDim2.new(0,14,0,14))
+    b.Position=UDim2.new(1,x,0.5,-7); Corner(b,7)
+    local l=Label(b,symbol,8,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    l.Size=UDim2.new(1,0,1,0); l.Visible=false
+    b.MouseEnter:Connect(function() l.Visible=true end)
+    b.MouseLeave:Connect(function() l.Visible=false end)
     return b
 end
-local BtnClose = WinBtn(-22, C.WIN_CLOSE, "✕")
-local BtnMin   = WinBtn(-42, C.WIN_MIN,   "—")
-local BtnMax   = WinBtn(-62, C.WIN_MAX,   "□")
+local BtnClose = WinBtn(-22,C.WIN_CLOSE,"✕")
+local BtnMin   = WinBtn(-42,C.WIN_MIN,"—")
+local BtnMax   = WinBtn(-62,C.WIN_MAX,"□")
 
 -- Drag
-local dragging, dragStart, startPos = false, nil, nil
-TopBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true; dragStart = input.Position; startPos = Window.Position
-    end
-end)
-TopBar.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and (
-        input.UserInputType == Enum.UserInputType.MouseMovement or
-        input.UserInputType == Enum.UserInputType.Touch) then
-        local d = input.Position - dragStart
-        Window.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + d.X,
-            startPos.Y.Scale, startPos.Y.Offset + d.Y)
-    end
-end)
+local dragging,dragStart,startPos=false,nil,nil
+TopBar.InputBegan:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+        dragging=true; dragStart=i.Position; startPos=Window.Position end end)
+TopBar.InputEnded:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+        dragging=false end end)
+UserInputService.InputChanged:Connect(function(i)
+    if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
+        local d=i.Position-dragStart
+        Window.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y) end end)
 
 -- =====================================================
 -- FLOATING BUBBLE
 -- =====================================================
-local Bubble = Btn(ScreenGui, C.TBAR, UDim2.new(0,60,0,60))
-Bubble.Position = UDim2.new(0,20,0.5,-30)
-Bubble.Visible = false
-Corner(Bubble, 30)
-Stroke(Bubble, C.ACC, 2, 0)
-local BubbleLbl = Label(Bubble, "FLa", 20, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-BubbleLbl.Size = UDim2.new(1,0,1,0)
+local Bubble=Btn(ScreenGui,C.TBAR,UDim2.new(0,60,0,60))
+Bubble.Position=UDim2.new(0,20,0.5,-30); Bubble.Visible=false
+Corner(Bubble,30); Stroke(Bubble,C.ACC,2,0)
+local BubbleLbl=Label(Bubble,"FLa",20,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+BubbleLbl.Size=UDim2.new(1,0,1,0)
 
 local bubbleConn
+local function StopFloat()
+    if bubbleConn then bubbleConn:Disconnect(); bubbleConn=nil end
+end
 local function StartFloat()
-    local t = 0
-    local base = Bubble.Position.Y.Scale
-    bubbleConn = RunService.Heartbeat:Connect(function(dt)
+    StopFloat()
+    local t     = 0
+    local baseX = Bubble.Position.X.Offset
+    local baseY = Bubble.Position.Y.Offset
+    bubbleConn  = RunService.Heartbeat:Connect(function(dt)
         t = t + dt
-        Bubble.Position = UDim2.new(
-            Bubble.Position.X.Scale,
-            Bubble.Position.X.Offset,
-            base,
-            -30 + math.sin(t*2)*8
-        )
+        Bubble.Position = UDim2.new(0, baseX, 0, baseY + math.sin(t*2)*8)
     end)
 end
-local function StopFloat()
-    if bubbleConn then bubbleConn:Disconnect(); bubbleConn = nil end
-end
 
-local bDrag, bDragStart, bStartPos = false, nil, nil
-Bubble.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        bDrag=true; bDragStart=input.Position; bStartPos=Bubble.Position; StopFloat()
+-- Drag dengan threshold supaya klik biasa tidak terhitung drag
+local bDrag        = false
+local bDragMoved   = false
+local bDragStart   = nil
+local bStartPos    = nil
+local DRAG_THRESH  = 6
+
+Bubble.InputBegan:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1
+    or i.UserInputType==Enum.UserInputType.Touch then
+        bDrag=true; bDragMoved=false
+        bDragStart=i.Position; bStartPos=Bubble.Position
+        StopFloat()
     end
 end)
-Bubble.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        bDrag=false
-        if Bubble.Visible then StartFloat() end
+
+Bubble.InputEnded:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1
+    or i.UserInputType==Enum.UserInputType.Touch then
+        local wasDrag = bDragMoved
+        bDrag=false; bDragMoved=false
+        if wasDrag then
+            -- Selesai drag → lanjut float di posisi baru
+            if Bubble.Visible then StartFloat() end
+        else
+            -- Klik biasa → restore window
+            StopFloat()
+            Bubble.Visible = false
+            Window.Visible = true
+        end
     end
 end)
-UserInputService.InputChanged:Connect(function(input)
-    if bDrag and (
-        input.UserInputType == Enum.UserInputType.MouseMovement or
-        input.UserInputType == Enum.UserInputType.Touch) then
-        local d = input.Position - bDragStart
-        Bubble.Position = UDim2.new(
-            bStartPos.X.Scale, bStartPos.X.Offset+d.X,
-            bStartPos.Y.Scale, bStartPos.Y.Offset+d.Y)
+
+UserInputService.InputChanged:Connect(function(i)
+    if bDrag and (i.UserInputType==Enum.UserInputType.MouseMovement
+    or i.UserInputType==Enum.UserInputType.Touch) then
+        local d = i.Position - bDragStart
+        if math.abs(d.X)>DRAG_THRESH or math.abs(d.Y)>DRAG_THRESH then
+            bDragMoved=true
+        end
+        if bDragMoved then
+            Bubble.Position=UDim2.new(0,bStartPos.X.Offset+d.X,0,bStartPos.Y.Offset+d.Y)
+        end
     end
 end)
 
 BtnMin.MouseButton1Click:Connect(function()
-    Window.Visible = false; Bubble.Visible = true; StartFloat()
-end)
-Bubble.MouseButton1Click:Connect(function()
-    if bDrag then return end
-    StopFloat(); Bubble.Visible=false; Window.Visible=true
+    Window.Visible=false
+    Bubble.Position=UDim2.new(0,20,0.5,-30)
+    Bubble.Visible=true
+    StartFloat()
 end)
 
-local isFS, prevSz, prevPs = false, Window.Size, Window.Position
+local isFS,prevSz,prevPs=false,Window.Size,Window.Position
 BtnMax.MouseButton1Click:Connect(function()
-    isFS = not isFS
-    if isFS then
-        prevSz=Window.Size; prevPs=Window.Position
+    isFS=not isFS
+    if isFS then prevSz=Window.Size; prevPs=Window.Position
         TweenService:Create(Window,TweenInfo.new(0.2),{Size=UDim2.new(1,0,1,0),Position=UDim2.new(0,0,0,0)}):Play()
-    else
-        TweenService:Create(Window,TweenInfo.new(0.2),{Size=prevSz,Position=prevPs}):Play()
-    end
-end)
-
+    else TweenService:Create(Window,TweenInfo.new(0.2),{Size=prevSz,Position=prevPs}):Play() end end)
 BtnClose.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
 
 -- =====================================================
 -- BODY
 -- =====================================================
-local Body = Frame(Window, C.BG3, UDim2.new(1,0,1,-40))
-Body.Position = UDim2.new(0,0,0,40)
+local Body=Frame(Window,C.BG3,UDim2.new(1,0,1,-40))
+Body.Position=UDim2.new(0,0,0,40)
 
-local SideBar = Frame(Body, C.SIDEBAR, UDim2.new(0,100,1,0))
+local SideBar=Frame(Body,C.SIDEBAR,UDim2.new(0,100,1,0))
+local SideScroll=New("ScrollingFrame",{Parent=SideBar,
+    Size=UDim2.new(1,0,1,-8), Position=UDim2.new(0,0,0,4),
+    BackgroundTransparency=1, BorderSizePixel=0,
+    ScrollBarThickness=2, ScrollBarImageColor3=C.ACC,
+    CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y})
+ListLayout(SideScroll,nil,Enum.HorizontalAlignment.Center,2)
+Padding(SideScroll,4,4,4,4)
 
-local SideScroll = New("ScrollingFrame", {
-    Parent = SideBar,
-    Size = UDim2.new(1,0,1,-8),
-    Position = UDim2.new(0,0,0,4),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    ScrollBarThickness = 2,
-    ScrollBarImageColor3 = C.ACC,
-    CanvasSize = UDim2.new(0,0,0,0),
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-})
-ListLayout(SideScroll, nil, Enum.HorizontalAlignment.Center, 2)
-Padding(SideScroll, 4, 4, 4, 4)
-
-local ContentFrame = Frame(Body, C.BLACK, UDim2.new(1,-100,1,0))
-ContentFrame.Position = UDim2.new(0,100,0,0)
-ContentFrame.BackgroundTransparency = 1
+local ContentFrame=Frame(Body,C.BLACK,UDim2.new(1,-100,1,0))
+ContentFrame.Position=UDim2.new(0,100,0,0)
+ContentFrame.BackgroundTransparency=1
 
 -- =====================================================
 -- TAB SYSTEM
 -- =====================================================
-local NAV_ITEMS = {
-    { tag="main",     ico="🏠", lbl="Main"      },
-    { tag="farm",     ico="⚔",  lbl="Farm"      },
-    { tag="collect",  ico="💰", lbl="Collect"   },
-    { tag="autoroll", ico="🎲", lbl="Auto Roll" },
-    { tag="settings", ico="⚙",  lbl="Settings"  },
-    { tag="info",     ico="ℹ",  lbl="Info"      },
+local NAV_ITEMS={
+    {tag="main",     ico="🏠", lbl="Main"},
+    {tag="farm",     ico="⚔",  lbl="Farm"},
+    {tag="collect",  ico="💰", lbl="Collect"},
+    {tag="autoroll", ico="🎲", lbl="Reroling"},
+    {tag="settings", ico="⚙",  lbl="Settings"},
+    {tag="info",     ico="ℹ",  lbl="Info"},
 }
 
-local Panels, NavRefs, ActiveTab = {}, {}, ""
+local Panels,NavRefs,ActiveTab={},{},""
 
 local function NewPanel(tag)
-    local p = New("ScrollingFrame", {
-        Parent = ContentFrame,
-        Size = UDim2.new(1,0,1,0),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ScrollBarThickness = 3,
-        ScrollBarImageColor3 = C.ACC,
-        CanvasSize = UDim2.new(0,0,0,0),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        Visible = false,
-    })
-    ListLayout(p, nil, Enum.HorizontalAlignment.Center, 5)
-    Padding(p, 8, 8, 8, 8)
-    Panels[tag] = p
-    return p
+    local p=New("ScrollingFrame",{Parent=ContentFrame,
+        Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
+        BorderSizePixel=0, ScrollBarThickness=3,
+        ScrollBarImageColor3=C.ACC, CanvasSize=UDim2.new(0,0,0,0),
+        AutomaticCanvasSize=Enum.AutomaticSize.Y, Visible=false})
+    ListLayout(p,nil,Enum.HorizontalAlignment.Center,5)
+    Padding(p,8,8,8,8)
+    Panels[tag]=p; return p
 end
 
 local function SwitchTab(tag)
-    if ActiveTab == tag then return end
-    ActiveTab = tag
-    for t, p in pairs(Panels) do p.Visible = (t==tag) end
-    for _, ref in ipairs(NavRefs) do
-        local sel = ref.tag == tag
-        TweenService:Create(ref.bg, TweenInfo.new(0.12), {
-            BackgroundTransparency = sel and 0 or 1,
-            BackgroundColor3 = sel and C.SEL_BG or C.SIDEBAR,
-        }):Play()
-        ref.bar.BackgroundColor3 = sel and C.ACC2 or C.SIDEBAR
-        ref.lbl.TextColor3 = sel and C.ACC2 or C.TXT2
-        ref.ico.TextColor3 = sel and C.ACC2 or C.TXT3
-        local s = ref.bg:FindFirstChildWhichIsA("UIStroke")
-        if sel then
-            if not s then
-                New("UIStroke",{Parent=ref.bg,Color=C.SEL_BORD,Thickness=1,Transparency=0.4})
-            end
-        else
-            if s then s:Destroy() end
-        end
+    if ActiveTab==tag then return end
+    ActiveTab=tag
+    for t,p in pairs(Panels) do p.Visible=(t==tag) end
+    for _,ref in ipairs(NavRefs) do
+        local sel=ref.tag==tag
+        TweenService:Create(ref.bg,TweenInfo.new(0.12),{
+            BackgroundTransparency=sel and 0 or 1,
+            BackgroundColor3=sel and C.SEL_BG or C.SIDEBAR}):Play()
+        ref.bar.BackgroundColor3=sel and C.ACC2 or C.SIDEBAR
+        ref.lbl.TextColor3=sel and C.ACC2 or C.TXT2
+        ref.ico.TextColor3=sel and C.ACC2 or C.TXT3
+        local s=ref.bg:FindFirstChildWhichIsA("UIStroke")
+        if sel then if not s then New("UIStroke",{Parent=ref.bg,Color=C.SEL_BORD,Thickness=1,Transparency=0.4}) end
+        else if s then s:Destroy() end end
     end
 end
 
-for i, item in ipairs(NAV_ITEMS) do
-    local NAV_H = 34
-    local bg = Btn(SideScroll, C.SIDEBAR, UDim2.new(1,-8,0,NAV_H))
-    bg.LayoutOrder = i; bg.BackgroundTransparency = 1; Corner(bg,8)
-    local bar = Frame(bg, C.SIDEBAR, UDim2.new(0,3,0.5,0))
-    bar.Position = UDim2.new(0,0,0.25,0); Corner(bar,2)
-    local icoL = Label(bg, item.ico, 13, C.TXT3, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-    icoL.Size = UDim2.new(0,24,1,0); icoL.Position = UDim2.new(0,6,0,0)
-    local lblL = Label(bg, item.lbl, 9, C.TXT2, Enum.Font.Gotham, Enum.TextXAlignment.Left)
-    lblL.Size = UDim2.new(1,-34,1,0); lblL.Position = UDim2.new(0,32,0,0)
-    lblL.TextTruncate = Enum.TextTruncate.AtEnd
-    NavRefs[i] = {tag=item.tag, bg=bg, bar=bar, ico=icoL, lbl=lblL}
+for i,item in ipairs(NAV_ITEMS) do
+    local bg=Btn(SideScroll,C.SIDEBAR,UDim2.new(1,-8,0,34))
+    bg.LayoutOrder=i; bg.BackgroundTransparency=1; Corner(bg,8)
+    local bar=Frame(bg,C.SIDEBAR,UDim2.new(0,3,0.5,0))
+    bar.Position=UDim2.new(0,0,0.25,0); Corner(bar,2)
+    local icoL=Label(bg,item.ico,13,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    icoL.Size=UDim2.new(0,24,1,0); icoL.Position=UDim2.new(0,6,0,0)
+    local lblL=Label(bg,item.lbl,9,C.TXT2,Enum.Font.Gotham,Enum.TextXAlignment.Left)
+    lblL.Size=UDim2.new(1,-34,1,0); lblL.Position=UDim2.new(0,32,0,0)
+    lblL.TextTruncate=Enum.TextTruncate.AtEnd
+    NavRefs[i]={tag=item.tag,bg=bg,bar=bar,ico=icoL,lbl=lblL}
     bg.MouseButton1Click:Connect(function() SwitchTab(item.tag) end)
     bg.MouseEnter:Connect(function()
         if ActiveTab~=item.tag then
-            TweenService:Create(bg,TweenInfo.new(0.1),{BackgroundTransparency=0,BackgroundColor3=Color3.fromRGB(170,62,4)}):Play()
-        end
-    end)
+            TweenService:Create(bg,TweenInfo.new(0.1),{BackgroundTransparency=0,BackgroundColor3=Color3.fromRGB(170,62,4)}):Play() end end)
     bg.MouseLeave:Connect(function()
         if ActiveTab~=item.tag then
-            TweenService:Create(bg,TweenInfo.new(0.1),{BackgroundTransparency=1}):Play()
-        end
-    end)
+            TweenService:Create(bg,TweenInfo.new(0.1),{BackgroundTransparency=1}):Play() end end)
 end
 
 -- =====================================================
 -- PANEL HELPERS
 -- =====================================================
-local function SectionHeader(panel, title, order)
-    local f = Frame(panel, C.BLACK, UDim2.new(1,0,0,20))
+local function SectionHeader(panel,title,order)
+    local f=Frame(panel,C.BLACK,UDim2.new(1,0,0,20))
     f.BackgroundTransparency=1; f.LayoutOrder=order or 0
-    local l = Label(f, "  "..title, 9, C.ACC2, Enum.Font.GothamBold)
-    l.Size = UDim2.new(1,0,1,0)
-    local line = Frame(f, C.ACC2, UDim2.new(1,0,0,1))
+    local l=Label(f,"  "..title,9,C.ACC2,Enum.Font.GothamBold)
+    l.Size=UDim2.new(1,0,1,0)
+    local line=Frame(f,C.ACC2,UDim2.new(1,0,0,1))
     line.Position=UDim2.new(0,0,1,-1); line.BackgroundTransparency=0.6
 end
 
-local function ToggleRow(panel, title, desc, order, onToggle)
-    local h = desc and 50 or 38
-    local row = Frame(panel, C.SURFACE, UDim2.new(1,0,0,h))
+local function ToggleRow(panel,title,desc,order,onToggle)
+    local h=desc and 50 or 38
+    local row=Frame(panel,C.SURFACE,UDim2.new(1,0,0,h))
     row.LayoutOrder=order or 1; Corner(row,8); Stroke(row,C.BORD,1,0.4)
-    local lbl = Label(row, title, 10, C.TXT, Enum.Font.GothamBold)
-    lbl.Size=UDim2.new(1,-60,0,18); lbl.Position=UDim2.new(0,12,0, desc and 8 or 10)
+    local lbl=Label(row,title,10,C.TXT,Enum.Font.GothamBold)
+    lbl.Size=UDim2.new(1,-60,0,18); lbl.Position=UDim2.new(0,12,0,desc and 8 or 10)
     if desc then
         local sub=Label(row,desc,8,C.TXT2,Enum.Font.Gotham)
-        sub.Size=UDim2.new(1,-60,0,14); sub.Position=UDim2.new(0,12,0,26)
-    end
+        sub.Size=UDim2.new(1,-60,0,14); sub.Position=UDim2.new(0,12,0,26) end
     local pill=Btn(row,Color3.fromRGB(120,40,0),UDim2.new(0,44,0,24))
     pill.Position=UDim2.new(1,-54,0.5,-12); Corner(pill,12)
     local knob=Frame(pill,Color3.fromRGB(190,130,70),UDim2.new(0,18,0,18))
@@ -444,59 +374,40 @@ local function ToggleRow(panel, title, desc, order, onToggle)
         TweenService:Create(pill,TweenInfo.new(0.16),{BackgroundColor3=v and C.ACC2 or Color3.fromRGB(120,40,0)}):Play()
         TweenService:Create(knob,TweenInfo.new(0.16),{
             Position=v and UDim2.new(1,-21,0.5,-9) or UDim2.new(0,3,0.5,-9),
-            BackgroundColor3=v and Color3.fromRGB(255,255,255) or Color3.fromRGB(190,130,70),
-        }):Play()
+            BackgroundColor3=v and Color3.fromRGB(255,255,255) or Color3.fromRGB(190,130,70)}):Play()
         if onToggle then onToggle(v) end
     end
     pill.MouseButton1Click:Connect(function() SetState(not state) end)
     row.MouseEnter:Connect(function() TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=C.SURFACE2}):Play() end)
     row.MouseLeave:Connect(function() TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=C.SURFACE}):Play() end)
-    return row, SetState
+    return row,SetState
 end
 
 -- =====================================================
 -- STATE & LOOPS
 -- =====================================================
-local STATE = {
-    autoCollect   = false,
-    autoDestroyer = false,
-    autoArise     = false,
-    autoRoll      = false,
-}
-local LOOPS     = {}
-local COLLECTED = {}
+local STATE={autoCollect=false,autoDestroyer=false,autoArise=false,autoRoll=false}
+local LOOPS={}
+local COLLECTED={}
 
 local function StopLoop(key)
-    if LOOPS[key] then
-        pcall(function() task.cancel(LOOPS[key]) end)
-        LOOPS[key] = nil
-    end
+    if LOOPS[key] then pcall(function() task.cancel(LOOPS[key]) end); LOOPS[key]=nil end
 end
 
--- =====================================================
--- STATUS DOTS (diisi setelah panel Main dibuat)
--- =====================================================
-local StatusDots = {}
-local StatusLbls = {}
-
+local StatusDots,StatusLbls={},{}
 local function RefreshStatus()
-    local map = {
+    local map={
         collect={STATE.autoCollect,"Auto Collect Gold"},
         destroyer={STATE.autoDestroyer,"Auto Destroyer"},
         arise={STATE.autoArise,"Auto Arise"},
         roll={STATE.autoRoll,"Auto Roll"},
     }
-    for key, data in pairs(map) do
-        local active, label = data[1], data[2]
-        if StatusDots[key] then
-            StatusDots[key].BackgroundColor3 = active
-                and Color3.fromRGB(80,220,80)
-                or  Color3.fromRGB(100,100,100)
-        end
+    for key,data in pairs(map) do
+        local active,label=data[1],data[2]
+        if StatusDots[key] then StatusDots[key].BackgroundColor3=active and Color3.fromRGB(80,220,80) or Color3.fromRGB(100,100,100) end
         if StatusLbls[key] then
-            StatusLbls[key].Text = label..(active and "  —  ON" or "  —  OFF")
-            StatusLbls[key].TextColor3 = active and C.ACC2 or C.TXT2
-        end
+            StatusLbls[key].Text=label..(active and "  —  ON" or "  —  OFF")
+            StatusLbls[key].TextColor3=active and C.ACC2 or C.TXT2 end
     end
 end
 
@@ -506,17 +417,17 @@ end
 local function DoAutoCollect(on)
     StopLoop("collect"); COLLECTED={}
     if not on then return end
-    LOOPS["collect"] = task.spawn(function()
+    LOOPS["collect"]=task.spawn(function()
         while STATE.autoCollect do
-            local golds = workspace:FindFirstChild("Golds")
+            local golds=workspace:FindFirstChild("Golds")
             if golds then
-                for _, obj in ipairs(golds:GetChildren()) do
+                for _,obj in ipairs(golds:GetChildren()) do
                     if not STATE.autoCollect then break end
-                    local guid = obj:GetAttribute("GUID")
+                    local guid=obj:GetAttribute("GUID")
                     if guid and not COLLECTED[guid] then
-                        COLLECTED[guid] = true
+                        COLLECTED[guid]=true
                         pcall(function() RE_CollectItem:InvokeServer(guid) end)
-                        pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end)
+                        pcall(function() RE_ExtraReward:FireServer({isSell=true,guid=guid}) end)
                         task.wait(0.05)
                     end
                 end
@@ -529,369 +440,917 @@ end
 -- =====================================================
 -- LOGIC : AUTO DESTROYER
 -- =====================================================
-local _destroyerConn = nil
+local _destroyerConn=nil
 local function DoAutoDestroyer(on)
     StopLoop("destroyer")
     if _destroyerConn then _destroyerConn:Disconnect(); _destroyerConn=nil end
     if not on then return end
-    _destroyerConn = workspace.DescendantAdded:Connect(function(obj)
+    _destroyerConn=workspace.DescendantAdded:Connect(function(obj)
         if not STATE.autoDestroyer then return end
         task.wait(0.1)
         local guid; pcall(function() guid=obj:GetAttribute("GUID") end)
-        if guid then
-            pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end)
-        end
+        if guid then pcall(function() RE_ExtraReward:FireServer({isSell=true,guid=guid}) end) end
     end)
 end
 
 -- =====================================================
 -- LOGIC : AUTO ARISE
 -- =====================================================
-local _ariseConn = nil
+local _ariseConn=nil
 local function DoAutoArise(on)
     StopLoop("arise")
     if _ariseConn then _ariseConn:Disconnect(); _ariseConn=nil end
     if not on then return end
-    _ariseConn = workspace.DescendantAdded:Connect(function(obj)
+    _ariseConn=workspace.DescendantAdded:Connect(function(obj)
         if not STATE.autoArise then return end
         task.wait(0.1)
         local guid; pcall(function() guid=obj:GetAttribute("GUID") end)
-        if guid then
-            pcall(function() RE_ExtraReward:FireServer({isSell=false, isAuto=false, guid=guid}) end)
-        end
+        if guid then pcall(function() RE_ExtraReward:FireServer({isSell=false,isAuto=false,guid=guid}) end) end
     end)
 end
 
 -- =====================================================
--- QUIRK DATA — Stage 1 (ID → Nama)
+-- QUIRK DATA
 -- =====================================================
-local QUIRK_LIST = {
-    {id=99001, name="Silver Purse"},
-    {id=99002, name="Raw Strength"},
-    {id=99003, name="Tiny Luck"},
-    {id=99004, name="Precise Strike"},
-    {id=99005, name="Combo Rhythm"},
-    {id=99006, name="Lucky Charm"},
-    {id=99007, name="Gold Sense"},
-    {id=99008, name="Berserker's Rage"},
-    {id=99009, name="Rapid Slash"},
-    {id=99010, name="Godslayer"},
-    {id=99011, name="Phantom Rush"},
-    {id=99012, name="Legend Hunter"},
-    {id=99013, name="Midas Touch"},
-    {id=99014, name="Hyper Sprint"},
-    {id=99015, name="Time Skipper"},
-    {id=99016, name="Cosmic Luck"},
-    {id=99017, name="Destiny Rewriter"},
-    {id=99018, name="Final Judgment"},
+local QUIRK_LIST={
+    {id=99001,name="Silver Purse"},
+    {id=99002,name="Raw Strength"},
+    {id=99003,name="Tiny Luck"},
+    {id=99004,name="Precise Strike"},
+    {id=99005,name="Combo Rhythm"},
+    {id=99006,name="Lucky Charm"},
+    {id=99007,name="Gold Sense"},
+    {id=99008,name="Berserker's Rage"},
+    {id=99009,name="Rapid Slash"},
+    {id=99010,name="Godslayer"},
+    {id=99011,name="Phantom Rush"},
+    {id=99012,name="Legend Hunter"},
+    {id=99013,name="Midas Touch"},
+    {id=99014,name="Hyper Sprint"},
+    {id=99015,name="Time Skipper"},
+    {id=99016,name="Cosmic Luck"},
+    {id=99017,name="Destiny Rewriter"},
+    {id=99018,name="Final Judgment"},
 }
+local QUIRK_MAP={}
+for _,q in ipairs(QUIRK_LIST) do QUIRK_MAP[q.id]=q.name end
+local min=math.min  -- shorthand dipakai di MakeDropdown
 
 -- =====================================================
--- LOGIC : AUTO ROLL
+-- AUTO ROLL STATE
 -- =====================================================
-local _rollHeroGuid   = ""
-local _rollTargetIds  = {}   -- {[id]=true} quirk yang jadi stop condition
-local _rollCaptured   = false
-local _rollStatusLbl  = nil  -- label status di panel (diisi nanti)
+local _rollHeroGuid=""
+local _rollCaptured=false
+local _captureMethod=""        -- info metode capture yg berhasil
+-- Target per slot: 3 slot, masing-masing {[quirkId]=true}, max 5 per slot
+local _slotTarget     = {{},{},{}}
+local MAX_PER_SLOT    = 5
+-- UI refs (diisi saat panel dibuat)
+local _rerollStatusLbl=nil
+local _rollDotRef=nil
+local _captureStatusLbl=nil    -- label khusus status capture di UI
+local _weaponSlotLbls={nil,nil,nil}
+local _dropdownSelectedLbls={nil,nil,nil}
 
--- Hook AutoRandomHeroQuirk untuk capture heroGuid otomatis
--- Saat user klik StartReroll di game 1x → kita tangkap heroGuid-nya
-local _hookConn = nil
-local function SetupHeroGuidHook(onCapture)
-    pcall(function()
-        local remote = RE_AutoHeroQuirk
-        local oldInvoke
-        oldInvoke = hookfunction(remote.InvokeServer, function(self, args)
-            if args and args.heroGuid and not _rollCaptured then
-                _rollHeroGuid  = args.heroGuid
-                _rollCaptured  = true
-                if _rollStatusLbl then
-                    _rollStatusLbl.Text = "✓ heroGuid tertangkap!"
-                    _rollStatusLbl.TextColor3 = Color3.fromRGB(80,220,80)
+-- =====================================================
+-- DROPDOWN LAYER + HELPERS
+-- Dideklarasi di sini karena butuh _slotTarget &
+-- _weaponSlotLbls yang sudah ada di atas
+-- =====================================================
+local DDLayer=Frame(ScreenGui,C.BLACK,UDim2.new(1,0,1,0))
+DDLayer.BackgroundTransparency=1; DDLayer.ZIndex=9998; DDLayer.Visible=false
+DDLayer.Name="ASH_DD"
+
+local _activeDDClose=nil
+local function CloseActiveDD()
+    if _activeDDClose then _activeDDClose(); _activeDDClose=nil end
+end
+DDLayer.InputBegan:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1
+    or i.UserInputType==Enum.UserInputType.Touch then CloseActiveDD() end
+end)
+
+local _slotSummaryLbls={nil,nil,nil}
+
+local function GetSlotSummary(slotIndex)
+    local ids={}
+    for id,_ in pairs(_slotTarget[slotIndex]) do table.insert(ids,id) end
+    if #ids==0 then return "--" end
+    local names={}
+    for _,id in ipairs(ids) do table.insert(names, QUIRK_MAP[id] or "?") end
+    table.sort(names)
+    if #names==1 then return names[1] end
+    if #names<=2 then return table.concat(names,", ") end
+    return names[1]..", "..names[2].." +"..(#names-2).." lagi"
+end
+
+local function RefreshSlotUI(slotIndex)
+    local summary=GetSlotSummary(slotIndex)
+    if _slotSummaryLbls[slotIndex] then
+        _slotSummaryLbls[slotIndex].Text=summary
+    end
+    if _weaponSlotLbls and _weaponSlotLbls[slotIndex] then
+        _weaponSlotLbls[slotIndex].Text="Slot "..slotIndex..": "..summary
+    end
+end
+
+-- =====================================================
+-- UUID VALIDATOR
+-- Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+-- =====================================================
+local UUID_PATTERN = "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$"
+
+local function IsValidUUID(s)
+    return type(s)=="string" and #s==36 and s:match(UUID_PATTERN)~=nil
+end
+
+-- Deep scan table/payload cari semua UUID di dalamnya
+local function ExtractUUIDs(val, depth, found)
+    depth = depth or 0
+    found = found or {}
+    if depth > 5 then return found end
+    local t = type(val)
+    if t=="string" then
+        if IsValidUUID(val) then found[val]=true end
+    elseif t=="table" then
+        for k,v in pairs(val) do
+            -- Prioritas: key yang mengandung kata "guid"/"hero"
+            if type(k)=="string" then
+                local kl = k:lower()
+                if (kl:find("guid") or kl:find("hero") or kl:find("id"))
+                    and type(v)=="string" and IsValidUUID(v) then
+                    found[v] = (kl:find("guid") or kl:find("hero")) and "priority" or true
                 end
-                if onCapture then onCapture(args.heroGuid) end
-                print("[ ASH Roll ] heroGuid captured: "..args.heroGuid)
             end
-            return oldInvoke(self, args)
+            ExtractUUIDs(v, depth+1, found)
+        end
+    end
+    return found
+end
+
+-- =====================================================
+-- CAPTURE HELPER — set heroGuid, log ke console
+-- =====================================================
+local function SetHeroGuid(guid, method)
+    if not guid or guid=="" then return end
+    if not IsValidUUID(guid) then
+        warn("[ ASH ] SetHeroGuid: bukan UUID valid → "..tostring(guid))
+        return
+    end
+    if _rollCaptured and _rollHeroGuid==guid then return end
+    _rollHeroGuid  = guid
+    _rollCaptured  = true
+    _captureMethod = method or "unknown"
+    print("[ ASH ✓ ] heroGuid captured via ["..(_captureMethod).."]")
+    print("[ ASH ✓ ] GUID = ".._rollHeroGuid)
+    if _rerollStatusLbl then
+        _rerollStatusLbl.Text = "✓ Captured ["..(_captureMethod).."] — siap reroll"
+        _rerollStatusLbl.TextColor3 = Color3.fromRGB(80,220,80)
+    end
+    if _captureStatusLbl then
+        _captureStatusLbl.Text = "✓ ["..(_captureMethod).."] — ".._rollHeroGuid:sub(1,18).."..."
+        _captureStatusLbl.TextColor3 = Color3.fromRGB(80,220,80)
+    end
+    if _rollDotRef then
+        _rollDotRef.BackgroundColor3 = Color3.fromRGB(80,220,80)
+    end
+end
+
+-- =====================================================
+-- LAYER 0 : TARGETED HOOK — RandomHeroQuirk
+-- Confirmed via diagnostic: remote=RandomHeroQuirk,
+-- payload={heroGuid=UUID, drawId=920001}
+-- =====================================================
+local _layer0Active = false
+local _spyLog       = {}
+
+local function SetupUniversalSpy()
+    if _layer0Active then return end
+
+    -- Cek apakah getrawmetatable tersedia (Delta/exploit env)
+    if type(getrawmetatable) ~= "function" then
+        warn("[ ASH ] getrawmetatable tidak tersedia di executor ini")
+        if _captureStatusLbl then
+            _captureStatusLbl.Text = "⚠ Executor tidak support hook — input manual"
+            _captureStatusLbl.TextColor3 = Color3.fromRGB(255,80,80)
+        end
+        return
+    end
+
+    _layer0Active = true
+    local ok, err = pcall(function()
+        local mt    = getrawmetatable(game)
+        local oldNC = mt.__namecall
+        setreadonly(mt, false)
+
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            local args   = table.pack(...)
+
+            if method == "InvokeServer" or method == "FireServer" then
+                -- Intercept RandomHeroQuirk DAN AutoRandomHeroQuirk
+                if self == RE_RandomHeroQuirk or self == RE_AutoHeroQuirk then
+                    for i = 1, args.n do
+                        local a = args[i]
+                        if type(a) == "table" then
+                            -- Key sudah confirmed: heroGuid
+                            local g = a.heroGuid or a.HeroGuid or a.hero_guid
+                            if g and IsValidUUID(tostring(g)) then
+                                SetHeroGuid(tostring(g), "hook:"..tostring(self.Name))
+                            end
+                        end
+                    end
+                end
+            end
+
+            return oldNC(self, table.unpack(args, 1, args.n))
         end)
+
+        setreadonly(mt, true)
+    end)
+
+    if ok then
+        print("[ ASH ] Layer 0 (targeted hook) aktif ✓")
+        if _captureStatusLbl then
+            _captureStatusLbl.Text = "⟳ Hook aktif — klik ReRoll 1x di game"
+            _captureStatusLbl.TextColor3 = Color3.fromRGB(255,200,100)
+        end
+    else
+        warn("[ ASH ] Layer 0 gagal: "..tostring(err))
+        if _captureStatusLbl then
+            _captureStatusLbl.Text = "⚠ Hook gagal — coba scan manual"
+            _captureStatusLbl.TextColor3 = Color3.fromRGB(255,80,80)
+        end
+    end
+end
+
+-- =====================================================
+-- LAYER 2 : DEEP SCAN seluruh game tree
+-- Scan UUID dari semua Instance + attribute di game
+-- =====================================================
+local function ScanHeroGuidFromData()
+    if _rollCaptured then return true end
+
+    -- Key-key yang sering dipakai untuk menyimpan heroGuid
+    local GUID_KEYS = {
+        "heroGuid","HeroGuid","hero_guid","HEROGUID",
+        "guid","GUID","Guid",
+        "heroId","HeroId","hero_id",
+        "entityGuid","EntityGuid",
+        "selectedHero","SelectedHero",
+        "activeHero","ActiveHero",
+    }
+
+    local function TryScanInstance(obj)
+        if not obj then return end
+        -- Cek semua attribute
+        pcall(function()
+            local attrs = obj:GetAttributes()
+            for k,v in pairs(attrs) do
+                if type(v)=="string" and IsValidUUID(v) then
+                    local kl=k:lower()
+                    if kl:find("guid") or kl:find("hero") or kl:find("id") then
+                        SetHeroGuid(v,"scan:attr:"..obj.Name.."."..k)
+                        if _rollCaptured then return end
+                    end
+                end
+            end
+        end)
+        -- Cek StringValue / children
+        pcall(function()
+            for _,key in ipairs(GUID_KEYS) do
+                local child=obj:FindFirstChild(key)
+                if child and child.Value and IsValidUUID(tostring(child.Value)) then
+                    SetHeroGuid(tostring(child.Value),"scan:child:"..obj.Name.."."..key)
+                    if _rollCaptured then return end
+                end
+            end
+        end)
+    end
+
+    -- Scan dari berbagai root
+    local roots = {
+        LP, LP.Character,
+        LP:FindFirstChild("leaderstats"),
+        LP:FindFirstChild("PlayerData"),
+        LP:FindFirstChild("Data"),
+        RS:FindFirstChild("PlayerData"),
+        RS:FindFirstChild("Data"),
+        RS:FindFirstChild("Players"),
+        workspace:FindFirstChild("Players"),
+        workspace:FindFirstChild("Characters"),
+    }
+
+    for _,root in ipairs(roots) do
+        if _rollCaptured then return true end
+        if root then
+            TryScanInstance(root)
+            -- Scan satu level dalam
+            pcall(function()
+                for _,child in ipairs(root:GetChildren()) do
+                    if _rollCaptured then break end
+                    TryScanInstance(child)
+                end
+            end)
+        end
+    end
+
+    -- Coba scan khusus folder player di RS
+    pcall(function()
+        for _,folder in ipairs(RS:GetChildren()) do
+            if _rollCaptured then break end
+            local myFolder = folder:FindFirstChild(LP.Name)
+                or folder:FindFirstChild(tostring(LP.UserId))
+            if myFolder then
+                TryScanInstance(myFolder)
+                for _,c in ipairs(myFolder:GetChildren()) do
+                    if _rollCaptured then break end
+                    TryScanInstance(c)
+                end
+            end
+        end
+    end)
+
+    return _rollCaptured
+end
+
+-- =====================================================
+-- LAYER 3 : ATTRIBUTE CHANGE WATCHER
+-- Pasang :GetAttributeChangedSignal pada semua
+-- instance yang mungkin punya heroGuid, auto capture
+-- saat nilainya berubah/di-set
+-- =====================================================
+local _watcherConns = {}
+local function SetupAttributeWatcher()
+    if #_watcherConns > 0 then return end
+
+    local WATCH_KEYS = {"heroGuid","HeroGuid","guid","GUID","heroId","HeroId","selectedHero"}
+
+    local function WatchInstance(obj)
+        if not obj then return end
+        for _,key in ipairs(WATCH_KEYS) do
+            pcall(function()
+                local conn = obj:GetAttributeChangedSignal(key):Connect(function()
+                    if _rollCaptured then return end
+                    local v = obj:GetAttribute(key)
+                    if v and IsValidUUID(tostring(v)) then
+                        SetHeroGuid(tostring(v), "watcher:"..obj.Name.."."..key)
+                    end
+                end)
+                table.insert(_watcherConns, conn)
+            end)
+        end
+    end
+
+    -- Watch instance-instance kunci
+    WatchInstance(LP)
+    if LP.Character then WatchInstance(LP.Character) end
+    LP.CharacterAdded:Connect(function(char) WatchInstance(char) end)
+
+    -- Watch RS.DescendantAdded — kalau ada folder/object baru dengan UUID
+    table.insert(_watcherConns, RS.DescendantAdded:Connect(function(obj)
+        if _rollCaptured then return end
+        pcall(function()
+            local attrs = obj:GetAttributes()
+            for k,v in pairs(attrs) do
+                if type(v)=="string" and IsValidUUID(v) then
+                    SetHeroGuid(v,"watcher:RS.new:"..obj.Name.."."..k)
+                    if _rollCaptured then return end
+                end
+            end
+        end)
+        WatchInstance(obj)
+    end))
+
+    print("[ ASH ] Layer 3 (Attribute Watcher) aktif ✓")
+end
+
+-- =====================================================
+-- MASTER CAPTURE INIT — semua layer jalan sekaligus
+-- =====================================================
+local function InitAllCaptureLayers()
+    print("[ ASH ] Initializing capture layers...")
+
+    -- Layer 0: Universal Remote Spy — PERTAMA & PALING KUAT
+    SetupUniversalSpy()
+
+    task.spawn(function()
+        task.wait(0.3)
+
+        -- Layer 2: Deep scan data lokal
+        if not _rollCaptured then
+            ScanHeroGuidFromData()
+        end
+
+        task.wait(0.2)
+
+        -- Layer 3: Attribute watcher
+        if not _rollCaptured then
+            SetupAttributeWatcher()
+        end
+
+        -- Update status UI
+        if not _rollCaptured then
+            if _captureStatusLbl then
+                _captureStatusLbl.Text = "⟳ Spy aktif — klik ReRoll 1x di game"
+                _captureStatusLbl.TextColor3 = Color3.fromRGB(255,200,100)
+            end
+        end
+    end)
+
+    -- Periodik re-scan setiap 4 detik sampai berhasil
+    task.spawn(function()
+        local attempt = 0
+        while not _rollCaptured do
+            task.wait(4)
+            attempt = attempt + 1
+            if not _rollCaptured then
+                print("[ ASH ] Re-scan #"..attempt.."...")
+                ScanHeroGuidFromData()
+                -- Setelah 5 kali gagal, log semua UUID yang pernah ketangkap spy
+                if attempt >= 5 and not _rollCaptured then
+                    local count = 0
+                    for uuid,src in pairs(_spyLog) do
+                        count = count + 1
+                        print("[ ASH SPY LOG #"..count.."] "..uuid.." | "..src)
+                    end
+                    if count == 0 then
+                        print("[ ASH ] Belum ada UUID yang tertangkap spy sama sekali.")
+                        if _captureStatusLbl then
+                            _captureStatusLbl.Text = "⚠ Belum ada UUID — pastikan panel ReRoll terbuka di game"
+                            _captureStatusLbl.TextColor3 = Color3.fromRGB(255,80,80)
+                        end
+                    else
+                        print("[ ASH ] "..count.." UUID tertangkap spy tapi belum match — cek console")
+                        if _captureStatusLbl then
+                            _captureStatusLbl.Text = "⚠ "..count.." UUID spy — belum ada yg cocok, cek console"
+                            _captureStatusLbl.TextColor3 = Color3.fromRGB(255,150,50)
+                        end
+                    end
+                end
+            end
+        end
+        print("[ ASH ] Capture berhasil! Loop scan berhenti.")
+    end)
+end
+
+-- Fungsi untuk force rescan (dipanggil dari tombol UI)
+local function ForceRescan()
+    _rollCaptured = false
+    _rollHeroGuid = ""
+    _spyLog       = {}
+    _watcherConns = {}
+    if _captureStatusLbl then
+        _captureStatusLbl.Text = "⟳ Force rescan semua layer..."
+        _captureStatusLbl.TextColor3 = Color3.fromRGB(255,200,100)
+    end
+    if _rollDotRef then _rollDotRef.BackgroundColor3 = Color3.fromRGB(100,100,100) end
+    if _rerollStatusLbl then
+        _rerollStatusLbl.Text = "⟳ Mencari heroGuid ulang..."
+        _rerollStatusLbl.TextColor3 = Color3.fromRGB(255,200,100)
+    end
+    task.spawn(function()
+        task.wait(0.1)
+        ScanHeroGuidFromData()
+        if not _rollCaptured then SetupAttributeWatcher() end
+        -- Spy tetap aktif dari sebelumnya (tidak perlu reinit)
+    end)
+end
+
+-- =====================================================
+-- LOGIC : AUTO ROLL CORE — 3 SLOT PARALEL
+-- Masing-masing slot punya loop sendiri
+-- Stop semua jika salah satu slot dapat target
+-- =====================================================
+local _rollRunning = false
+
+local function StopAllRolls(reason)
+    _rollRunning = false
+    StopLoop("roll1"); StopLoop("roll2"); StopLoop("roll3")
+    STATE.autoRoll = false
+    if _rerollStatusLbl then
+        _rerollStatusLbl.Text = reason or "Idle"
+        _rerollStatusLbl.TextColor3 = Color3.fromRGB(80,220,80)
+    end
+    if _rollDotRef then
+        _rollDotRef.BackgroundColor3 = Color3.fromRGB(100,100,100)
+    end
+    RefreshStatus()
+end
+
+local function StartSlotLoop(slotIndex)
+    -- Snapshot target saat loop mulai
+    local targets = {}
+    for id,_ in pairs(_slotTarget[slotIndex]) do
+        targets[id] = true
+    end
+    local hasTarget = (next(targets) ~= nil)
+
+    local targetStr = "apapun"
+    if hasTarget then
+        local names = {}
+        for id,_ in pairs(targets) do
+            table.insert(names, QUIRK_MAP[id] or tostring(id))
+        end
+        targetStr = table.concat(names, ", ")
+    end
+
+    print("[Roll S"..slotIndex.."] START | target: "..targetStr)
+
+    LOOPS["roll"..slotIndex] = task.spawn(function()
+        local count = 0
+        while _rollRunning do
+            count = count + 1
+
+            -- Update status UI
+            if _rerollStatusLbl then
+                _rerollStatusLbl.Text = "⟳ Slot "..slotIndex.." | #"..count.." | "..targetStr
+                _rerollStatusLbl.TextColor3 = Color3.fromRGB(255,200,100)
+            end
+
+            -- Invoke server
+            local ok, result = pcall(function()
+                return RE_RandomHeroQuirk:InvokeServer({
+                    heroGuid = _rollHeroGuid,
+                    drawId   = 920001,
+                })
+            end)
+
+            if not ok then
+                warn("[Roll S"..slotIndex.."] pcall error #"..count)
+                task.wait(1)
+            elseif type(result) == "table" then
+                local gotId = result.quirkId
+                local name  = QUIRK_MAP[gotId] or ("ID:"..tostring(gotId))
+                print("[Roll S"..slotIndex.."] #"..count.." → "..name)
+
+                -- Cek apakah target
+                local hit = (not hasTarget) or (targets[gotId] == true)
+                if hit then
+                    StopAllRolls("✓ Slot "..slotIndex..": "..name.." (#"..count..")")
+                    return
+                end
+                task.wait(0.15)
+            else
+                warn("[Roll S"..slotIndex.."] result bukan table: "..tostring(result))
+                task.wait(0.5)
+            end
+        end
+        print("[Roll S"..slotIndex.."] loop berhenti.")
     end)
 end
 
 local function DoAutoRoll(on)
-    StopLoop("roll")
-    if not on then return end
+    -- Stop semua loop dulu
+    _rollRunning = false
+    task.wait(0.1)
+    StopLoop("roll1"); StopLoop("roll2"); StopLoop("roll3")
 
-    if not _rollHeroGuid or _rollHeroGuid == "" then
-        print("[ ASH ] heroGuid belum tertangkap! Klik StartReroll di game dulu 1x.")
-        if _rollStatusLbl then
-            _rollStatusLbl.Text = "⚠ Klik StartReroll di game dulu 1x!"
-            _rollStatusLbl.TextColor3 = Color3.fromRGB(255,180,60)
+    if not on then
+        if _rerollStatusLbl then
+            _rerollStatusLbl.Text = "Idle"
+            _rerollStatusLbl.TextColor3 = C.TXT2
+        end
+        if _rollDotRef then
+            _rollDotRef.BackgroundColor3 = Color3.fromRGB(100,100,100)
+        end
+        return
+    end
+
+    -- Pastikan heroGuid ada
+    if not _rollCaptured or _rollHeroGuid == "" then
+        if _rerollStatusLbl then
+            _rerollStatusLbl.Text = "⚠ Klik ReRoll manual 1x dulu!"
+            _rerollStatusLbl.TextColor3 = Color3.fromRGB(255,100,60)
         end
         STATE.autoRoll = false
         RefreshStatus()
         return
     end
 
-    -- Kumpulkan semua stopQuirkIds dari pilihan user
-    local stopIds = {}
-    for id, selected in pairs(_rollTargetIds) do
-        if selected then
-            table.insert(stopIds, id)
+    -- Set running SEBELUM spawn loop
+    _rollRunning = true
+
+    if _rollDotRef then
+        _rollDotRef.BackgroundColor3 = Color3.fromRGB(255,200,60)
+    end
+
+    print("[Roll] START — heroGuid=".._rollHeroGuid)
+
+    -- Hanya jalankan slot 1 untuk map ini
+    -- (slot 2 & 3 akan ditambah nanti untuk map berbeda)
+    StartSlotLoop(1)
+end
+
+-- =====================================================
+-- DROPDOWN MULTI-SELECT (max 5 per slot)
+-- =====================================================
+
+local function MakeDropdown(parent, slotIndex, order)
+    local row=Frame(parent,C.SURFACE,UDim2.new(1,0,0,40))
+    row.LayoutOrder=order; Corner(row,8); Stroke(row,C.BORD,1,0.4)
+
+    -- Label kiri
+    local slotLbl=Label(row,"Target Slot "..slotIndex,10,C.TXT,Enum.Font.GothamBold)
+    slotLbl.Size=UDim2.new(0,90,0,18); slotLbl.Position=UDim2.new(0,12,0,4)
+
+    -- Sub-label max
+    local maxLbl=Label(row,"(max "..MAX_PER_SLOT..")",7.5,C.TXT3,Enum.Font.Gotham)
+    maxLbl.Size=UDim2.new(0,60,0,12); maxLbl.Position=UDim2.new(0,12,0,22)
+
+    -- Tombol dropdown
+    local ddBtn=Btn(row,C.DD_BG,UDim2.new(0.52,0,0,28))
+    ddBtn.Position=UDim2.new(0.46,0,0.5,-14); Corner(ddBtn,6); Stroke(ddBtn,C.BORD2,1,0.3)
+
+    local ddLbl=Label(ddBtn,"--",8.5,C.TXT2,Enum.Font.Gotham,Enum.TextXAlignment.Left)
+    ddLbl.Size=UDim2.new(1,-20,1,0); ddLbl.Position=UDim2.new(0,7,0,0)
+    ddLbl.TextTruncate=Enum.TextTruncate.AtEnd
+    _slotSummaryLbls[slotIndex]=ddLbl
+
+    local arrowLbl=Label(ddBtn,"▼",8,C.ACC,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    arrowLbl.Size=UDim2.new(0,16,1,0); arrowLbl.Position=UDim2.new(1,-18,0,0)
+
+    -- Buka popup
+    ddBtn.MouseButton1Click:Connect(function()
+        CloseActiveDD()
+
+        local absPos  = ddBtn.AbsolutePosition
+        local absSize = ddBtn.AbsoluteSize
+
+        -- Popup container
+        local popup=Frame(DDLayer,C.DD_BG,UDim2.new(0,absSize.X+30,0,0))
+        popup.Position=UDim2.new(0,absPos.X,0,absPos.Y+absSize.Y+3)
+        popup.AutomaticSize=Enum.AutomaticSize.Y
+        popup.ZIndex=9999; Corner(popup,8); Stroke(popup,C.BORD2,1,0.2)
+        popup.ClipsDescendants=true
+
+        -- Header popup: counter & clear button
+        local popHeader=Frame(popup,Color3.fromRGB(90,30,0),UDim2.new(1,0,0,28))
+        popHeader.ZIndex=9999
+
+        local countLbl=Label(popHeader,"0/"..MAX_PER_SLOT.." dipilih",8.5,C.ACC2,Enum.Font.GothamBold)
+        countLbl.Size=UDim2.new(0.6,0,1,0); countLbl.Position=UDim2.new(0,8,0,0)
+        countLbl.ZIndex=9999
+
+        local clearBtn=Btn(popHeader,Color3.fromRGB(180,50,50),UDim2.new(0,50,0,20))
+        clearBtn.Position=UDim2.new(1,-56,0.5,-10); Corner(clearBtn,5)
+        clearBtn.ZIndex=9999
+        local clearLbl=Label(clearBtn,"Clear",8,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+        clearLbl.Size=UDim2.new(1,0,1,0); clearLbl.ZIndex=9999
+
+        -- Scroll list
+        local scrollPop=New("ScrollingFrame",{
+            Parent=popup, Size=UDim2.new(1,0,0,min(#QUIRK_LIST*30+8,190)),
+            Position=UDim2.new(0,0,0,28),
+            BackgroundTransparency=1, BorderSizePixel=0,
+            ScrollBarThickness=3, ScrollBarImageColor3=C.ACC,
+            CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y,
+            ZIndex=9999,
+        })
+        ListLayout(scrollPop,nil,Enum.HorizontalAlignment.Left,1)
+        Padding(scrollPop,3,3,4,4)
+
+        -- Refs ke semua baris quirk supaya bisa di-refresh
+        local rowRefs={}
+
+        local function UpdateCount()
+            local n=0
+            for _ in pairs(_slotTarget[slotIndex]) do n=n+1 end
+            countLbl.Text=n.."/"..MAX_PER_SLOT.." dipilih"
+            countLbl.TextColor3 = n>=MAX_PER_SLOT and Color3.fromRGB(255,100,80) or C.ACC2
         end
-    end
 
-    -- Kalau tidak ada yang dicentang → pakai semua ID (stop di quirk apapun)
-    if #stopIds == 0 then
-        for _, q in ipairs(QUIRK_LIST) do
-            table.insert(stopIds, q.id)
+        local function RefreshRows()
+            for qid, ref in pairs(rowRefs) do
+                local selected = (_slotTarget[slotIndex][qid] == true)
+                ref.bg.BackgroundColor3 = selected and Color3.fromRGB(140,52,0) or C.DD_BG
+                ref.tick.Visible = selected
+                ref.lbl.TextColor3 = selected and C.ACC2 or C.TXT
+            end
+            UpdateCount()
+            RefreshSlotUI(slotIndex)
         end
-    end
 
-    if _rollStatusLbl then
-        _rollStatusLbl.Text = "⟳ Rolling... ("..#stopIds.." target)"
-        _rollStatusLbl.TextColor3 = Color3.fromRGB(255,200,100)
-    end
+        -- Baris per quirk
+        for _,q in ipairs(QUIRK_LIST) do
+            local qRow=Btn(scrollPop,C.DD_BG,UDim2.new(1,-8,0,28))
+            qRow.ZIndex=9999; Corner(qRow,5)
 
-    LOOPS["roll"] = task.spawn(function()
-        while STATE.autoRoll do
-            local result = nil
-            pcall(function()
-                result = RE_AutoHeroQuirk:InvokeServer({
-                    heroGuid     = _rollHeroGuid,
-                    drawId       = 920001,
-                    stopQuirkIds = stopIds,
-                })
-            end)
+            -- Tick box
+            local tickBox=Frame(qRow,C.SEL_BG,UDim2.new(0,16,0,16))
+            tickBox.Position=UDim2.new(0,6,0.5,-8); Corner(tickBox,3); tickBox.ZIndex=9999
+            Stroke(tickBox,C.BORD2,1,0.4)
 
-            -- Cek apakah server return quirk yang match
-            if result then
-                local gotId = nil
-                if type(result) == "table" then
-                    gotId = result.quirkId or result.id or result[1]
-                elseif type(result) == "number" then
-                    gotId = result
-                end
+            local tickMark=Label(tickBox,"✓",9,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+            tickMark.Size=UDim2.new(1,0,1,0); tickMark.ZIndex=9999
+            tickMark.Visible=_slotTarget[slotIndex][q.id]==true
 
-                if gotId and _rollTargetIds[gotId] then
-                    -- Target quirk didapat! Stop
-                    STATE.autoRoll = false
-                    StopLoop("roll")
-                    local name = ""
-                    for _, q in ipairs(QUIRK_LIST) do
-                        if q.id == gotId then name = q.name; break end
-                    end
-                    if _rollStatusLbl then
-                        _rollStatusLbl.Text = "✓ Dapat: "..name.."!"
-                        _rollStatusLbl.TextColor3 = Color3.fromRGB(80,220,80)
-                    end
-                    print("[ ASH Roll ] Target didapat: "..name)
-                    RefreshStatus()
-                    break
-                end
+            local qLbl=Label(qRow,"  "..q.name,9,C.TXT,Enum.Font.Gotham)
+            qLbl.Size=UDim2.new(1,-30,1,0); qLbl.Position=UDim2.new(0,28,0,0)
+            qLbl.ZIndex=9999
+            if _slotTarget[slotIndex][q.id] then qLbl.TextColor3=C.ACC2 end
+
+            rowRefs[q.id]={bg=qRow, tick=tickMark, lbl=qLbl}
+
+            -- Highlight awal jika sudah terpilih
+            if _slotTarget[slotIndex][q.id] then
+                qRow.BackgroundColor3=Color3.fromRGB(140,52,0)
             end
 
-            task.wait(0.5)
+            qRow.MouseEnter:Connect(function()
+                if not (_slotTarget[slotIndex][q.id]==true) then
+                    qRow.BackgroundColor3=C.DD_HOVER
+                end
+            end)
+            qRow.MouseLeave:Connect(function()
+                if not (_slotTarget[slotIndex][q.id]==true) then
+                    qRow.BackgroundColor3=C.DD_BG
+                else
+                    qRow.BackgroundColor3=Color3.fromRGB(140,52,0)
+                end
+            end)
+
+            qRow.MouseButton1Click:Connect(function()
+                local isSelected = (_slotTarget[slotIndex][q.id]==true)
+                if isSelected then
+                    _slotTarget[slotIndex][q.id] = nil
+                else
+                    local n=0
+                    for _ in pairs(_slotTarget[slotIndex]) do n=n+1 end
+                    if n >= MAX_PER_SLOT then
+                        countLbl.TextColor3 = Color3.fromRGB(255,60,60)
+                        countLbl.Text = "MAX "..MAX_PER_SLOT.." tercapai!"
+                        task.delay(1.2, function() UpdateCount() end)
+                        return
+                    end
+                    _slotTarget[slotIndex][q.id] = true
+                end
+                RefreshRows()
+            end)
         end
+
+        -- Tombol clear
+        clearBtn.MouseButton1Click:Connect(function()
+            _slotTarget[slotIndex]={}
+            RefreshRows()
+        end)
+
+        UpdateCount()
+        DDLayer.Visible=true
+
+        local function Close()
+            popup:Destroy()
+            DDLayer.Visible=false
+            _activeDDClose=nil
+            RefreshSlotUI(slotIndex)
+        end
+        _activeDDClose=Close
     end)
+
+    return row
 end
+
 
 -- =====================================================
 -- PANEL : MAIN
 -- =====================================================
 do
-    local p = NewPanel("main")
-    SectionHeader(p, "STATUS FITUR", 0)
-
-    local keys = {
-        {key="collect",   label="Auto Collect Gold"},
-        {key="destroyer", label="Auto Destroyer"},
-        {key="arise",     label="Auto Arise"},
-        {key="roll",      label="Auto Roll"},
+    local p=NewPanel("main")
+    SectionHeader(p,"STATUS FITUR",0)
+    local keys={
+        {key="collect",  label="Auto Collect Gold"},
+        {key="destroyer",label="Auto Destroyer"},
+        {key="arise",    label="Auto Arise"},
+        {key="roll",     label="Auto Roll"},
     }
-    for i, item in ipairs(keys) do
-        local card = Frame(p, C.SURFACE, UDim2.new(1,0,0,36))
+    for i,item in ipairs(keys) do
+        local card=Frame(p,C.SURFACE,UDim2.new(1,0,0,36))
         card.LayoutOrder=i; Corner(card,8); Stroke(card,C.BORD,1,0.4)
-        local dot = Frame(card, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
+        local dot=Frame(card,Color3.fromRGB(100,100,100),UDim2.new(0,8,0,8))
         dot.Position=UDim2.new(0,12,0.5,-4); Corner(dot,4)
-        local lbl = Label(card, item.label.."  —  OFF", 10, C.TXT2, Enum.Font.Gotham)
+        local lbl=Label(card,item.label.."  —  OFF",10,C.TXT2,Enum.Font.Gotham)
         lbl.Size=UDim2.new(1,-30,1,0); lbl.Position=UDim2.new(0,28,0,0)
-        StatusDots[item.key] = dot
-        StatusLbls[item.key] = lbl
+        StatusDots[item.key]=dot; StatusLbls[item.key]=lbl
     end
 end
 
 -- =====================================================
--- PANEL : FARM (Destroyer & Arise)
+-- PANEL : FARM
 -- =====================================================
 do
-    local p = NewPanel("farm")
-    SectionHeader(p, "AUTO FARM", 0)
-
-    local _, setDestroyer = ToggleRow(p, "Auto Destroyer",
-        "Otomatis pilih Destroyer setiap bunuh mob", 1,
-        function(on)
-            STATE.autoDestroyer = on
-            if on and STATE.autoArise then
-                STATE.autoArise = false
-                DoAutoArise(false)
-            end
-            DoAutoDestroyer(on)
-            RefreshStatus()
-        end
-    )
-
-    local _, setArise = ToggleRow(p, "Auto Arise",
-        "Otomatis pilih Arise setiap bunuh mob", 2,
-        function(on)
-            STATE.autoArise = on
-            if on and STATE.autoDestroyer then
-                STATE.autoDestroyer = false
-                DoAutoDestroyer(false)
-            end
-            DoAutoArise(on)
-            RefreshStatus()
-        end
-    )
+    local p=NewPanel("farm")
+    SectionHeader(p,"AUTO FARM",0)
+    ToggleRow(p,"Auto Destroyer","Otomatis pilih Destroyer setiap bunuh mob",1,function(on)
+        STATE.autoDestroyer=on
+        if on and STATE.autoArise then STATE.autoArise=false; DoAutoArise(false) end
+        DoAutoDestroyer(on); RefreshStatus() end)
+    ToggleRow(p,"Auto Arise","Otomatis pilih Arise setiap bunuh mob",2,function(on)
+        STATE.autoArise=on
+        if on and STATE.autoDestroyer then STATE.autoDestroyer=false; DoAutoDestroyer(false) end
+        DoAutoArise(on); RefreshStatus() end)
 end
 
 -- =====================================================
 -- PANEL : COLLECT
 -- =====================================================
 do
-    local p = NewPanel("collect")
-    SectionHeader(p, "AUTO COLLECT GOLD", 0)
-
-    ToggleRow(p, "Auto Magnet Gold",
-        "Collect semua gold di Workspace.Golds", 1,
-        function(on)
-            STATE.autoCollect = on
-            DoAutoCollect(on)
-            RefreshStatus()
-        end
-    )
+    local p=NewPanel("collect")
+    SectionHeader(p,"AUTO COLLECT GOLD",0)
+    ToggleRow(p,"Auto Magnet Gold","Collect semua gold di Workspace.Golds",1,function(on)
+        STATE.autoCollect=on; DoAutoCollect(on); RefreshStatus() end)
 end
 
 -- =====================================================
 -- PANEL : AUTO ROLL
 -- =====================================================
 do
-    local p = NewPanel("autoroll")
-    SectionHeader(p, "AUTO ROLL HERO QUIRK — STAGE 1", 0)
+    local p=NewPanel("autoroll")
 
-    -- Status card
-    local statusCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,38))
-    statusCard.LayoutOrder=1; Corner(statusCard,8); Stroke(statusCard,C.BORD,1,0.4)
-    local statusDot = Frame(statusCard, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
-    statusDot.Position=UDim2.new(0,12,0.5,-4); Corner(statusDot,4)
-    local statusLbl = Label(statusCard, "Belum capture heroGuid — klik StartReroll di game 1x", 9, C.TXT2, Enum.Font.Gotham)
-    statusLbl.Size=UDim2.new(1,-30,1,0); statusLbl.Position=UDim2.new(0,28,0,0)
-    statusLbl.TextWrapped=true
-    _rollStatusLbl = statusLbl
+    -- ── JUDUL ─────────────────────────────────────────
+    local titleRow=Frame(p,C.BLACK,UDim2.new(1,0,0,22))
+    titleRow.BackgroundTransparency=1; titleRow.LayoutOrder=0
+    local titleLbl=Label(titleRow,"⚡  Hero Ability Fastroll",12,C.ACC2,Enum.Font.GothamBold)
+    titleLbl.Size=UDim2.new(1,0,1,0)
 
-    -- Setup hook saat panel dibuat
-    SetupHeroGuidHook(function(guid)
-        statusDot.BackgroundColor3 = Color3.fromRGB(80,220,80)
+    -- ── HERO STATUS ────────────────────────────────────
+    local weaponCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,76))
+    weaponCard.LayoutOrder=1; Corner(weaponCard,8); Stroke(weaponCard,C.BORD,1,0.4)
+    Padding(weaponCard,8,8,12,8)
+
+    local wsTitle=Label(weaponCard,"Hero Status",10,C.TXT,Enum.Font.GothamBold)
+    wsTitle.Size=UDim2.new(1,0,0,16); wsTitle.Position=UDim2.new(0,0,0,6)
+
+    local wsSlot1=Label(weaponCard,"Slot 1: —",8.5,C.TXT2,Enum.Font.Gotham)
+    wsSlot1.Size=UDim2.new(1,0,0,13); wsSlot1.Position=UDim2.new(0,0,0,26)
+
+    local wsSlot2=Label(weaponCard,"Slot 2: —",8.5,C.TXT2,Enum.Font.Gotham)
+    wsSlot2.Size=UDim2.new(1,0,0,13); wsSlot2.Position=UDim2.new(0,0,0,41)
+
+    local wsSlot3=Label(weaponCard,"Slot 3: —",8.5,C.TXT2,Enum.Font.Gotham)
+    wsSlot3.Size=UDim2.new(1,0,0,13); wsSlot3.Position=UDim2.new(0,0,0,56)
+
+    _weaponSlotLbls={wsSlot1,wsSlot2,wsSlot3}
+
+    -- ── AUTOREROLL STATUS ─────────────────────────────
+    local statusCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
+    statusCard.LayoutOrder=2; Corner(statusCard,8); Stroke(statusCard,C.BORD,1,0.4)
+    Padding(statusCard,6,6,12,8)
+
+    local arTitle=Label(statusCard,"AutoReroll Status",10,C.TXT,Enum.Font.GothamBold)
+    arTitle.Size=UDim2.new(1,0,0,16); arTitle.Position=UDim2.new(0,0,0,4)
+
+    local arDot=Frame(statusCard,Color3.fromRGB(100,100,100),UDim2.new(0,7,0,7))
+    arDot.Position=UDim2.new(0,0,0,25); Corner(arDot,4)
+    _rollDotRef=arDot
+
+    local arStatusLbl=Label(statusCard,"Idle",8.5,C.TXT2,Enum.Font.Gotham)
+    arStatusLbl.Size=UDim2.new(1,-12,0,13); arStatusLbl.Position=UDim2.new(0,12,0,24)
+    arStatusLbl.TextWrapped=true
+    _rerollStatusLbl=arStatusLbl
+
+    -- ── TARGET SLOT 1, 2, 3  (Multi-select Dropdown) ─
+    MakeDropdown(p,1,3)
+    MakeDropdown(p,2,4)
+    MakeDropdown(p,3,5)
+
+    -- ── ENABLE AUTOREROLL TOGGLE ──────────────────────
+    ToggleRow(p,"Enable AutoReroll",nil,6,function(on)
+        STATE.autoRoll=on
+        for i=1,3 do RefreshSlotUI(i) end
+        DoAutoRoll(on); RefreshStatus()
     end)
 
-    -- Toggle Auto Roll
-    ToggleRow(p, "Auto Roll Quirk",
-        "Loop AutoRandomHeroQuirk sampai target didapat", 2,
-        function(on)
-            STATE.autoRoll = on
-            DoAutoRoll(on)
-            RefreshStatus()
-        end
-    )
-
-    -- Section checklist target quirk
-    SectionHeader(p, "STOP SAAT DAPAT (centang target):", 3)
-
-    -- Info
-    local infoCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,28))
-    infoCard.LayoutOrder=4; Corner(infoCard,8); Stroke(infoCard,C.BORD,1,0.5)
-    local infoLbl = Label(infoCard, "  Kosong = stop di quirk apapun", 8.5, C.TXT2, Enum.Font.Gotham)
-    infoLbl.Size=UDim2.new(1,0,1,0)
-
-    -- Quirk checklist
-    for i, quirk in ipairs(QUIRK_LIST) do
-        local checked = false
-        local row = Btn(p, C.SURFACE, UDim2.new(1,0,0,32))
-        row.LayoutOrder = 10+i; Corner(row,8); Stroke(row,C.BORD,1,0.5)
-
-        -- Checkbox
-        local box = Frame(row, C.SEL_BG, UDim2.new(0,18,0,18))
-        box.Position=UDim2.new(0,8,0.5,-9); Corner(box,4)
-        Stroke(box, C.BORD2, 1, 0.3)
-        local tick = Label(box, "", 12, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-        tick.Size=UDim2.new(1,0,1,0)
-
-        -- Nama quirk
-        local nameLbl = Label(row, quirk.name, 10, C.TXT, Enum.Font.Gotham)
-        nameLbl.Size=UDim2.new(1,-36,1,0); nameLbl.Position=UDim2.new(0,34,0,0)
-
-        local function SetChecked(v)
-            checked = v
-            _rollTargetIds[quirk.id] = v
-            tick.Text = v and "✓" or ""
-            TweenService:Create(box, TweenInfo.new(0.12), {
-                BackgroundColor3 = v and C.ACC2 or C.SEL_BG
-            }):Play()
-            TweenService:Create(row, TweenInfo.new(0.12), {
-                BackgroundColor3 = v and Color3.fromRGB(140,50,0) or C.SURFACE
-            }):Play()
-            tick.TextColor3 = v and C.BLACK or C.ACC2
-        end
-
-        row.MouseButton1Click:Connect(function() SetChecked(not checked) end)
-        row.MouseEnter:Connect(function()
-            if not checked then
-                TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=C.SURFACE2}):Play()
-            end
-        end)
-        row.MouseLeave:Connect(function()
-            if not checked then
-                TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=C.SURFACE}):Play()
-            end
-        end)
-    end
+    -- Init capture layers di background (tanpa UI)
+    _captureStatusLbl=nil  -- tidak ada UI untuk ini
+    InitAllCaptureLayers()
 end
 
 -- =====================================================
 -- PANEL : SETTINGS
 -- =====================================================
 do
-    local p = NewPanel("settings")
-    SectionHeader(p, "PENGATURAN", 0)
-
-    ToggleRow(p, "Auto Collect + Destroyer",
-        "Aktifkan Auto Collect otomatis saat Destroyer ON", 1,
-        function(on)
-            if STATE.autoDestroyer then
-                STATE.autoCollect = on
-                DoAutoCollect(on)
-                RefreshStatus()
-            end
-        end
-    )
+    local p=NewPanel("settings")
+    SectionHeader(p,"PENGATURAN",0)
+    ToggleRow(p,"Auto Collect + Destroyer","Aktifkan Auto Collect otomatis saat Destroyer ON",1,function(on)
+        if STATE.autoDestroyer then STATE.autoCollect=on; DoAutoCollect(on); RefreshStatus() end end)
 end
 
 -- =====================================================
 -- PANEL : INFO
 -- =====================================================
 do
-    local p = NewPanel("info")
-    SectionHeader(p, "INFO", 0)
-
-    local card = Frame(p, C.SURFACE, UDim2.new(1,0,0,130))
+    local p=NewPanel("info")
+    SectionHeader(p,"INFO",0)
+    local card=Frame(p,C.SURFACE,UDim2.new(1,0,0,130))
     card.LayoutOrder=1; Corner(card,8); Stroke(card,C.BORD,1,0.4)
-    local txt = Label(card,
+    local txt=Label(card,
         "Arise Shadow Hunt — Auto Farming GUI\nBy FLa Project\n\n"..
         "Remotes:\n"..
         "• CollectItem:InvokeServer(guid)\n"..
         "• ExtraReward:FireServer({isSell, guid})\n"..
         "• ExtraReward:FireServer({isSell=false, isAuto=false, guid})\n"..
         "• RandomHeroQuirk:InvokeServer({heroGuid, drawId})",
-        9, C.TXT2, Enum.Font.Gotham)
+        9,C.TXT2,Enum.Font.Gotham)
     txt.Size=UDim2.new(1,-16,1,0); txt.Position=UDim2.new(0,8,0,0)
     txt.TextWrapped=true; txt.LineHeight=1.5
 end
