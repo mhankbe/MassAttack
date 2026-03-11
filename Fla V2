@@ -23,7 +23,6 @@ for _, name in ipairs({"ASH_GUI", "ASH_DD"}) do
         if old then old:Destroy() end
     end)
 end
-task.wait(0.05)
 task.wait(3) -- tunggu game fully loaded sebelum script berjalan
 
 -- =====================================================
@@ -38,7 +37,6 @@ local RE_RandomHeroQuirk = Remotes:WaitForChild("RandomHeroQuirk", 1)
 -- Remotes tambahan: Mass Attack & Auto Goyang
 local RE_Click     = Remotes:FindFirstChild("ClickEnemy")
 local RE_Atk       = Remotes:FindFirstChild("PlayerClickAttackSkill")
-local RE_Drop      = Remotes:FindFirstChild("DropItems")
 local RE_Death     = Remotes:FindFirstChild("EnemyDeath")
 local RE_HeroMove  = Remotes:FindFirstChild("HeroMoveToEnemyPos")
 local RE_HeroStand = Remotes:FindFirstChild("HeroStandTo")
@@ -428,11 +426,11 @@ local COLLECTED={}
 -- =====================================================
 -- STATE: MASS ATTACK & AUTO GOYANG
 -- =====================================================
-local MA = { running=false, thread=nil, killed=0, collected=0, killTarget=7 }
-local AG = { running=false, thread=nil, killed=0, collected=0, currentTarget=nil }
+local MA = { running=false, thread=nil, killed=0, killTarget=7 }
+local AG = { running=false, thread=nil, killed=0, currentTarget=nil }
 local _maStatusLbl=nil
 local _agStatusLbl=nil
-local _deadG={}; local _colG={}
+local _deadG={}
 
 local function GetEnemies()
     local list={}
@@ -508,83 +506,205 @@ if RE_Death then
     end)
 end
 
--- Mass Attack loop
-local function DoMassAttack(on)
-    MA.running=on; MA.killed=0; _deadG={}; _colG={}
-    if MA.thread then pcall(function() task.cancel(MA.thread) end); MA.thread=nil end
-    if not on then if _maStatusLbl then _maStatusLbl.Text="Idle" end; return end
-    MA.thread=task.spawn(function()
-        while MA.running do
-            local enemies=GetEnemies()
-            if #enemies==0 then
-                if _maStatusLbl then _maStatusLbl.Text="Menunggu musuh..." end
-                task.wait(0.4); continue
+-- =====================================================
+-- MAP DATA & ROTATION
+-- =====================================================
+local TeleportService = game:GetService("TeleportService")
+local GuiService      = game:GetService("GuiService")
+local VIM             = game:GetService("VirtualInputManager")
+
+local MAPS = {}
+for i = 1, 18 do
+    MAPS[i] = { name="Map "..i, id=50000+i, remote=i<=4 and "Start" or "Local" }
+end
+local MR = { selected={}, nextMapDelay=3, teleportDelay=3 }
+
+local RE_StartTp = Remotes:FindFirstChild("StartLocalPlayerTeleport")
+local RE_LocalTp = Remotes:FindFirstChild("LocalPlayerTeleport")
+local function TpMap(m)
+    if m.remote=="Start" then pcall(function() RE_StartTp:FireServer({mapId=m.id}) end)
+    else pcall(function() RE_LocalTp:FireServer({mapId=m.id}) end) end
+end
+
+-- =====================================================
+-- AUTO SKILL (Z/X/C/V/F)
+-- =====================================================
+local SKL={
+    Z={on=false,key=Enum.KeyCode.Z,t=nil},
+    X={on=false,key=Enum.KeyCode.X,t=nil},
+    C={on=false,key=Enum.KeyCode.C,t=nil},
+    V={on=false,key=Enum.KeyCode.V,t=nil},
+    F={on=false,key=Enum.KeyCode.F,t=nil},
+}
+local function PK(k) pcall(function() VIM:SendKeyEvent(true,k,false,game); task.wait(0.05); VIM:SendKeyEvent(false,k,false,game) end) end
+local function SkOn(n) local s=SKL[n]; if s.t then return end; s.on=true; s.t=task.spawn(function() while s.on do PK(s.key); task.wait(1) end; s.t=nil end) end
+local function SkOff(n) local s=SKL[n]; s.on=false; if s.t then pcall(function() task.cancel(s.t) end); s.t=nil end end
+
+-- =====================================================
+-- DESTROY WORKER (salin dari sc_baru)
+-- =====================================================
+local dstQ={}
+local function StartDestroyWorker(checkFn)
+    task.spawn(function()
+        while checkFn() do
+            if #dstQ>0 then
+                local d=table.remove(dstQ,1)
+                pcall(function() RE_ExtraReward:FireServer({isSell=true,guid=d.guid}) end)
+                task.wait(0.1)
             end
-            local alive=0
-            for _,e in ipairs(enemies) do
-                if not IsDead(e) then
-                    alive=alive+1
-                    local g=e.guid; local hrp=e.hrp
-                    if hrp then
-                        local ep=hrp.Position
-                        task.spawn(function()
-                            FireAllDamage(g,ep)
-                            FireHeroRemotes(g,ep)
-                        end)
-                    end
-                end
-            end
-            if _maStatusLbl then
-                if MA.killTarget==0 then
-                    _maStatusLbl.Text="Kill All: "..alive.." hidup | Total: "..MA.killed
-                else
-                    _maStatusLbl.Text=alive.." hidup | "..MA.killed.."/"..MA.killTarget
-                end
-            end
-            if MA.killTarget>0 and MA.killed>=MA.killTarget then
-                if _maStatusLbl then _maStatusLbl.Text="\u2713 Target tercapai ("..MA.killed.." kill)" end
-                MA.running=false; break
-            end
-            task.wait(0.08)
+            task.wait(0.05)
         end
     end)
 end
 
--- Auto Goyang loop
-local function DoAutoGoyang(on)
-    AG.running=on; AG.killed=0
-    if AG.thread then pcall(function() task.cancel(AG.thread) end); AG.thread=nil end
-    if not on then
-        if _agStatusLbl then _agStatusLbl.Text="Idle" end
-        ReturnHRPToOrigin(); return
+-- =====================================================
+-- ATTACK LOOPS (salin dari sc_baru)
+-- =====================================================
+local function AttackLoop_Mass(onStatus)
+    _deadG={}
+    local start=MA.killed; local wt=0
+    while wt<6 and MA.running do
+        if #GetEnemies()>0 then break end
+        if onStatus then onStatus("Tidak ada musuh ("..math.floor(6-wt).."s)") end
+        task.wait(0.4); wt=wt+0.4
     end
+    if not MA.running then return false end
+    if #GetEnemies()==0 then if onStatus then onStatus("Map kosong, skip...") end; return true end
+    local emptyT=0; local lastKill=MA.killed; local stuckT=0
+    while MA.running do
+        local isAll=(MA.killTarget==0); local here=MA.killed-start; local alive=0
+        for _,e in ipairs(GetEnemies()) do if not IsDead(e) then alive=alive+1 end end
+        if isAll then
+            if alive==0 then emptyT=emptyT+0.08; if emptyT>=1.5 then return true end; task.wait(0.08); continue end
+            emptyT=0; if onStatus then onStatus("Kill All: "..alive.." sisa") end
+        else
+            if here>=MA.killTarget then return true end
+            if onStatus then onStatus(alive.." hidup  "..here.."/"..MA.killTarget) end
+        end
+        if alive==1 then if onStatus then onStatus("Sisa 1, skip map...") end; return true end
+        if MA.killed>lastKill then lastKill=MA.killed; stuckT=0
+        else stuckT=stuckT+0.08; if stuckT>=1.0 then if onStatus then onStatus("Stuck, skip map...") end; return true end end
+        for _,e in ipairs(GetEnemies()) do
+            if not IsDead(e) then
+                local hrp=e.model and e.model:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local g,p=e.guid,hrp.Position
+                    task.spawn(function()
+                        FireAllDamage(g,p)
+                        FireHeroRemotes(g,p)
+                    end)
+                end
+            end
+        end
+        task.wait(0.08)
+    end
+    return false
+end
+
+local function AttackLoop_Goyang(onStatus)
     SaveOrigin()
+    while AG.running do
+        local tgt=AG.currentTarget
+        if not tgt then if onStatus then onStatus("Tap nama musuh di daftar...") end; task.wait(0.2); continue end
+        if IsDead(tgt) or not tgt.model.Parent then
+            if onStatus then onStatus("["..tgt.model.Name.."] mati — tap musuh lain") end
+            ReturnHRPToOrigin(); task.wait(0.3); continue
+        end
+        local tHrp=tgt.model:FindFirstChild("HumanoidRootPart"); if not tHrp then task.wait(0.1); continue end
+        local g=tgt.guid; local snapPos=tHrp.Position
+        local char=LP.Character
+        if char then local hrp=char:FindFirstChild("HumanoidRootPart"); if hrp then hrp.CFrame=CFrame.new(snapPos+Vector3.new(0,2,2)) end end
+        FireHeroRemotes(g,snapPos)
+        if onStatus then onStatus("Goyang → ["..tgt.model.Name.."]  Kill: "..AG.killed) end
+        local activeTgt=tgt
+        while AG.running do
+            if AG.currentTarget~=activeTgt then break end
+            if IsDead(activeTgt) or not activeTgt.model.Parent then ReturnHRPToOrigin(); break end
+            FireAllDamage(g,snapPos); task.wait()
+        end
+    end
+    ReturnHRPToOrigin(); return false
+end
+
+-- RunLoop: jalankan attack loop dengan teleport antar map
+local function RunLoop(state, cfg, loopFn, onStatus, onDone)
+    state.running=true; state.killed=0; state.collected=0
+    StartDestroyWorker(function() return state.running end)
+    state.thread=task.spawn(function()
+        local last=0
+        while state.running do
+            local sel={}
+            for i=1,#MAPS do if cfg.selected[i] then table.insert(sel,i) end end
+            if #sel>0 then
+                local ni=nil
+                for _,i in ipairs(sel) do if i>last then ni=i; break end end
+                if not ni then ni=sel[1]; last=0 end; last=ni
+                local m=MAPS[ni]; if onStatus then onStatus("→ "..m.name) end
+                TpMap(m)
+                local d=0; while d<cfg.teleportDelay and state.running do task.wait(0.2); d=d+0.2 end
+                if not state.running then break end
+                if not loopFn(onStatus) then break end
+                if onStatus then onStatus("Selesai, delay "..cfg.nextMapDelay.."s...") end
+                d=0; while d<cfg.nextMapDelay and state.running do task.wait(0.2); d=d+0.2 end
+            else
+                last=0
+                local done=loopFn(onStatus)
+                if done and state.running then
+                    local d=0; while d<cfg.nextMapDelay and state.running do task.wait(0.2); d=d+0.2 end
+                end
+            end
+        end
+        state.running=false; if onDone then onDone() end
+    end)
+end
+
+local function RunAG(onStatus, onDone)
+    AG.running=true; AG.killed=0; AG.collected=0
+    StartDestroyWorker(function() return AG.running end)
     AG.thread=task.spawn(function()
         while AG.running do
-            local tgt=AG.currentTarget
-            if not tgt then
-                if _agStatusLbl then _agStatusLbl.Text="Pilih musuh dari list..." end
-                task.wait(0.2); continue
-            end
-            if IsDead(tgt) or not tgt.model.Parent then
-                if _agStatusLbl then _agStatusLbl.Text="["..tgt.model.Name.."] mati" end
-                AG.currentTarget=nil; ReturnHRPToOrigin(); task.wait(0.3); continue
-            end
-            local hrp=tgt.model:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local ep=hrp.Position
-                FireAllDamage(tgt.guid,ep)
-                FireHeroRemotes(tgt.guid,ep)
-                if _agStatusLbl then _agStatusLbl.Text="\u26d4 ["..tgt.model.Name.."] Kill: "..AG.killed end
-            end
-            task.wait(0.08)
+            local done=AttackLoop_Goyang(onStatus)
+            if not AG.running then break end
+            if done then task.wait(1) end
         end
+        AG.running=false; if onDone then onDone() end
     end)
 end
 
--- Rejoin
+-- =====================================================
+-- WRAPPER DoMassAttack / DoAutoGoyang / DoRejoin
+-- =====================================================
+local _mOn=false
+local _agOn=false
+
+local function DoMassAttack(on)
+    if on then
+        _mOn=true
+        RunLoop(MA, MR, AttackLoop_Mass,
+            function(msg) if _maStatusLbl then _maStatusLbl.Text=msg end end,
+            function() _mOn=false; if _maStatusLbl then _maStatusLbl.Text="Selesai" end end)
+    else
+        _mOn=false; MA.running=false
+        if MA.thread then pcall(function() task.cancel(MA.thread) end); MA.thread=nil end
+        if _maStatusLbl then _maStatusLbl.Text="Idle" end
+    end
+end
+
+local function DoAutoGoyang(on)
+    if on then
+        _agOn=true
+        RunAG(
+            function(msg) if _agStatusLbl then _agStatusLbl.Text=msg end end,
+            function() _agOn=false; if _agStatusLbl then _agStatusLbl.Text="Selesai" end end)
+    else
+        _agOn=false; AG.running=false
+        if AG.thread then pcall(function() task.cancel(AG.thread) end); AG.thread=nil end
+        ReturnHRPToOrigin()
+        if _agStatusLbl then _agStatusLbl.Text="Idle" end
+    end
+end
+
 local function DoRejoin()
-    local TeleportService=game:GetService("TeleportService")
     pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,LP) end)
 end
 
@@ -1017,6 +1137,21 @@ end
 -- =====================================================
 local _layer0Active = false
 local _spyLog       = {}
+
+-- Tambahkan quirk ke slot tertentu (dipakai oleh spy hook)
+local function AddQuirkToSlot(slotIndex, quirkId, quirkName)
+    if not slotIndex or not quirkId then return end
+    local list = QUIRK_LIST_PER_SLOT[slotIndex]
+    if not list then return end
+    for _,q in ipairs(list) do
+        if q.id == quirkId then
+            if quirkName and not quirkName:find("^ID:") then q.name = quirkName end
+            return
+        end
+    end
+    table.insert(list, {id=quirkId, name=quirkName or ("ID:"..quirkId)})
+    if not QUIRK_MAP[quirkId] then QUIRK_MAP[quirkId] = quirkName or ("ID:"..quirkId) end
+end
 
 local function SetupUniversalSpy()
     if _layer0Active then return end
@@ -1884,7 +2019,85 @@ do
         ktValLbl.Text=tostring(MA.killTarget)
     end)
 
-    ToggleRow(p,"Mass Attack","Serang semua musuh di map sekaligus",3,function(on)
+    -- ── ROTATION MAP ─────────────────────────────────
+    local mapCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,54))
+    mapCard.LayoutOrder=3; Corner(mapCard,8); Stroke(mapCard,C.BORD,1,0.4)
+    Padding(mapCard,6,6,12,8)
+    local mapTitle=Label(mapCard,"Rotation Map (opsional)",12,C.TXT,Enum.Font.GothamBold)
+    mapTitle.Size=UDim2.new(1,0,0,16); mapTitle.Position=UDim2.new(0,0,0,2)
+    local mapSub=Label(mapCard,"Kosong = map saat ini saja",10,C.TXT3,Enum.Font.Gotham)
+    mapSub.Size=UDim2.new(1,0,0,13); mapSub.Position=UDim2.new(0,0,0,20)
+    -- Multi-select map 1-18
+    local mapSelScroll=New("ScrollingFrame",{Parent=mapCard,
+        Size=UDim2.new(1,0,0,24), Position=UDim2.new(0,0,0,34),
+        BackgroundTransparency=1, BorderSizePixel=0,
+        ScrollBarThickness=0, CanvasSize=UDim2.new(0,0,0,0),
+        AutomaticCanvasSize=Enum.AutomaticSize.X})
+    New("UIListLayout",{Parent=mapSelScroll, FillDirection=Enum.FillDirection.Horizontal,
+        SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,3)})
+    for i=1,18 do
+        local mb=Btn(mapSelScroll,C.BG3,UDim2.new(0,30,0,20))
+        mb.LayoutOrder=i; Corner(mb,4)
+        local ml=Label(mb,tostring(i),10,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+        ml.Size=UDim2.new(1,0,1,0)
+        mb.MouseButton1Click:Connect(function()
+            MR.selected[i]=not MR.selected[i]
+            mb.BackgroundColor3=MR.selected[i] and C.ACC or C.BG3
+            ml.TextColor3=MR.selected[i] and C.BLACK or C.TXT2
+        end)
+    end
+
+    -- ── DELAY PINDAH MAP ─────────────────────────────
+    local delayCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
+    delayCard.LayoutOrder=4; Corner(delayCard,8); Stroke(delayCard,C.BORD,1,0.4)
+    Padding(delayCard,6,6,12,8)
+    local delayTitle=Label(delayCard,"Delay Pindah Map",12,C.TXT,Enum.Font.GothamBold)
+    delayTitle.Size=UDim2.new(0.6,0,0,16); delayTitle.Position=UDim2.new(0,0,0,4)
+    local delayVals={1,2,3,5,7,10}
+    local delayIdx=3 -- default 3 detik
+    local delayValLbl=Label(delayCard,delayVals[delayIdx].." detik",12,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
+    delayValLbl.Size=UDim2.new(0.4,0,0,16); delayValLbl.Position=UDim2.new(0.6,0,0,4)
+    local delayMinus=Btn(delayCard,C.BG3,UDim2.new(0,26,0,22)); delayMinus.Position=UDim2.new(0,0,0,24); Corner(delayMinus,5)
+    Label(delayMinus,"−",12,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center).Size=UDim2.new(1,0,1,0)
+    local delayPlus=Btn(delayCard,C.BG3,UDim2.new(0,26,0,22)); delayPlus.Position=UDim2.new(0,30,0,24); Corner(delayPlus,5)
+    Label(delayPlus,"+",12,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center).Size=UDim2.new(1,0,1,0)
+    delayMinus.MouseButton1Click:Connect(function()
+        delayIdx=math.max(1,delayIdx-1); MR.nextMapDelay=delayVals[delayIdx]
+        delayValLbl.Text=delayVals[delayIdx].." detik"
+    end)
+    delayPlus.MouseButton1Click:Connect(function()
+        delayIdx=math.min(#delayVals,delayIdx+1); MR.nextMapDelay=delayVals[delayIdx]
+        delayValLbl.Text=delayVals[delayIdx].." detik"
+    end)
+
+    -- ── AUTO SKILL ────────────────────────────────────
+    local skillCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,52))
+    skillCard.LayoutOrder=5; Corner(skillCard,8); Stroke(skillCard,C.BORD,1,0.4)
+    Padding(skillCard,6,6,12,8)
+    local skillTitle=Label(skillCard,"Auto Skill",12,C.TXT,Enum.Font.GothamBold)
+    skillTitle.Size=UDim2.new(1,0,0,16); skillTitle.Position=UDim2.new(0,0,0,2)
+    local skillRow=Frame(skillCard,C.BLACK,UDim2.new(1,0,0,26))
+    skillRow.BackgroundTransparency=1; skillRow.Position=UDim2.new(0,0,0,22)
+    New("UIListLayout",{Parent=skillRow, FillDirection=Enum.FillDirection.Horizontal,
+        SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,4)})
+    for _,d in ipairs({{n="Z",c=Color3.fromRGB(255,80,80)},{n="X",c=Color3.fromRGB(255,160,40)},{n="C",c=Color3.fromRGB(80,220,120)},{n="V",c=Color3.fromRGB(80,180,255)},{n="F",c=Color3.fromRGB(200,80,255)}}) do
+        local sb=Btn(skillRow,C.BG3,UDim2.new(0,40,0,26)); sb.LayoutOrder=_; Corner(sb,6)
+        local sk=Stroke(sb,C.BORD,1,0.3)
+        local sl=Label(sb,d.n,12,d.c,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+        sl.Size=UDim2.new(1,0,0.6,0); sl.Position=UDim2.new(0,0,0,0)
+        local st=Label(sb,"OFF",9,C.TXT3,Enum.Font.Gotham,Enum.TextXAlignment.Center)
+        st.Size=UDim2.new(1,0,0.4,0); st.Position=UDim2.new(0,0,0.6,0)
+        local dn=d.n; local dc=d.c
+        sb.MouseButton1Click:Connect(function()
+            if SKL[dn].on then
+                SkOff(dn); sb.BackgroundColor3=C.BG3; st.Text="OFF"; st.TextColor3=C.TXT3
+            else
+                SkOn(dn); sb.BackgroundColor3=Color3.fromRGB(20,10,42); st.Text="ON"; st.TextColor3=dc
+            end
+        end)
+    end
+
+    ToggleRow(p,"Mass Attack","Serang semua musuh di map sekaligus",6,function(on)
         DoMassAttack(on)
     end)
 
