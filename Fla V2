@@ -24,15 +24,16 @@ for _, name in ipairs({"ASH_GUI", "ASH_DD"}) do
     end)
 end
 task.wait(0.05)
+task.wait(3) -- tunggu game fully loaded sebelum script berjalan
 
 -- =====================================================
 -- REMOTES
 -- =====================================================
-local Remotes          = RS:WaitForChild("Remotes")
-local RE_CollectItem   = Remotes:WaitForChild("CollectItem")
-local RE_ExtraReward   = Remotes:WaitForChild("ExtraReward")
-local RE_AutoHeroQuirk  = Remotes:WaitForChild("AutoRandomHeroQuirk")
-local RE_RandomHeroQuirk = Remotes:WaitForChild("RandomHeroQuirk")
+local Remotes          = RS:WaitForChild("Remotes", 1)
+local RE_CollectItem   = Remotes:WaitForChild("CollectItem", 1)
+local RE_ExtraReward   = Remotes:WaitForChild("ExtraReward", 1)
+local RE_AutoHeroQuirk  = Remotes:WaitForChild("AutoRandomHeroQuirk", 1)
+local RE_RandomHeroQuirk = Remotes:WaitForChild("RandomHeroQuirk", 1)
 
 -- =====================================================
 -- WARNA
@@ -85,7 +86,7 @@ end
 
 local function Label(parent, text, size, color, font, xalign)
     return New("TextLabel", {Parent=parent, BackgroundTransparency=1,
-        Size=UDim2.new(1,0,1,0), Text=text, TextSize=size or 12,
+        Size=UDim2.new(1,0,1,0), Text=text, TextSize=size or 14,
         TextColor3=color or C.TXT, Font=font or Enum.Font.Gotham,
         TextXAlignment=xalign or Enum.TextXAlignment.Left, BorderSizePixel=0})
 end
@@ -142,26 +143,27 @@ TBFix.Position = UDim2.new(0,0,1,-14)
 local IconBg = Frame(TopBar, C.SEL_BG, UDim2.new(0,28,0,28))
 IconBg.Position = UDim2.new(0,8,0.5,-14)
 Corner(IconBg,7); Stroke(IconBg,C.ACC,1,0.3)
-local IconLbl = Label(IconBg,"⚔",14,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+local IconLbl = Label(IconBg,"⚔",16,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
 IconLbl.Size = UDim2.new(1,0,1,0)
 
-local TitleLbl = Label(TopBar,"Auto Farming",13,C.ACC2,Enum.Font.GothamBold)
+local TitleLbl = Label(TopBar,"Auto Farming",15,C.ACC2,Enum.Font.GothamBold)
 TitleLbl.Size=UDim2.new(0,160,0,22); TitleLbl.Position=UDim2.new(0,44,0,5)
-local SubLbl = Label(TopBar,"Arise Shadow Hunt  •  by FLa",9,C.TXT3,Enum.Font.Gotham)
+local SubLbl = Label(TopBar,"Arise Shadow Hunt  •  by FLa",11,C.TXT3,Enum.Font.Gotham)
 SubLbl.Size=UDim2.new(0,220,0,14); SubLbl.Position=UDim2.new(0,44,0,23)
 
-local function WinBtn(x,color,symbol)
+local function WinBtn(xOffset,color,symbol)
     local b = Btn(TopBar,color,UDim2.new(0,14,0,14))
-    b.Position=UDim2.new(1,x,0.5,-7); Corner(b,7)
-    local l=Label(b,symbol,8,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    b.Position=UDim2.new(0,xOffset,0.5,-7); Corner(b,7)
+    local l=Label(b,symbol,10,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
     l.Size=UDim2.new(1,0,1,0); l.Visible=false
     b.MouseEnter:Connect(function() l.Visible=true end)
     b.MouseLeave:Connect(function() l.Visible=false end)
     return b
 end
-local BtnClose = WinBtn(-22,C.WIN_CLOSE,"✕")
-local BtnMin   = WinBtn(-42,C.WIN_MIN,"—")
-local BtnMax   = WinBtn(-62,C.WIN_MAX,"□")
+-- Minimize paling kiri, Max tengah, Close paling kanan (semua di sisi kanan topbar)
+local BtnMin   = WinBtn(-62+WIN_W,C.WIN_MIN,"—")   -- kiri
+local BtnMax   = WinBtn(-42+WIN_W,C.WIN_MAX,"□")   -- tengah
+local BtnClose = WinBtn(-22+WIN_W,C.WIN_CLOSE,"✕") -- kanan
 
 -- Drag
 local dragging,dragStart,startPos=false,nil,nil
@@ -182,7 +184,7 @@ UserInputService.InputChanged:Connect(function(i)
 local Bubble=Btn(ScreenGui,C.TBAR,UDim2.new(0,60,0,60))
 Bubble.Position=UDim2.new(0,20,0.5,-30); Bubble.Visible=false
 Corner(Bubble,30); Stroke(Bubble,C.ACC,2,0)
-local BubbleLbl=Label(Bubble,"FLa",20,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+local BubbleLbl=Label(Bubble,"FLa",22,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
 BubbleLbl.Size=UDim2.new(1,0,1,0)
 
 local bubbleConn
@@ -328,9 +330,9 @@ for i,item in ipairs(NAV_ITEMS) do
     bg.LayoutOrder=i; bg.BackgroundTransparency=1; Corner(bg,8)
     local bar=Frame(bg,C.SIDEBAR,UDim2.new(0,3,0.5,0))
     bar.Position=UDim2.new(0,0,0.25,0); Corner(bar,2)
-    local icoL=Label(bg,item.ico,13,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    local icoL=Label(bg,item.ico,15,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
     icoL.Size=UDim2.new(0,24,1,0); icoL.Position=UDim2.new(0,6,0,0)
-    local lblL=Label(bg,item.lbl,9,C.TXT2,Enum.Font.Gotham,Enum.TextXAlignment.Left)
+    local lblL=Label(bg,item.lbl,11,C.TXT2,Enum.Font.Gotham,Enum.TextXAlignment.Left)
     lblL.Size=UDim2.new(1,-34,1,0); lblL.Position=UDim2.new(0,32,0,0)
     lblL.TextTruncate=Enum.TextTruncate.AtEnd
     NavRefs[i]={tag=item.tag,bg=bg,bar=bar,ico=icoL,lbl=lblL}
@@ -349,7 +351,7 @@ end
 local function SectionHeader(panel,title,order)
     local f=Frame(panel,C.BLACK,UDim2.new(1,0,0,20))
     f.BackgroundTransparency=1; f.LayoutOrder=order or 0
-    local l=Label(f,"  "..title,9,C.ACC2,Enum.Font.GothamBold)
+    local l=Label(f,"  "..title,11,C.ACC2,Enum.Font.GothamBold)
     l.Size=UDim2.new(1,0,1,0)
     local line=Frame(f,C.ACC2,UDim2.new(1,0,0,1))
     line.Position=UDim2.new(0,0,1,-1); line.BackgroundTransparency=0.6
@@ -359,10 +361,10 @@ local function ToggleRow(panel,title,desc,order,onToggle)
     local h=desc and 50 or 38
     local row=Frame(panel,C.SURFACE,UDim2.new(1,0,0,h))
     row.LayoutOrder=order or 1; Corner(row,8); Stroke(row,C.BORD,1,0.4)
-    local lbl=Label(row,title,10,C.TXT,Enum.Font.GothamBold)
+    local lbl=Label(row,title,12,C.TXT,Enum.Font.GothamBold)
     lbl.Size=UDim2.new(1,-60,0,18); lbl.Position=UDim2.new(0,12,0,desc and 8 or 10)
     if desc then
-        local sub=Label(row,desc,8,C.TXT2,Enum.Font.Gotham)
+        local sub=Label(row,desc,10,C.TXT2,Enum.Font.Gotham)
         sub.Size=UDim2.new(1,-60,0,14); sub.Position=UDim2.new(0,12,0,26) end
     local pill=Btn(row,Color3.fromRGB(120,40,0),UDim2.new(0,44,0,24))
     pill.Position=UDim2.new(1,-54,0.5,-12); Corner(pill,12)
@@ -1433,21 +1435,21 @@ local function MakeDropdown(parent, slotIndex, order)
     local row=Frame(parent,C.SURFACE,UDim2.new(1,0,0,40))
     row.LayoutOrder=order; Corner(row,8); Stroke(row,C.BORD,1,0.4)
 
-    local slotLbl=Label(row,"Target Slot "..slotIndex,10,C.TXT,Enum.Font.GothamBold)
+    local slotLbl=Label(row,"Target Slot "..slotIndex,12,C.TXT,Enum.Font.GothamBold)
     slotLbl.Size=UDim2.new(0,90,0,18); slotLbl.Position=UDim2.new(0,12,0,4)
 
-    local statusLbl=Label(row,"(max "..MAX_PER_SLOT..")",7.5,C.TXT3,Enum.Font.Gotham)
+    local statusLbl=Label(row,"(max "..MAX_PER_SLOT..")",9.5,C.TXT3,Enum.Font.Gotham)
     statusLbl.Size=UDim2.new(0,90,0,12); statusLbl.Position=UDim2.new(0,12,0,22)
 
     local ddBtn=Btn(row,C.DD_BG,UDim2.new(0.52,0,0,28))
     ddBtn.Position=UDim2.new(0.46,0,0.5,-14); Corner(ddBtn,6); Stroke(ddBtn,C.BORD2,1,0.3)
 
-    local ddLbl=Label(ddBtn,"--",8.5,C.TXT2,Enum.Font.Gotham,Enum.TextXAlignment.Left)
+    local ddLbl=Label(ddBtn,"--",10.5,C.TXT2,Enum.Font.Gotham,Enum.TextXAlignment.Left)
     ddLbl.Size=UDim2.new(1,-20,1,0); ddLbl.Position=UDim2.new(0,7,0,0)
     ddLbl.TextTruncate=Enum.TextTruncate.AtEnd
     _slotSummaryLbls[slotIndex]=ddLbl
 
-    local arrowLbl=Label(ddBtn,"▼",8,C.ACC,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    local arrowLbl=Label(ddBtn,"▼",10,C.ACC,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
     arrowLbl.Size=UDim2.new(0,16,1,0); arrowLbl.Position=UDim2.new(1,-18,0,0)
 
     -- State popup aktif
@@ -1468,7 +1470,7 @@ local function MakeDropdown(parent, slotIndex, order)
         if #list == 0 then
             _activeScrollPop.Size = UDim2.new(1,0,0,50)
             local el=Label(_activeScrollPop,"  ⏳ Tekan ReRoll manual 1x\n  di game untuk memuat data",
-                8.5, Color3.fromRGB(255,180,80), Enum.Font.Gotham)
+                10.5, Color3.fromRGB(255,180,80), Enum.Font.Gotham)
             el.Size=UDim2.new(1,-8,0,44); el.TextWrapped=true; el.LineHeight=1.4
             return
         end
@@ -1483,7 +1485,7 @@ local function MakeDropdown(parent, slotIndex, order)
             tickBox.Position=UDim2.new(0,6,0.5,-8); Corner(tickBox,3)
             tickBox.ZIndex=9999; Stroke(tickBox,C.BORD2,1,0.4)
 
-            local tickMark=Label(tickBox,"✓",9,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+            local tickMark=Label(tickBox,"✓",11,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
             tickMark.Size=UDim2.new(1,0,1,0); tickMark.ZIndex=9999
             tickMark.Visible=(_slotTarget[slotIndex][q.id]==true)
 
@@ -1492,7 +1494,7 @@ local function MakeDropdown(parent, slotIndex, order)
             local displayName = isResolved and q.name or ("❓ "..q.name)
             local nameColor   = isResolved and C.TXT or Color3.fromRGB(200,150,80)
 
-            local qLbl=Label(qRow,"  "..displayName,9,nameColor,Enum.Font.Gotham)
+            local qLbl=Label(qRow,"  "..displayName,11,nameColor,Enum.Font.Gotham)
             qLbl.Size=UDim2.new(1,-30,1,0); qLbl.Position=UDim2.new(0,28,0,0)
             qLbl.ZIndex=9999
             if _slotTarget[slotIndex][q.id] then qLbl.TextColor3=C.ACC2 end
@@ -1560,14 +1562,14 @@ local function MakeDropdown(parent, slotIndex, order)
         local popHeader=Frame(popup,Color3.fromRGB(90,30,0),UDim2.new(1,0,0,28))
         popHeader.ZIndex=9999
 
-        local countLbl=Label(popHeader,"0/"..MAX_PER_SLOT.." dipilih",8.5,C.ACC2,Enum.Font.GothamBold)
+        local countLbl=Label(popHeader,"0/"..MAX_PER_SLOT.." dipilih",10.5,C.ACC2,Enum.Font.GothamBold)
         countLbl.Size=UDim2.new(0.6,0,1,0); countLbl.Position=UDim2.new(0,8,0,0)
         countLbl.ZIndex=9999
         _activeCountLbl=countLbl
 
         local clearBtn=Btn(popHeader,Color3.fromRGB(180,50,50),UDim2.new(0,50,0,20))
         clearBtn.Position=UDim2.new(1,-56,0.5,-10); Corner(clearBtn,5); clearBtn.ZIndex=9999
-        local cLbl=Label(clearBtn,"Clear",8,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+        local cLbl=Label(clearBtn,"Clear",10,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
         cLbl.Size=UDim2.new(1,0,1,0); cLbl.ZIndex=9999
 
         local scrollPop=New("ScrollingFrame",{
@@ -1648,10 +1650,10 @@ do
     afkCard.LayoutOrder=-1; Corner(afkCard,8); Stroke(afkCard,C.BORD,1,0.4)
     Padding(afkCard,6,6,12,8)
 
-    local afkTitle=Label(afkCard,"⏱  Sesi & Waktu (WIB)",10,C.TXT,Enum.Font.GothamBold)
+    local afkTitle=Label(afkCard,"⏱  Sesi & Waktu (WIB)",12,C.TXT,Enum.Font.GothamBold)
     afkTitle.Size=UDim2.new(1,0,0,16); afkTitle.Position=UDim2.new(0,0,0,2)
 
-    local afkTimeLbl=Label(afkCard,"WIB: --:--:--  |  Aktif: 00:00:00",8.5,C.TXT2,Enum.Font.Gotham)
+    local afkTimeLbl=Label(afkCard,"WIB: --:--:--  |  Aktif: 00:00:00",10.5,C.TXT2,Enum.Font.Gotham)
     afkTimeLbl.Size=UDim2.new(1,0,0,13); afkTimeLbl.Position=UDim2.new(0,0,0,22)
 
     -- Update jam WIB + durasi aktif setiap detik
@@ -1686,10 +1688,10 @@ do
     wsCard.LayoutOrder=1; Corner(wsCard,8); Stroke(wsCard,C.BORD,1,0.4)
     Padding(wsCard,8,8,12,8)
 
-    local wsTitle=Label(wsCard,"Walk Speed",10,C.TXT,Enum.Font.GothamBold)
+    local wsTitle=Label(wsCard,"Walk Speed",12,C.TXT,Enum.Font.GothamBold)
     wsTitle.Size=UDim2.new(0.6,0,0,16); wsTitle.Position=UDim2.new(0,0,0,4)
 
-    local wsValLbl=Label(wsCard,"16 (100%)",9,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
+    local wsValLbl=Label(wsCard,"16 (100%)",11,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
     wsValLbl.Size=UDim2.new(0.4,0,0,16); wsValLbl.Position=UDim2.new(0.6,0,0,4)
 
     local sliderTrack=Frame(wsCard,C.BG3,UDim2.new(1,0,0,8))
@@ -1710,7 +1712,7 @@ do
     for i,pr in ipairs(presets) do
         local pb=Btn(presetRow,C.BG3,UDim2.new(presetW,-2,1,0))
         pb.Position=UDim2.new((i-1)*presetW,1,0,0); Corner(pb,3)
-        local pl=Label(pb,pr.lbl,7,C.TXT3,Enum.Font.Gotham,Enum.TextXAlignment.Center)
+        local pl=Label(pb,pr.lbl,9,C.TXT3,Enum.Font.Gotham,Enum.TextXAlignment.Center)
         pl.Size=UDim2.new(1,0,1,0)
         pb.MouseButton1Click:Connect(function()
             local char=LP.Character
@@ -1840,10 +1842,10 @@ do
     local ddHeader=Btn(p,C.SURFACE,UDim2.new(1,0,0,38))
     ddHeader.LayoutOrder=0; Corner(ddHeader,8); Stroke(ddHeader,C.BORD,1,0.4)
 
-    local ddIcon=Label(ddHeader,"▶",10,C.ACC2,Enum.Font.GothamBold)
+    local ddIcon=Label(ddHeader,"▶",12,C.ACC2,Enum.Font.GothamBold)
     ddIcon.Size=UDim2.new(0,20,1,0); ddIcon.Position=UDim2.new(0,10,0,0)
 
-    local ddLabel=Label(ddHeader,"⚡  Hero Ability Fastroll",11,C.TXT,Enum.Font.GothamBold)
+    local ddLabel=Label(ddHeader,"⚡  Hero Ability Fastroll",13,C.TXT,Enum.Font.GothamBold)
     ddLabel.Size=UDim2.new(1,-40,1,0); ddLabel.Position=UDim2.new(0,30,0,0)
 
     -- Container isi dropdown (tersembunyi default)
@@ -1872,14 +1874,14 @@ do
     weaponCard.LayoutOrder=0; Corner(weaponCard,8); Stroke(weaponCard,C.BORD,1,0.4)
     Padding(weaponCard,8,8,12,8)
 
-    local wsTitle=Label(weaponCard,"Hero Status",10,C.TXT,Enum.Font.GothamBold)
+    local wsTitle=Label(weaponCard,"Hero Status",12,C.TXT,Enum.Font.GothamBold)
     wsTitle.Size=UDim2.new(1,0,0,16); wsTitle.Position=UDim2.new(0,0,0,6)
 
-    local wsSlot1=Label(weaponCard,"Slot 1: —",8.5,C.TXT2,Enum.Font.Gotham)
+    local wsSlot1=Label(weaponCard,"Slot 1: —",10.5,C.TXT2,Enum.Font.Gotham)
     wsSlot1.Size=UDim2.new(1,0,0,13); wsSlot1.Position=UDim2.new(0,0,0,26)
-    local wsSlot2=Label(weaponCard,"Slot 2: —",8.5,C.TXT2,Enum.Font.Gotham)
+    local wsSlot2=Label(weaponCard,"Slot 2: —",10.5,C.TXT2,Enum.Font.Gotham)
     wsSlot2.Size=UDim2.new(1,0,0,13); wsSlot2.Position=UDim2.new(0,0,0,41)
-    local wsSlot3=Label(weaponCard,"Slot 3: —",8.5,C.TXT2,Enum.Font.Gotham)
+    local wsSlot3=Label(weaponCard,"Slot 3: —",10.5,C.TXT2,Enum.Font.Gotham)
     wsSlot3.Size=UDim2.new(1,0,0,13); wsSlot3.Position=UDim2.new(0,0,0,56)
     _weaponSlotLbls={wsSlot1,wsSlot2,wsSlot3}
     _slotStatusLbl={wsSlot1,wsSlot2,wsSlot3}
@@ -1889,14 +1891,14 @@ do
     statusCard.LayoutOrder=1; Corner(statusCard,8); Stroke(statusCard,C.BORD,1,0.4)
     Padding(statusCard,6,6,12,8)
 
-    local arTitle=Label(statusCard,"AutoReroll Status",10,C.TXT,Enum.Font.GothamBold)
+    local arTitle=Label(statusCard,"AutoReroll Status",12,C.TXT,Enum.Font.GothamBold)
     arTitle.Size=UDim2.new(1,0,0,16); arTitle.Position=UDim2.new(0,0,0,4)
 
     local arDot=Frame(statusCard,Color3.fromRGB(100,100,100),UDim2.new(0,7,0,7))
     arDot.Position=UDim2.new(0,0,0,25); Corner(arDot,4)
     _rollDotRef=arDot
 
-    local arStatusLbl=Label(statusCard,"Idle",8.5,C.TXT2,Enum.Font.Gotham)
+    local arStatusLbl=Label(statusCard,"Idle",10.5,C.TXT2,Enum.Font.Gotham)
     arStatusLbl.Size=UDim2.new(1,-12,0,13); arStatusLbl.Position=UDim2.new(0,12,0,24)
     arStatusLbl.TextWrapped=true
     _rerollStatusLbl=arStatusLbl
@@ -1916,9 +1918,9 @@ do
     local enRow=Frame(ddInner,C.SURFACE,UDim2.new(1,0,0,44))
     enRow.LayoutOrder=5; Corner(enRow,8); Stroke(enRow,C.BORD,1,0.4)
     -- Buat toggle row manual agar bisa masuk ddInner
-    local enLbl=Label(enRow,"Enable AutoReroll",10,C.TXT,Enum.Font.GothamBold)
+    local enLbl=Label(enRow,"Enable AutoReroll",12,C.TXT,Enum.Font.GothamBold)
     enLbl.Size=UDim2.new(0.7,0,0,18); enLbl.Position=UDim2.new(0,12,0,6)
-    local enSub=Label(enRow,"Aktifkan auto reroll semua slot",8,C.TXT3,Enum.Font.Gotham)
+    local enSub=Label(enRow,"Aktifkan auto reroll semua slot",10,C.TXT3,Enum.Font.Gotham)
     enSub.Size=UDim2.new(0.85,0,0,13); enSub.Position=UDim2.new(0,12,0,24)
 
     local enToggle=Btn(enRow,Color3.fromRGB(60,60,60),UDim2.new(0,36,0,20))
@@ -1969,7 +1971,7 @@ do
     local netCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,54))
     netCard.LayoutOrder=1; Corner(netCard,8); Stroke(netCard,C.BORD,1,0.4)
     Padding(netCard,8,8,12,8)
-    local netTitle=Label(netCard,"🌐  Akses Jaringan Internet",10,C.TXT,Enum.Font.GothamBold)
+    local netTitle=Label(netCard,"🌐  Akses Jaringan Internet",12,C.TXT,Enum.Font.GothamBold)
     netTitle.Size=UDim2.new(1,0,0,16); netTitle.Position=UDim2.new(0,0,0,2)
     local netSub=Label(netCard,"Diizinkan untuk Key system, Webhook Discord, Raid notif, dll",8,C.TXT3,Enum.Font.Gotham)
     netSub.Size=UDim2.new(1,0,0,13); netSub.Position=UDim2.new(0,0,0,22)
