@@ -35,6 +35,35 @@ local RE_ExtraReward   = Remotes:WaitForChild("ExtraReward", 1)
 local RE_AutoHeroQuirk  = Remotes:WaitForChild("AutoRandomHeroQuirk", 1)
 local RE_RandomHeroQuirk = Remotes:WaitForChild("RandomHeroQuirk", 1)
 
+-- Remotes tambahan: Mass Attack & Auto Goyang
+local RE_Click     = Remotes:FindFirstChild("ClickEnemy")
+local RE_Atk       = Remotes:FindFirstChild("PlayerClickAttackSkill")
+local RE_Drop      = Remotes:FindFirstChild("DropItems")
+local RE_Death     = Remotes:FindFirstChild("EnemyDeath")
+local RE_HeroMove  = Remotes:FindFirstChild("HeroMoveToEnemyPos")
+local RE_HeroStand = Remotes:FindFirstChild("HeroStandTo")
+local RE_HeroSkill = Remotes:FindFirstChild("HeroPlaySkillAnim")
+
+local MY_USER_ID = LP.UserId
+local HERO_GUIDS = {}
+
+-- Hook heroGuid dari HeroMoveToEnemyPos
+pcall(function()
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        if RE_HeroMove and (method=="FireServer" or method=="InvokeServer") and self==RE_HeroMove then
+            local args = {...}
+            if args[1] and type(args[1])=="table" and args[1].heroTagetPosInfos then
+                local newGuids = {}
+                for hGuid,_ in pairs(args[1].heroTagetPosInfos) do table.insert(newGuids,hGuid) end
+                if #newGuids>0 then HERO_GUIDS=newGuids end
+            end
+        end
+        return oldNamecall(self, ...)
+    end)
+end)
+
 -- =====================================================
 -- WARNA
 -- =====================================================
@@ -288,6 +317,7 @@ ContentFrame.BackgroundTransparency=1
 local NAV_ITEMS={
     {tag="main",     ico="🏠", lbl="Main"},
     {tag="farm",     ico="⚔",  lbl="Farm"},
+    {tag="attack",   ico="💥", lbl="Attack"},
     {tag="player",   ico="🧍", lbl="Player"},
     {tag="autoroll", ico="🎲", lbl="Reroll"},
     {tag="settings", ico="⚙",  lbl="Settings"},
@@ -394,6 +424,169 @@ local _noClipConn=nil
 local _antiAfkThread=nil
 local _antiAfkStart=nil
 local COLLECTED={}
+
+-- =====================================================
+-- STATE: MASS ATTACK & AUTO GOYANG
+-- =====================================================
+local MA = { running=false, thread=nil, killed=0, collected=0, killTarget=7 }
+local AG = { running=false, thread=nil, killed=0, collected=0, currentTarget=nil }
+local _maStatusLbl=nil
+local _agStatusLbl=nil
+local _deadG={}; local _colG={}
+
+local function GetEnemies()
+    local list={}
+    local f=workspace:FindFirstChild("Enemys"); if not f then return list end
+    for _,e in ipairs(f:GetChildren()) do
+        if e:IsA("Model") then
+            local g=e:GetAttribute("EnemyGuid")
+            local h=e:FindFirstChild("HumanoidRootPart")
+            local hum=e:FindFirstChildOfClass("Humanoid")
+            if g and h and hum and hum.Health>0 then table.insert(list,{model=e,guid=g,hrp=h}) end
+        end
+    end
+    return list
+end
+
+local function IsDead(e)
+    if _deadG[e.guid] then return true end
+    if not e.model or not e.model.Parent then return true end
+    local h=e.model:FindFirstChildOfClass("Humanoid"); return not h or h.Health<=0
+end
+
+local ORIGIN_POS=Vector3.new(0,0,0)
+local function SaveOrigin()
+    local char=LP.Character; if not char then return end
+    local hrp=char:FindFirstChild("HumanoidRootPart"); if hrp then ORIGIN_POS=hrp.Position end
+end
+local function ReturnHRPToOrigin()
+    local char=LP.Character; if not char then return end
+    local hrp=char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+    hrp.CFrame=CFrame.new(ORIGIN_POS)
+end
+
+local function FireAllDamage(g, ep)
+    if RE_Click  then pcall(function() RE_Click:InvokeServer({enemyGuid=g,enemyPos=ep}) end) end
+    if RE_Atk    then pcall(function() RE_Atk:FireServer({attackEnemyGUID=g}) end) end
+    if RE_Atk    then pcall(function() RE_Atk:FireServer(g) end) end
+    for _,hGuid in ipairs(HERO_GUIDS) do
+        if RE_HeroSkill then
+            pcall(function() RE_HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=1,masterId=MY_USER_ID}) end)
+            pcall(function() RE_HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=2,masterId=MY_USER_ID}) end)
+            pcall(function() RE_HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=3,masterId=MY_USER_ID}) end)
+        end
+        if RE_HeroStand then
+            pcall(function() RE_HeroStand:FireServer({masterId=MY_USER_ID,cframe=CFrame.new(ep+Vector3.new(2,0,2)),guid=hGuid}) end)
+        end
+    end
+end
+
+local function FireHeroRemotes(enemyGuid, enemyPos)
+    if not RE_HeroMove then return end
+    pcall(function() RE_HeroMove:FireServer({
+        attackTarget=enemyGuid, userId=MY_USER_ID,
+        heroTagetPosInfos=(function()
+            local t={}
+            for i,hg in ipairs(HERO_GUIDS) do
+                t[hg]=enemyPos+Vector3.new((i-1)*3-3,0,i%2==0 and 2 or -2)
+            end
+            return t
+        end)()
+    }) end)
+end
+
+-- Death listener untuk MA/AG
+if RE_Death then
+    RE_Death.OnClientEvent:Connect(function(d)
+        if not d then return end
+        local g=d.enemyGuid or d.guid
+        if g then
+            _deadG[g]=true
+            if MA.running then MA.killed=MA.killed+1 end
+            if AG.running then AG.killed=AG.killed+1 end
+        end
+    end)
+end
+
+-- Mass Attack loop
+local function DoMassAttack(on)
+    MA.running=on; MA.killed=0; _deadG={}; _colG={}
+    if MA.thread then pcall(function() task.cancel(MA.thread) end); MA.thread=nil end
+    if not on then if _maStatusLbl then _maStatusLbl.Text="Idle" end; return end
+    MA.thread=task.spawn(function()
+        while MA.running do
+            local enemies=GetEnemies()
+            if #enemies==0 then
+                if _maStatusLbl then _maStatusLbl.Text="Menunggu musuh..." end
+                task.wait(0.4); continue
+            end
+            local alive=0
+            for _,e in ipairs(enemies) do
+                if not IsDead(e) then
+                    alive=alive+1
+                    local g=e.guid; local hrp=e.hrp
+                    if hrp then
+                        local ep=hrp.Position
+                        task.spawn(function()
+                            FireAllDamage(g,ep)
+                            FireHeroRemotes(g,ep)
+                        end)
+                    end
+                end
+            end
+            if _maStatusLbl then
+                if MA.killTarget==0 then
+                    _maStatusLbl.Text="Kill All: "..alive.." hidup | Total: "..MA.killed
+                else
+                    _maStatusLbl.Text=alive.." hidup | "..MA.killed.."/"..MA.killTarget
+                end
+            end
+            if MA.killTarget>0 and MA.killed>=MA.killTarget then
+                if _maStatusLbl then _maStatusLbl.Text="\u2713 Target tercapai ("..MA.killed.." kill)" end
+                MA.running=false; break
+            end
+            task.wait(0.08)
+        end
+    end)
+end
+
+-- Auto Goyang loop
+local function DoAutoGoyang(on)
+    AG.running=on; AG.killed=0
+    if AG.thread then pcall(function() task.cancel(AG.thread) end); AG.thread=nil end
+    if not on then
+        if _agStatusLbl then _agStatusLbl.Text="Idle" end
+        ReturnHRPToOrigin(); return
+    end
+    SaveOrigin()
+    AG.thread=task.spawn(function()
+        while AG.running do
+            local tgt=AG.currentTarget
+            if not tgt then
+                if _agStatusLbl then _agStatusLbl.Text="Pilih musuh dari list..." end
+                task.wait(0.2); continue
+            end
+            if IsDead(tgt) or not tgt.model.Parent then
+                if _agStatusLbl then _agStatusLbl.Text="["..tgt.model.Name.."] mati" end
+                AG.currentTarget=nil; ReturnHRPToOrigin(); task.wait(0.3); continue
+            end
+            local hrp=tgt.model:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local ep=hrp.Position
+                FireAllDamage(tgt.guid,ep)
+                FireHeroRemotes(tgt.guid,ep)
+                if _agStatusLbl then _agStatusLbl.Text="\u26d4 ["..tgt.model.Name.."] Kill: "..AG.killed end
+            end
+            task.wait(0.08)
+        end
+    end)
+end
+
+-- Rejoin
+local function DoRejoin()
+    local TeleportService=game:GetService("TeleportService")
+    pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,LP) end)
+end
 
 local function StopLoop(key)
     if LOOPS[key] then pcall(function() task.cancel(LOOPS[key]) end); LOOPS[key]=nil end
@@ -1640,6 +1833,125 @@ do
 end
 
 -- =====================================================
+-- PANEL : ATTACK (Mass Attack & Auto Goyang)
+-- =====================================================
+do
+    local p=NewPanel("attack")
+
+    -- ── MASS ATTACK ──────────────────────────────────
+    SectionHeader(p,"MASS ATTACK",0)
+
+    -- Status card
+    local maCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
+    maCard.LayoutOrder=1; Corner(maCard,8); Stroke(maCard,C.BORD,1,0.4)
+    Padding(maCard,6,6,12,8)
+    local maTitleLbl=Label(maCard,"Status",12,C.TXT,Enum.Font.GothamBold)
+    maTitleLbl.Size=UDim2.new(0.4,0,0,16); maTitleLbl.Position=UDim2.new(0,0,0,4)
+    local maStatusText=Label(maCard,"Idle",11,C.TXT2,Enum.Font.Gotham,Enum.TextXAlignment.Right)
+    maStatusText.Size=UDim2.new(0.6,0,0,16); maStatusText.Position=UDim2.new(0.4,0,0,4)
+    maStatusText.TextTruncate=Enum.TextTruncate.AtEnd
+    _maStatusLbl=maStatusText
+
+    -- Kill Target row
+    local ktCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
+    ktCard.LayoutOrder=2; Corner(ktCard,8); Stroke(ktCard,C.BORD,1,0.4)
+    Padding(ktCard,6,6,12,8)
+    local ktLbl=Label(ktCard,"Kill Target",12,C.TXT,Enum.Font.GothamBold)
+    ktLbl.Size=UDim2.new(0.55,0,0,16); ktLbl.Position=UDim2.new(0,0,0,4)
+    local ktSub=Label(ktCard,"0 = Kill All",10,C.TXT3,Enum.Font.Gotham)
+    ktSub.Size=UDim2.new(0.55,0,0,13); ktSub.Position=UDim2.new(0,0,0,24)
+
+    -- +/- buttons
+    local ktValLbl=Label(ktCard,tostring(MA.killTarget),14,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    ktValLbl.Size=UDim2.new(0,30,0,28); ktValLbl.Position=UDim2.new(1,-80,0.5,-14)
+
+    local ktMinus=Btn(ktCard,C.BG3,UDim2.new(0,26,0,26))
+    ktMinus.Position=UDim2.new(1,-110,0.5,-13); Corner(ktMinus,6)
+    local ktMinusLbl=Label(ktMinus,"−",14,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    ktMinusLbl.Size=UDim2.new(1,0,1,0)
+
+    local ktPlus=Btn(ktCard,C.BG3,UDim2.new(0,26,0,26))
+    ktPlus.Position=UDim2.new(1,-48,0.5,-13); Corner(ktPlus,6)
+    local ktPlusLbl=Label(ktPlus,"+",14,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    ktPlusLbl.Size=UDim2.new(1,0,1,0)
+
+    ktMinus.MouseButton1Click:Connect(function()
+        MA.killTarget=math.max(0,MA.killTarget-1)
+        ktValLbl.Text=tostring(MA.killTarget)
+    end)
+    ktPlus.MouseButton1Click:Connect(function()
+        MA.killTarget=MA.killTarget+1
+        ktValLbl.Text=tostring(MA.killTarget)
+    end)
+
+    ToggleRow(p,"Mass Attack","Serang semua musuh di map sekaligus",3,function(on)
+        DoMassAttack(on)
+    end)
+
+    -- ── AUTO GOYANG ───────────────────────────────────
+    SectionHeader(p,"AUTO GOYANG",10)
+
+    -- Status card
+    local agCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
+    agCard.LayoutOrder=11; Corner(agCard,8); Stroke(agCard,C.BORD,1,0.4)
+    Padding(agCard,6,6,12,8)
+    local agTitleLbl=Label(agCard,"Status",12,C.TXT,Enum.Font.GothamBold)
+    agTitleLbl.Size=UDim2.new(0.4,0,0,16); agTitleLbl.Position=UDim2.new(0,0,0,4)
+    local agStatusText=Label(agCard,"Idle",11,C.TXT2,Enum.Font.Gotham,Enum.TextXAlignment.Right)
+    agStatusText.Size=UDim2.new(0.6,0,0,16); agStatusText.Position=UDim2.new(0.4,0,0,4)
+    agStatusText.TextTruncate=Enum.TextTruncate.AtEnd
+    _agStatusLbl=agStatusText
+
+    -- Enemy List (refresh tiap 1 detik)
+    local agListCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,120))
+    agListCard.LayoutOrder=12; Corner(agListCard,8); Stroke(agListCard,C.BORD,1,0.4)
+    Padding(agListCard,6,6,8,8)
+
+    local agListTitle=Label(agListCard,"Daftar Musuh  (tap untuk pilih target)",11,C.TXT3,Enum.Font.Gotham)
+    agListTitle.Size=UDim2.new(1,0,0,16); agListTitle.Position=UDim2.new(0,0,0,0)
+
+    local agScroll=New("ScrollingFrame",{Parent=agListCard,
+        Size=UDim2.new(1,0,1,-20), Position=UDim2.new(0,0,0,20),
+        BackgroundTransparency=1, BorderSizePixel=0,
+        ScrollBarThickness=3, ScrollBarImageColor3=C.ACC,
+        CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y})
+    ListLayout(agScroll,nil,Enum.HorizontalAlignment.Center,2)
+
+    -- Auto-refresh enemy list setiap 1 detik
+    task.spawn(function()
+        while agListCard.Parent do
+            for _,c in ipairs(agScroll:GetChildren()) do
+                if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
+            end
+            local enemies=GetEnemies()
+            for _,e in ipairs(enemies) do
+                if not IsDead(e) then
+                    local isSel = (AG.currentTarget and AG.currentTarget.guid==e.guid)
+                    local eBtn=Btn(agScroll, isSel and C.ACC or C.BG3, UDim2.new(1,-4,0,24))
+                    Corner(eBtn,5); Stroke(eBtn, isSel and C.ACC2 or C.BORD, 1, 0.3)
+                    local eLbl=Label(eBtn,"  "..e.model.Name,11,isSel and C.BLACK or C.TXT,Enum.Font.Gotham)
+                    eLbl.Size=UDim2.new(1,0,1,0)
+                    local ec=e
+                    eBtn.MouseButton1Click:Connect(function()
+                        AG.currentTarget=ec
+                        if _agStatusLbl then _agStatusLbl.Text="Target: "..ec.model.Name end
+                    end)
+                end
+            end
+            if #enemies==0 then
+                local noELbl=Label(agScroll,"  Tidak ada musuh",11,C.TXT3,Enum.Font.Gotham)
+                noELbl.Size=UDim2.new(1,0,0,24)
+            end
+            task.wait(1)
+        end
+    end)
+
+    ToggleRow(p,"Auto Goyang","Fokus serang 1 musuh dari list di atas",13,function(on)
+        DoAutoGoyang(on)
+    end)
+end
+
+-- =====================================================
 -- PANEL : PLAYER
 -- =====================================================
 do
@@ -1826,6 +2138,26 @@ do
             StatusLbls["antiAfk"].Text="Anti AFK  —  "..(on and "ON" or "OFF")
             StatusLbls["antiAfk"].TextColor3=on and C.ACC2 or C.TXT2
         end
+    end)
+
+    -- ── REJOIN ───────────────────────────────────────
+    SectionHeader(p,"LAINNYA",10)
+    local rejoinCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,50))
+    rejoinCard.LayoutOrder=11; Corner(rejoinCard,8); Stroke(rejoinCard,C.BORD,1,0.4)
+    Padding(rejoinCard,8,8,12,8)
+    local rejoinLbl=Label(rejoinCard,"Rejoin Server",12,C.TXT,Enum.Font.GothamBold)
+    rejoinLbl.Size=UDim2.new(0.65,0,0,18); rejoinLbl.Position=UDim2.new(0,0,0,6)
+    local rejoinSub=Label(rejoinCard,"Reconnect ke server yang sama",10,C.TXT3,Enum.Font.Gotham)
+    rejoinSub.Size=UDim2.new(0.85,0,0,14); rejoinSub.Position=UDim2.new(0,0,0,26)
+    local rejoinBtn=Btn(rejoinCard,C.ACC,UDim2.new(0,70,0,30))
+    rejoinBtn.Position=UDim2.new(1,-76,0.5,-15); Corner(rejoinBtn,8)
+    Stroke(rejoinBtn,C.ACC2,1,0.2)
+    local rejoinBtnLbl=Label(rejoinBtn,"Rejoin",12,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    rejoinBtnLbl.Size=UDim2.new(1,0,1,0)
+    rejoinBtn.MouseButton1Click:Connect(function()
+        rejoinBtnLbl.Text="..."
+        task.wait(0.5)
+        DoRejoin()
     end)
 end
 
