@@ -1,9 +1,7 @@
--- =====================================================
 --   Arise Shadow Hunt — Auto Farming GUI
 --   Theme : Full Orange iPhone 17 Pro Max
 --   By    : FLa Project
---   Xeno  : Compatible
--- =====================================================
+--   Platform : Android (Delta) + PC (Xeno) — Full Support
 
 local Players          = game:GetService("Players")
 local TweenService     = game:GetService("TweenService")
@@ -14,9 +12,7 @@ local RS               = game:GetService("ReplicatedStorage")
 local LP  = Players.LocalPlayer
 local PG  = LP.PlayerGui
 
--- =====================================================
 -- CLEANUP OLD GUI
--- =====================================================
 for _, name in ipairs({"ASH_GUI", "ASH_DD"}) do
     pcall(function()
         local old = PG:FindFirstChild(name)
@@ -25,25 +21,17 @@ for _, name in ipairs({"ASH_GUI", "ASH_DD"}) do
 end
 task.wait(3) -- tunggu game fully loaded sebelum script berjalan
 
--- =====================================================
 -- REMOTES
--- =====================================================
 local Remotes          = RS:WaitForChild("Remotes", 10)
 local RE_CollectItem   = Remotes:WaitForChild("CollectItem", 10)
 local RE_ExtraReward   = Remotes:WaitForChild("ExtraReward", 10)
--- AutoRandomHeroQuirk: remote khusus auto roll (mungkin tidak ada di semua server)
--- RandomHeroQuirk: remote reroll manual biasa — ini yang PASTI ada
 local RE_AutoHeroQuirk   = Remotes:FindFirstChild("AutoRandomHeroQuirk")
 local RE_RandomHeroQuirk = Remotes:WaitForChild("RandomHeroQuirk", 10)
 
--- Log status remote saat load
-print("[ ASH ] RE_AutoHeroQuirk  = "..tostring(RE_AutoHeroQuirk))
-print("[ ASH ] RE_RandomHeroQuirk = "..tostring(RE_RandomHeroQuirk))
 if not RE_RandomHeroQuirk then
     warn("[ ASH ] FATAL: RandomHeroQuirk tidak ditemukan! AutoReroll tidak akan berfungsi.")
 end
 
--- Remotes tambahan: Mass Attack & Auto Goyang
 local RE_Click     = Remotes:FindFirstChild("ClickEnemy")
 local RE_Atk       = Remotes:FindFirstChild("PlayerClickAttackSkill")
 local RE_Death     = Remotes:FindFirstChild("EnemyDeath")
@@ -51,34 +39,13 @@ local RE_HeroMove  = Remotes:FindFirstChild("HeroMoveToEnemyPos")
 local RE_HeroStand = Remotes:FindFirstChild("HeroStandTo")
 local RE_HeroSkill = Remotes:FindFirstChild("HeroPlaySkillAnim")
 
+local RE_EquipWeapon       = Remotes:WaitForChild("EquipWeapon", 10)
+local RE_RandomWeaponQuirk = Remotes:WaitForChild("RandomWeaponQuirk", 10)
+
 local MY_USER_ID = LP.UserId
 local HERO_GUIDS = {}
 
--- Hook heroGuid dari HeroMoveToEnemyPos
--- Setiap kali hero bergerak (termasuk ganti hero), GUID langsung di-capture ulang
-pcall(function()
-    local oldNamecall
-    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        if RE_HeroMove and (method=="FireServer" or method=="InvokeServer") and self==RE_HeroMove then
-            local args = {...}
-            if args[1] and type(args[1])=="table" and args[1].heroTagetPosInfos then
-                local newGuids = {}
-                for hGuid,_ in pairs(args[1].heroTagetPosInfos) do table.insert(newGuids,hGuid) end
-                if #newGuids > 0 then
-                    HERO_GUIDS = newGuids
-                    -- Langsung update heroGuid aktif — deteksi ganti hero otomatis
-                    pcall(SetHeroGuid, newGuids[1], "HeroMove")
-                end
-            end
-        end
-        return oldNamecall(self, ...)
-    end)
-end)
-
--- =====================================================
 -- WARNA
--- =====================================================
 local C = {
     BG       = Color3.fromRGB(210, 85, 10),
     BG2      = Color3.fromRGB(185, 70,  5),
@@ -111,12 +78,9 @@ local C = {
     AG       = Color3.fromRGB(255, 140, 20),
     ROW      = Color3.fromRGB( 22,  22, 28),
     NSEL     = Color3.fromRGB( 90,  35,  8),
-    BOFF     = Color3.fromRGB( 22,  20, 18),
 }
 
--- =====================================================
 -- UI HELPERS
--- =====================================================
 local function New(class, props)
     local obj = Instance.new(class)
     for k, v in pairs(props) do pcall(function() obj[k] = v end) end
@@ -160,19 +124,17 @@ local function ListLayout(parent, dir, align, spacing)
         Padding=UDim.new(0,spacing or 4)})
 end
 
--- =====================================================
 -- SCREEN GUI
--- =====================================================
 local ScreenGui = New("ScreenGui",{Parent=PG, Name="ASH_GUI",
     ResetOnSpawn=false, ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
-    DisplayOrder=9999})
+    DisplayOrder=9999, IgnoreGuiInset=true})
 
--- =====================================================
--- MAIN WINDOW
--- =====================================================
-local WIN_W, WIN_H = 500, 360
+local _vp = workspace.CurrentCamera.ViewportSize
+local _isSmallScreen = _vp.X < 700
+local WIN_W = _isSmallScreen and math.min(math.floor(_vp.X * 0.96), 420) or 500
+local WIN_H = _isSmallScreen and math.min(math.floor(_vp.Y * 0.82), 380) or 360
 local Window = Frame(ScreenGui, C.BG, UDim2.new(0,WIN_W,0,WIN_H))
-Window.Position = UDim2.new(0.5,-WIN_W/2,0.5,-WIN_H/2)
+Window.Position = UDim2.new(0.5,-WIN_W/2,0.05,0)
 Window.ClipsDescendants = true
 Corner(Window, 14)
 Stroke(Window, C.BORD2, 1.5, 0)
@@ -182,9 +144,8 @@ New("UIGradient",{Parent=Window,
         ColorSequenceKeypoint.new(1,C.BG3)}),
     Rotation=135})
 
--- =====================================================
 -- TOPBAR
--- =====================================================
+do
 local TopBar = Frame(Window, C.TBAR, UDim2.new(1,0,0,40))
 Corner(TopBar,14)
 local TBFix = Frame(TopBar, C.TBAR, UDim2.new(1,0,0,14))
@@ -202,20 +163,16 @@ local SubLbl = Label(TopBar,"Arise Shadow Hunt  •  by FLa",11,C.TXT3,Enum.Font
 SubLbl.Size=UDim2.new(0,220,0,14); SubLbl.Position=UDim2.new(0,44,0,23)
 
 local function WinBtn(xOffset,color,symbol)
-    local b = Btn(TopBar,color,UDim2.new(0,14,0,14))
-    b.Position=UDim2.new(0,xOffset,0.5,-7); Corner(b,7)
-    local l=Label(b,symbol,10,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-    l.Size=UDim2.new(1,0,1,0); l.Visible=false
-    b.MouseEnter:Connect(function() l.Visible=true end)
-    b.MouseLeave:Connect(function() l.Visible=false end)
+    local b = Btn(TopBar,color,UDim2.new(0,20,0,20))
+    b.Position=UDim2.new(0,xOffset,0.5,-10); Corner(b,10)
+    local l=Label(b,symbol,11,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    l.Size=UDim2.new(1,0,1,0)
     return b
 end
--- Minimize paling kiri, Max tengah, Close paling kanan (semua di sisi kanan topbar)
-local BtnMin   = WinBtn(-62+WIN_W,C.WIN_MIN,"—")   -- kiri
-local BtnMax   = WinBtn(-42+WIN_W,C.WIN_MAX,"□")   -- tengah
-local BtnClose = WinBtn(-22+WIN_W,C.WIN_CLOSE,"✕") -- kanan
+local BtnMin   = WinBtn(WIN_W-68,C.WIN_MIN,"—")
+local BtnMax   = WinBtn(WIN_W-46,C.WIN_MAX,"□")
+local BtnClose = WinBtn(WIN_W-24,C.WIN_CLOSE,"✕")
 
--- Drag
 local dragging,dragStart,startPos=false,nil,nil
 TopBar.InputBegan:Connect(function(i)
     if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
@@ -228,9 +185,6 @@ UserInputService.InputChanged:Connect(function(i)
         local d=i.Position-dragStart
         Window.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y) end end)
 
--- =====================================================
--- FLOATING BUBBLE
--- =====================================================
 local Bubble=Btn(ScreenGui,C.TBAR,UDim2.new(0,60,0,60))
 Bubble.Position=UDim2.new(0,20,0.5,-30); Bubble.Visible=false
 Corner(Bubble,30); Stroke(Bubble,C.ACC,2,0)
@@ -252,7 +206,6 @@ local function StartFloat()
     end)
 end
 
--- Drag dengan threshold supaya klik biasa tidak terhitung drag
 local bDrag        = false
 local bDragMoved   = false
 local bDragStart   = nil
@@ -274,10 +227,8 @@ Bubble.InputEnded:Connect(function(i)
         local wasDrag = bDragMoved
         bDrag=false; bDragMoved=false
         if wasDrag then
-            -- Selesai drag → lanjut float di posisi baru
             if Bubble.Visible then StartFloat() end
         else
-            -- Klik biasa → restore window
             StopFloat()
             Bubble.Visible = false
             Window.Visible = true
@@ -312,29 +263,27 @@ BtnMax.MouseButton1Click:Connect(function()
         TweenService:Create(Window,TweenInfo.new(0.2),{Size=UDim2.new(1,0,1,0),Position=UDim2.new(0,0,0,0)}):Play()
     else TweenService:Create(Window,TweenInfo.new(0.2),{Size=prevSz,Position=prevPs}):Play() end end)
 BtnClose.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+end -- TOPBAR
 
--- =====================================================
 -- BODY
--- =====================================================
+local SIDEBAR_W = _isSmallScreen and 72 or 100
 local Body=Frame(Window,C.BG3,UDim2.new(1,0,1,-40))
 Body.Position=UDim2.new(0,0,0,40)
 
-local SideBar=Frame(Body,C.SIDEBAR,UDim2.new(0,100,1,0))
+local SideBar=Frame(Body,C.SIDEBAR,UDim2.new(0,SIDEBAR_W,1,0))
 local SideScroll=New("ScrollingFrame",{Parent=SideBar,
     Size=UDim2.new(1,0,1,-8), Position=UDim2.new(0,0,0,4),
     BackgroundTransparency=1, BorderSizePixel=0,
-    ScrollBarThickness=2, ScrollBarImageColor3=C.ACC,
+    ScrollBarThickness=_isSmallScreen and 4 or 2, ScrollBarImageColor3=C.ACC,
     CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y})
 ListLayout(SideScroll,nil,Enum.HorizontalAlignment.Center,2)
 Padding(SideScroll,4,4,4,4)
 
-local ContentFrame=Frame(Body,C.BLACK,UDim2.new(1,-100,1,0))
-ContentFrame.Position=UDim2.new(0,100,0,0)
+local ContentFrame=Frame(Body,C.BLACK,UDim2.new(1,-SIDEBAR_W,1,0))
+ContentFrame.Position=UDim2.new(0,SIDEBAR_W,0,0)
 ContentFrame.BackgroundTransparency=1
 
--- =====================================================
 -- TAB SYSTEM
--- =====================================================
 local NAV_ITEMS={
     {tag="main",     ico="🏠", lbl="Main"},
     {tag="farm",     ico="⚔",  lbl="Farm"},
@@ -342,7 +291,6 @@ local NAV_ITEMS={
     {tag="player",   ico="🧍", lbl="Player"},
     {tag="autoroll", ico="🎲", lbl="Reroll"},
     {tag="settings", ico="⚙",  lbl="Settings"},
-    {tag="info",     ico="ℹ",  lbl="Info"},
 }
 
 local Panels,NavRefs,ActiveTab={},{},""
@@ -350,7 +298,7 @@ local Panels,NavRefs,ActiveTab={},{},""
 local function NewPanel(tag)
     local p=New("ScrollingFrame",{Parent=ContentFrame,
         Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
-        BorderSizePixel=0, ScrollBarThickness=3,
+        BorderSizePixel=0, ScrollBarThickness=_isSmallScreen and 5 or 3,
         ScrollBarImageColor3=C.ACC, CanvasSize=UDim2.new(0,0,0,0),
         AutomaticCanvasSize=Enum.AutomaticSize.Y, Visible=false})
     ListLayout(p,nil,Enum.HorizontalAlignment.Center,5)
@@ -388,17 +336,9 @@ for i,item in ipairs(NAV_ITEMS) do
     lblL.TextTruncate=Enum.TextTruncate.AtEnd
     NavRefs[i]={tag=item.tag,bg=bg,bar=bar,ico=icoL,lbl=lblL}
     bg.MouseButton1Click:Connect(function() SwitchTab(item.tag) end)
-    bg.MouseEnter:Connect(function()
-        if ActiveTab~=item.tag then
-            TweenService:Create(bg,TweenInfo.new(0.1),{BackgroundTransparency=0,BackgroundColor3=Color3.fromRGB(170,62,4)}):Play() end end)
-    bg.MouseLeave:Connect(function()
-        if ActiveTab~=item.tag then
-            TweenService:Create(bg,TweenInfo.new(0.1),{BackgroundTransparency=1}):Play() end end)
 end
 
--- =====================================================
 -- PANEL HELPERS
--- =====================================================
 local function SectionHeader(panel,title,order)
     local f=Frame(panel,C.BLACK,UDim2.new(1,0,0,20))
     f.BackgroundTransparency=1; f.LayoutOrder=order or 0
@@ -431,14 +371,10 @@ local function ToggleRow(panel,title,desc,order,onToggle)
         if onToggle then onToggle(v) end
     end
     pill.MouseButton1Click:Connect(function() SetState(not state) end)
-    row.MouseEnter:Connect(function() TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=C.SURFACE2}):Play() end)
-    row.MouseLeave:Connect(function() TweenService:Create(row,TweenInfo.new(0.1),{BackgroundColor3=C.SURFACE}):Play() end)
     return row,SetState
 end
 
--- =====================================================
 -- STATE & LOOPS
--- =====================================================
 local STATE={autoCollect=false,autoDestroyer=false,autoArise=false,autoRoll=false,noClip=false,antiAfk=false}
 local LOOPS={}
 local _noClipConn=nil
@@ -446,9 +382,7 @@ local _antiAfkThread=nil
 local _antiAfkStart=nil
 local COLLECTED={}
 
--- =====================================================
 -- STATE: MASS ATTACK & AUTO GOYANG
--- =====================================================
 local MA = { running=false, thread=nil, killed=0, killTarget=7, autoCollect=true, _pausedByRaid=false }
 local AG = { running=false, thread=nil, killed=0, collected=0, currentTarget=nil, autoCollect=true, _pausedByRaid=false }
 local _maStatusLbl=nil
@@ -463,7 +397,6 @@ local function GetEnemies()
             local g=e:GetAttribute("EnemyGuid")
             local h=e:FindFirstChild("HumanoidRootPart")
             local hum=e:FindFirstChildOfClass("Humanoid")
-            -- wajib ada HumanoidRootPart + Humanoid + EnemyGuid (filter non-enemy seperti PumpkinCount)
             if g and h and hum and hum.Health>0 then
                 table.insert(list,{model=e, guid=g, hrp=h})
             end
@@ -507,19 +440,16 @@ end
 
 local function FireHeroRemotes(enemyGuid, enemyPos)
     if not RE_HeroMove then return end
+    local heroPosInfos = {}
+    for i,hg in ipairs(HERO_GUIDS) do
+        heroPosInfos[hg] = enemyPos+Vector3.new((i-1)*3-3,0,i%2==0 and 2 or -2)
+    end
     pcall(function() RE_HeroMove:FireServer({
         attackTarget=enemyGuid, userId=MY_USER_ID,
-        heroTagetPosInfos=(function()
-            local t={}
-            for i,hg in ipairs(HERO_GUIDS) do
-                t[hg]=enemyPos+Vector3.new((i-1)*3-3,0,i%2==0 and 2 or -2)
-            end
-            return t
-        end)()
+        heroTagetPosInfos=heroPosInfos,
     }) end)
 end
 
--- Death listener untuk MA/AG
 if RE_Death then
     RE_Death.OnClientEvent:Connect(function(d)
         if not d then return end
@@ -532,12 +462,47 @@ if RE_Death then
     end)
 end
 
--- =====================================================
--- MAP DATA & ROTATION
--- =====================================================
 local TeleportService = game:GetService("TeleportService")
 local GuiService      = game:GetService("GuiService")
-local VIM             = game:GetService("VirtualInputManager")
+local function GuiInsetY()
+    local ok, y = pcall(function() return GuiService:GetGuiInset().Y end)
+    return (ok and type(y)=="number") and y or 36
+end
+
+local SKL={
+    Z={on=false,t=nil,label="Z"},
+    X={on=false,t=nil,label="X"},
+    C={on=false,t=nil,label="C"},
+    V={on=false,t=nil,label="V"},
+    F={on=false,t=nil,label="F"},
+}
+local SKL_TYPE={Z=1,X=2,C=3,V=4,F=5}
+
+local function SkOn(n)
+    local s=SKL[n]; if s.t then return end
+    s.on=true
+    s.t=task.spawn(function()
+        while s.on do
+            for _,hGuid in ipairs(HERO_GUIDS) do
+                if RE_HeroSkill then
+                    pcall(function()
+                        RE_HeroSkill:FireServer({
+                            heroGuid=hGuid,
+                            skillType=SKL_TYPE[n] or 1,
+                            masterId=MY_USER_ID
+                        })
+                    end)
+                end
+            end
+            task.wait(0.8)
+        end
+        s.t=nil
+    end)
+end
+local function SkOff(n)
+    local s=SKL[n]; s.on=false
+    if s.t then pcall(function() task.cancel(s.t) end); s.t=nil end
+end
 
 local MAPS = {}
 for i = 1, 18 do
@@ -552,25 +517,11 @@ local function TpMap(m)
     else pcall(function() RE_LocalTp:FireServer({mapId=m.id}) end) end
 end
 
--- =====================================================
--- AUTO SKILL (Z/X/C/V/F)
--- =====================================================
-local SKL={
-    Z={on=false,key=Enum.KeyCode.Z,t=nil},
-    X={on=false,key=Enum.KeyCode.X,t=nil},
-    C={on=false,key=Enum.KeyCode.C,t=nil},
-    V={on=false,key=Enum.KeyCode.V,t=nil},
-    F={on=false,key=Enum.KeyCode.F,t=nil},
-}
-local function PK(k) pcall(function() VIM:SendKeyEvent(true,k,false,game); task.wait(0.05); VIM:SendKeyEvent(false,k,false,game) end) end
-local function SkOn(n) local s=SKL[n]; if s.t then return end; s.on=true; s.t=task.spawn(function() while s.on do PK(s.key); task.wait(1) end; s.t=nil end) end
-local function SkOff(n) local s=SKL[n]; s.on=false; if s.t then pcall(function() task.cancel(s.t) end); s.t=nil end end
-
--- =====================================================
--- DESTROY WORKER (salin dari sc_baru)
--- =====================================================
-local dstQ={}
+-- =============================================
+-- FIX: StartDestroyWorker yang hilang
+-- =============================================
 local function StartDestroyWorker(checkFn)
+    local dstQ = {}
     task.spawn(function()
         while checkFn() do
             if #dstQ>0 then
@@ -582,10 +533,8 @@ local function StartDestroyWorker(checkFn)
         end
     end)
 end
+-- =============================================
 
--- =====================================================
--- ATTACK LOOPS (salin dari sc_baru)
--- =====================================================
 local function AttackLoop_Mass(onStatus)
     _deadG={}
     local start=MA.killed; local wt=0
@@ -652,7 +601,13 @@ local function AttackLoop_Goyang(onStatus)
     ReturnHRPToOrigin(); return false
 end
 
--- RunLoop: jalankan attack loop dengan teleport antar map
+local function StopLoop(key)
+    if LOOPS[key] then
+        pcall(function() task.cancel(LOOPS[key]) end)
+        LOOPS[key] = nil
+    end
+end
+
 local function RunLoop(state, cfg, loopFn, onStatus, onDone)
     state.running=true; state.killed=0; state.collected=0
     StartDestroyWorker(function() return state.running end)
@@ -697,9 +652,6 @@ local function RunAG(onStatus, onDone)
     end)
 end
 
--- =====================================================
--- WRAPPER DoMassAttack / DoAutoGoyang / DoRejoin
--- =====================================================
 local _mOn=false
 local _agOn=false
 
@@ -716,20 +668,9 @@ local function DoMassAttack(on)
     end
 end
 
--- DoAutoGoyang dihapus: panel Farm baru handle langsung
-
 local function DoRejoin()
     pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,LP) end)
 end
-
--- StopLoop: cancel task dari LOOPS table
-local function StopLoop(key)
-    if LOOPS[key] then
-        pcall(function() task.cancel(LOOPS[key]) end)
-        LOOPS[key] = nil
-    end
-end
-
 
 local StatusDots,StatusLbls={},{}
 local function RefreshStatus()
@@ -750,9 +691,6 @@ local function RefreshStatus()
     end
 end
 
--- =====================================================
--- LOGIC : AUTO COLLECT GOLD
--- =====================================================
 local function DoAutoCollect(on)
     StopLoop("collect"); COLLECTED={}
     if not on then return end
@@ -776,9 +714,6 @@ local function DoAutoCollect(on)
     end)
 end
 
--- =====================================================
--- LOGIC : AUTO DESTROYER
--- =====================================================
 local _destroyerConn=nil
 local function DoAutoDestroyer(on)
     StopLoop("destroyer")
@@ -792,9 +727,6 @@ local function DoAutoDestroyer(on)
     end)
 end
 
--- =====================================================
--- LOGIC : AUTO ARISE
--- =====================================================
 local _ariseConn=nil
 local function DoAutoArise(on)
     StopLoop("arise")
@@ -808,238 +740,277 @@ local function DoAutoArise(on)
     end)
 end
 
--- =====================================================
--- QUIRK NAME SCANNER
--- Scan ReplicatedStorage untuk cari mapping ID → nama
--- quirk yang asli dari developer game.
--- Hasil print ke console, dan auto-patch QUIRK_LIST
--- jika ditemukan.
--- =====================================================
-local function ScanQuirkNamesFromGame()
-    local found = {}  -- [id] = name
-
-    -- Helper: rekursif scan table Lua biasa
-    local function ScanLuaTable(tbl, depth, path)
-        if depth > 6 or type(tbl) ~= "table" then return end
-        for k, v in pairs(tbl) do
-            local p = path.."."..tostring(k)
-            if type(v) == "table" then
-                -- Cari pola {id=XXXXX, name="..."} atau {quirkId=..., quirkName=...}
-                local id   = v.id or v.quirkId or v.quirk_id or v.QuirkId or v.drawId
-                local name = v.name or v.quirkName or v.quirk_name or v.Name or v.QuirkName or v.title
-                if type(id)=="number" and id>=99000 and id<=99999 and type(name)=="string" and #name>0 then
-                    if not found[id] then
-                        found[id] = name
-                    end
-                end
-                -- Cari pola {[id] = "name"} langsung
-                for ik, iv in pairs(v) do
-                    if type(ik)=="number" and ik>=99000 and ik<=99999 and type(iv)=="string" and #iv>0 then
-                        if not found[ik] then found[ik]=iv end
-                    end
-                end
-                ScanLuaTable(v, depth+1, p)
-            end
-        end
-    end
-
-    -- Helper: scan Instance tree cari StringValue/ModuleScript/table attribute
-    local function ScanInstance(obj, depth)
-        if depth > 5 or not obj then return end
-        pcall(function()
-            -- Scan attribute
-            for k,v in pairs(obj:GetAttributes()) do
-                if type(v)=="string" then
-                    -- Coba parse JSON-like atau cek apakah value adalah nama quirk
-                    -- dengan key berupa angka di range quirk
-                    local id = tonumber(k)
-                    if id and id>=99000 and id<=99999 then
-                        if not found[id] then found[id]=v end
-                    end
-                end
-            end
-            -- Scan children
-            for _,child in ipairs(obj:GetChildren()) do
-                if not obj then break end
-                -- ModuleScript: coba require
-                if child.ClassName == "ModuleScript" then
-                    local ok, data = pcall(require, child)
-                    if ok and type(data)=="table" then
-                        ScanLuaTable(data, 0, child.Name)
-                    end
-                -- StringValue dengan nama yang mirip quirk
-                elseif child.ClassName == "StringValue" or child.ClassName == "IntValue" then
-                    local id = tonumber(child.Name)
-                    if id and id>=99000 and id<=99999 and child.ClassName=="StringValue" then
-                        if not found[id] then found[id]=child.Value end
-                    end
-                end
-                ScanInstance(child, depth+1)
-            end
-        end)
-    end
-
-    -- Scan root-root yang paling mungkin punya quirk data
-    local roots = {
-        RS,
-        RS:FindFirstChild("Data"),
-        RS:FindFirstChild("GameData"),
-        RS:FindFirstChild("Config"),
-        RS:FindFirstChild("Configs"),
-        RS:FindFirstChild("QuirkData"),
-        RS:FindFirstChild("Quirks"),
-        RS:FindFirstChild("HeroData"),
-        RS:FindFirstChild("DrawData"),
-        RS:FindFirstChild("MachineData"),
-        RS:FindFirstChild("Modules"),
-        RS:FindFirstChild("SharedModules"),
-    }
-    for _, root in ipairs(roots) do
-        if root then ScanInstance(root, 0) end
-    end
-
-    -- Coba require semua ModuleScript di RS level 1
-    pcall(function()
-        for _, child in ipairs(RS:GetChildren()) do
-            if child.ClassName == "ModuleScript" then
-                local ok, data = pcall(require, child)
-                if ok and type(data)=="table" then
-                    ScanLuaTable(data, 0, child.Name)
-                end
-            end
-        end
-    end)
-
-    -- Report hasil
-    local count = 0
-    for _ in pairs(found) do count=count+1 end
-
-    if count > 0 then
-        print("[ ASH QUIRK SCAN ] ✓ Ditemukan "..count.." quirk dari data game:")
-        -- Urutkan berdasarkan ID
-        local sorted = {}
-        for id, name in pairs(found) do table.insert(sorted, {id=id, name=name}) end
-        table.sort(sorted, function(a,b) return a.id < b.id end)
-        for _, q in ipairs(sorted) do
-            print(string.format("  {id=%d, name=\"%s\"},", q.id, q.name))
-        end
-        print("[ ASH QUIRK SCAN ] Salin output di atas ke QUIRK_LIST_PER_SLOT")
-    else
-        print("[ ASH QUIRK SCAN ] ⚠ Tidak ditemukan data quirk di ReplicatedStorage.")
-        print("[ ASH QUIRK SCAN ] Coba intercept AutoRandomHeroQuirk response via SimpleSpy")
-        print("[ ASH QUIRK SCAN ] untuk lihat field nama quirk yang dikembalikan server.")
-    end
-
-    return found
-end
-
--- Jalankan scanner saat load — hasil muncul di console
-task.spawn(function()
-    task.wait(1)  -- tunggu game fully loaded
-    ScanQuirkNamesFromGame()
-end)
-
-
--- =====================================================
--- QUIRK DATA — confirmed dari game + SimpleSpy
--- =====================================================
-local SLOT_DRAW_IDS = {920001, 920002, 920003}
-
 local QUIRK_LIST_PER_SLOT = {
-    -- Slot 1 / Mesin 1 (drawId=920001)
     {
-        {id=99001,name="Silver Purse"},
-        {id=99002,name="Raw Strength"},
-        {id=99003,name="Tiny Luck"},
-        {id=99004,name="Precise Strike"},
-        {id=99005,name="Combo Rhythm"},
-        {id=99006,name="Lucky Charm"},
-        {id=99007,name="Gold Sense"},
-        {id=99008,name="Berserker's Rage"},
-        {id=99009,name="Rapid Slash"},
-        {id=99010,name="Godslayer"},
-        {id=99011,name="Phantom Rush"},
-        {id=99012,name="Legend Hunter"},
-        {id=99013,name="Midas Touch"},
-        {id=99014,name="Hyper Sprint"},
-        {id=99015,name="Time Skipper"},
-        {id=99016,name="Cosmic Luck"},
-        {id=99017,name="Destiny Rewrite"},
+        {id=99001,name="Silver Purse"},{id=99002,name="Raw Strength"},{id=99003,name="Tiny Luck"},
+        {id=99004,name="Precise Strike"},{id=99005,name="Combo Rhythm"},{id=99006,name="Lucky Charm"},
+        {id=99007,name="Gold Sense"},{id=99008,name="Berserker's Rage"},{id=99009,name="Rapid Slash"},
+        {id=99010,name="Godslayer"},{id=99011,name="Phantom Rush"},{id=99012,name="Legend Hunter"},
+        {id=99013,name="Midas Touch"},{id=99014,name="Hyper Sprint"},{id=99015,name="Time Skipper"},
+        {id=99016,name="Cosmic Luck"},{id=99017,name="Destiny Rewrite"},
     },
-    -- Slot 2 / Mesin 2 (drawId=920002)
     {
-        {id=99019,name="Thrifty Novice"},
-        {id=99020,name="Sharp Instinct"},
-        {id=99021,name="Mana Surge"},
-        {id=99022,name="Meticulous"},
-        {id=99023,name="Keen Eyes"},
-        {id=99024,name="Elemental Affinity"},
-        {id=99025,name="Resource Master"},
-        {id=99026,name="Killer Instinct"},
-        {id=99027,name="Arcane Mastery"},
-        {id=99028,name="Combat Optimization"},
-        {id=99029,name="Efficient Destruction"},
-        {id=99030,name="Savage Blow"},
-        {id=99031,name="Resource Conqueror"},
-        {id=99032,name="Elemental Overload"},
-        {id=99033,name="Crimson Executioner"},
-        {id=99034,name="God's Gift"},
-        {id=99035,name="Apocalypse Carnival"},
-        {id=99036,name="Divine Judgment"},
+        {id=99019,name="Thrifty Novice"},{id=99020,name="Sharp Instinct"},{id=99021,name="Mana Surge"},
+        {id=99022,name="Meticulous"},{id=99023,name="Keen Eyes"},{id=99024,name="Elemental Affinity"},
+        {id=99025,name="Resource Master"},{id=99026,name="Killer Instinct"},{id=99027,name="Arcane Mastery"},
+        {id=99028,name="Combat Optimization"},{id=99029,name="Efficient Destruction"},{id=99030,name="Savage Blow"},
+        {id=99031,name="Resource Conqueror"},{id=99032,name="Elemental Overload"},{id=99033,name="Crimson Executioner"},
+        {id=99034,name="God's Gift"},{id=99035,name="Apocalypse Carnival"},{id=99036,name="Divine Judgment"},
     },
-    -- Slot 3 / Mesin 3 (drawId=920003)
     {
-        {id=99037,name="Awakening Will"},
-        {id=99038,name="Omen of Doom"},
-        {id=99041,name="Breath of the End"},
-        {id=99042,name="Sharp Edge"},
-        {id=99043,name="Boiling Fury"},
-        {id=99045,name="Breaking Power"},
-        {id=99047,name="Whisper of Death"},
-        {id=99048,name="Annihilation Boost"},
-        {id=99049,name="Slayer's Instinct"},
-        {id=99050,name="Harbinger of Ruin"},
-        {id=99052,name="Godslayer's Fury"},
-        {id=99053,name="Deicide's Endgame"},
+        {id=99037,name="Awakening Will"},{id=99038,name="Omen of Doom"},{id=99041,name="Breath of the End"},
+        {id=99042,name="Sharp Edge"},{id=99043,name="Boiling Fury"},{id=99045,name="Breaking Power"},
+        {id=99047,name="Whisper of Death"},{id=99048,name="Annihilation Boost"},{id=99049,name="Slayer's Instinct"},
+        {id=99050,name="Harbinger of Ruin"},{id=99052,name="Godslayer's Fury"},{id=99053,name="Deicide's Endgame"},
         {id=99054,name="Final Arbiter"},
     },
 }
 
--- QUIRK_MAP gabungan semua slot
 local QUIRK_MAP = {}
 for _,list in ipairs(QUIRK_LIST_PER_SLOT) do
     for _,q in ipairs(list) do QUIRK_MAP[q.id] = q.name end
 end
 
-local min = math.min  -- shorthand dipakai di MakeDropdown
+local min = math.min
 
--- =====================================================
--- AUTO ROLL STATE
--- =====================================================
+local W_QUIRK_LIST_PER_SLOT = {
+    {
+        {id=99055,name="Improved Drop Rate"},{id=99056,name="Party ATK"},{id=99057,name="Divine Proc Chance"},
+        {id=99058,name="Team Crit Rate"},{id=99059,name="Group Skill DMG"},{id=99060,name="Serendipity"},
+        {id=99061,name="Master Looter"},{id=99062,name="Gold Gain"},{id=99063,name="Divine Intervention"},
+        {id=99064,name="Item Drop Rate"},{id=99065,name="Critical Resonance"},{id=99066,name="Prosperous Hunter"},
+        {id=99067,name="Celestial Onslaught"},{id=99068,name="Lucky Scavenger"},{id=99069,name="Titan's Wrath"},
+        {id=99070,name="Omnipotent Benefactor"},{id=99071,name="Archangel's Judgment"},{id=99072,name="Avatar of Destruction"},
+    },
+    {
+        {id=99073,name="Improved Drop Rate"},{id=99074,name="Party ATK"},{id=99075,name="Divine Proc Chance"},
+        {id=99076,name="Team Crit Rate"},{id=99077,name="Group Skill DMG"},{id=99078,name="Serendipity"},
+        {id=99079,name="Master Looter"},{id=99080,name="Gold Gain"},{id=99081,name="Divine Intervention"},
+        {id=99082,name="Item Drop Rate"},{id=99083,name="Critical Resonance"},{id=99084,name="Prosperous Hunter"},
+        {id=99085,name="Celestial Onslaught"},{id=99086,name="Lucky Scavenger"},{id=99087,name="Titan's Wrath"},
+        {id=99088,name="Omnipotent Benefactor"},{id=99089,name="Archangel's Judgment"},{id=99090,name="Avatar of Destruction"},
+    },
+    {
+        {id=99091,name="Improved Drop Rate"},{id=99092,name="Party ATK"},{id=99093,name="Divine Proc Chance"},
+        {id=99094,name="Team Crit Rate"},{id=99095,name="Group Skill DMG"},{id=99096,name="Serendipity"},
+        {id=99097,name="Master Looter"},{id=99098,name="Gold Gain"},{id=99099,name="Divine Intervention"},
+        {id=99100,name="Item Drop Rate"},{id=99101,name="Critical Resonance"},{id=99102,name="Prosperous Hunter"},
+        {id=99103,name="Celestial Onslaught"},{id=99104,name="Lucky Scavenger"},{id=99105,name="Titan's Wrath"},
+        {id=99106,name="Omnipotent Benefactor"},{id=99107,name="Archangel's Judgment"},{id=99108,name="Avatar of Destruction"},
+    },
+}
+
+local W_QUIRK_MAP = {}
+for _,list in ipairs(W_QUIRK_LIST_PER_SLOT) do
+    for _,q in ipairs(list) do W_QUIRK_MAP[q.id] = q.name end
+end
+
+local UUID_PATTERN = "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$"
+local function IsValidUUID(s)
+    return type(s)=="string" and #s==36 and s:match(UUID_PATTERN)~=nil
+end
+
+local SetHeroGuid
+
+local _wGuid            = ""
+local _wCaptured        = false
+local _wSlotDrawId      = {960001, 960002, 960003}
+local _wSlotRunning     = {false, false, false}
+local _wSlotTarget      = {{},{},{}}
+local _wSlotSummaryLbls = {nil, nil, nil}
+local _wWeaponSlotLbls  = {nil, nil, nil}
+local _wRerollStatusLbl = nil
+local _wRollDotRef      = nil
+local _wRunning         = false
+local W_MAX_PER_SLOT    = 3
+
+local function SetWeaponGuid(guid)
+    if not guid or guid == "" then return end
+    if not IsValidUUID(guid) then return end
+    if _wGuid == guid then return end
+    local isSwitch = _wCaptured and _wGuid ~= ""
+    _wGuid = guid
+    _wCaptured = true
+    if _wRerollStatusLbl then
+        _wRerollStatusLbl.Text = isSwitch and "Weapon berganti — GUID updated!" or "Captured — siap reroll"
+        _wRerollStatusLbl.TextColor3 = Color3.fromRGB(80,220,80)
+    end
+    if _wRollDotRef then _wRollDotRef.BackgroundColor3 = Color3.fromRGB(80,220,80) end
+    if isSwitch and _wRunning then
+        task.spawn(function()
+            for i=1,3 do _wSlotRunning[i]=false; StopLoop("wroll"..i) end
+            task.wait(0.1)
+            if not _wRunning then return end
+            for i=1,3 do StartWeaponSlotLoop(i) end
+            if _wRerollStatusLbl then
+                _wRerollStatusLbl.Text = "Restart — weapon baru aktif"
+                _wRerollStatusLbl.TextColor3 = Color3.fromRGB(255,200,60)
+            end
+        end)
+    end
+end
+
+local function GetWeaponSlotSummary(slotIndex)
+    local ids = {}
+    for id,_ in pairs(_wSlotTarget[slotIndex]) do table.insert(ids, id) end
+    if #ids == 0 then return "--" end
+    local names = {}
+    for _,id in ipairs(ids) do table.insert(names, W_QUIRK_MAP[id] or "?") end
+    table.sort(names)
+    if #names == 1 then return names[1] end
+    if #names <= 2 then return table.concat(names, ", ") end
+    return names[1]..", "..names[2].." +"..(#names-2).." lagi"
+end
+
+local function RefreshWeaponSlotUI(slotIndex)
+    local summary = GetWeaponSlotSummary(slotIndex)
+    if _wSlotSummaryLbls[slotIndex] then _wSlotSummaryLbls[slotIndex].Text = summary end
+    if _wWeaponSlotLbls[slotIndex] then
+        _wWeaponSlotLbls[slotIndex].Text = "Slot "..slotIndex..": "..summary
+        _wWeaponSlotLbls[slotIndex].TextColor3 = C.TXT2
+    end
+end
+
+local function StopWeaponSlotRoll(slotIndex, reason)
+    _wSlotRunning[slotIndex] = false
+    StopLoop("wroll"..slotIndex)
+    if not (_wSlotRunning[1] or _wSlotRunning[2] or _wSlotRunning[3]) then
+        _wRunning = false
+        if _wRerollStatusLbl then
+            _wRerollStatusLbl.Text = "Semua slot selesai"
+            _wRerollStatusLbl.TextColor3 = Color3.fromRGB(80,220,80)
+        end
+        if _wRollDotRef then _wRollDotRef.BackgroundColor3 = Color3.fromRGB(100,100,100) end
+    end
+end
+
+local StartWeaponSlotLoop
+
+StartWeaponSlotLoop = function(slotIndex)
+    local slotPool = W_QUIRK_LIST_PER_SLOT[slotIndex]
+    local allIds = {}
+    for _,q in ipairs(slotPool) do table.insert(allIds, q.id) end
+    local targets = {}
+    for id,_ in pairs(_wSlotTarget[slotIndex]) do table.insert(targets, id) end
+    local hasTarget = (#targets > 0)
+    local targetStr = hasTarget and GetWeaponSlotSummary(slotIndex) or "apapun"
+
+    _wSlotRunning[slotIndex] = true
+    if _wWeaponSlotLbls[slotIndex] then
+        _wWeaponSlotLbls[slotIndex].Text = "Slot "..slotIndex..": Mencari: "..targetStr
+        _wWeaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(255,200,100)
+    end
+
+    LOOPS["wroll"..slotIndex] = task.spawn(function()
+        local attempt = 0
+        while _wSlotRunning[slotIndex] do
+            attempt = attempt + 1
+            local curTargets = {}
+            for id,_ in pairs(_wSlotTarget[slotIndex]) do table.insert(curTargets, id) end
+            local curHasTarget = (#curTargets > 0)
+            local curStopIds = curHasTarget and curTargets or allIds
+            local curTargetStr = curHasTarget and GetWeaponSlotSummary(slotIndex) or "apapun"
+
+            if _wWeaponSlotLbls[slotIndex] then
+                _wWeaponSlotLbls[slotIndex].Text = "Slot "..slotIndex..": #"..attempt.." → "..curTargetStr
+                _wWeaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(255,200,100)
+            end
+
+            if not RE_RandomWeaponQuirk then task.wait(1); continue end
+
+            local ok, result = pcall(function()
+                return RE_RandomWeaponQuirk:InvokeServer({
+                    guid   = _wGuid,
+                    drawId = _wSlotDrawId[slotIndex],
+                })
+            end)
+
+            if not ok then
+                task.wait(0.5)
+            elseif type(result) == "table" then
+                local slotIdSet = {}
+                for _,q in ipairs(slotPool) do slotIdSet[q.id] = true end
+                local gotId = nil
+                local PRIO = {"finalResultId","quirkId","resultId","id","Id","result","Result"}
+                for _,key in ipairs(PRIO) do
+                    local v = result[key]
+                    if type(v)=="number" and (slotIdSet[v] or W_QUIRK_MAP[v]) then gotId=v; break end
+                end
+                if not gotId then
+                    for _,v in pairs(result) do
+                        if type(v)=="number" and (slotIdSet[v] or W_QUIRK_MAP[v]) then gotId=v; break end
+                    end
+                end
+
+                local name = W_QUIRK_MAP[gotId] or (gotId and ("ID:"..tostring(gotId)) or "???")
+                if _wWeaponSlotLbls[slotIndex] then
+                    _wWeaponSlotLbls[slotIndex].Text = "Slot "..slotIndex..": "..name
+                    _wWeaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(220,220,80)
+                end
+
+                local curTargetSet = {}
+                for _,id in ipairs(curStopIds) do curTargetSet[id] = true end
+                local isValid = gotId ~= nil and (slotIdSet[gotId] or W_QUIRK_MAP[gotId])
+                local hit = isValid and (not curHasTarget or curTargetSet[gotId] == true)
+
+                if hit then
+                    StopWeaponSlotRoll(slotIndex)
+                    if _wWeaponSlotLbls[slotIndex] then
+                        _wWeaponSlotLbls[slotIndex].Text = "Slot "..slotIndex..": ✅ "..name
+                        _wWeaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(80,220,80)
+                    end
+                    return
+                end
+                task.wait(0.05)
+            else
+                task.wait(0.3)
+            end
+        end
+    end)
+end
+
+local function DoAutoRollWeapon(on)
+    for i=1,3 do _wSlotRunning[i]=false end
+    StopLoop("wroll1"); StopLoop("wroll2"); StopLoop("wroll3")
+    if not on then
+        _wRunning = false
+        if _wRerollStatusLbl then _wRerollStatusLbl.Text="Idle"; _wRerollStatusLbl.TextColor3=C.TXT2 end
+        if _wRollDotRef then _wRollDotRef.BackgroundColor3=Color3.fromRGB(100,100,100) end
+        return
+    end
+    if not _wCaptured or _wGuid == "" then
+        if _wRerollStatusLbl then
+            _wRerollStatusLbl.Text = "Equip weapon dulu di inventory!"
+            _wRerollStatusLbl.TextColor3 = Color3.fromRGB(255,100,60)
+        end
+        return
+    end
+    _wRunning = true
+    task.spawn(function()
+        task.wait(0.05)
+        if not _wRunning then return end
+        if _wRollDotRef then _wRollDotRef.BackgroundColor3=Color3.fromRGB(255,200,60) end
+        StartWeaponSlotLoop(1)
+        StartWeaponSlotLoop(2)
+        StartWeaponSlotLoop(3)
+    end)
+end
+
 local _rollHeroGuid=""
 local _rollCaptured=false
 local _captureMethod=""
--- drawId default — akan di-override otomatis saat user klik ReRoll di game
--- sehingga nilai yang dipakai adalah nilai ASLI dari game, bukan tebakan
 local _slotDrawId  = {920001, 920002, 920003}
 local _slotDrawIdCaptured = {false, false, false}
 local _slotRunning = {false, false, false}
 local _slotStatusLbl = {nil, nil, nil}
--- Target per slot: 3 slot, masing-masing {[quirkId]=true}, max 3 per slot
 local _slotTarget     = {{},{},{}}
 local MAX_PER_SLOT    = 3
--- UI refs (diisi saat panel dibuat)
 local _rerollStatusLbl=nil
 local _rollDotRef=nil
-local _captureStatusLbl=nil    -- label khusus status capture di UI
+local _captureStatusLbl=nil
 local _weaponSlotLbls={nil,nil,nil}
 local _dropdownSelectedLbls={nil,nil,nil}
 
--- =====================================================
--- DROPDOWN LAYER + HELPERS
--- Dideklarasi di sini karena butuh _slotTarget &
--- _weaponSlotLbls yang sudah ada di atas
--- =====================================================
 local DDLayer=Frame(ScreenGui,C.BLACK,UDim2.new(1,0,1,0))
 DDLayer.BackgroundTransparency=1; DDLayer.ZIndex=9998; DDLayer.Visible=false
 DDLayer.Name="ASH_DD"
@@ -1076,8 +1047,6 @@ local function RefreshSlotUI(slotIndex)
         _weaponSlotLbls[slotIndex].Text="Slot "..slotIndex..": "..summary
         _weaponSlotLbls[slotIndex].TextColor3 = C.TXT2
     end
-    -- Jika AutoReroll masih ON dan slot sedang berjalan,
-    -- restart loop slot ini agar langsung pakai target terbaru
     if STATE.autoRoll and _slotRunning[slotIndex] and _rollCaptured and _rollHeroGuid~="" then
         _slotRunning[slotIndex] = false
         StopLoop("roll"..slotIndex)
@@ -1090,17 +1059,6 @@ local function RefreshSlotUI(slotIndex)
     end
 end
 
--- =====================================================
--- UUID VALIDATOR
--- Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
--- =====================================================
-local UUID_PATTERN = "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$"
-
-local function IsValidUUID(s)
-    return type(s)=="string" and #s==36 and s:match(UUID_PATTERN)~=nil
-end
-
--- Deep scan table/payload cari semua UUID di dalamnya
 local function ExtractUUIDs(val, depth, found)
     depth = depth or 0
     found = found or {}
@@ -1110,7 +1068,6 @@ local function ExtractUUIDs(val, depth, found)
         if IsValidUUID(val) then found[val]=true end
     elseif t=="table" then
         for k,v in pairs(val) do
-            -- Prioritas: key yang mengandung kata "guid"/"hero"
             if type(k)=="string" then
                 local kl = k:lower()
                 if (kl:find("guid") or kl:find("hero") or kl:find("id"))
@@ -1124,30 +1081,15 @@ local function ExtractUUIDs(val, depth, found)
     return found
 end
 
--- =====================================================
--- CAPTURE HELPER — set heroGuid, log ke console
--- Support ganti hero on-the-fly: selalu update jika GUID berubah
--- =====================================================
-local function SetHeroGuid(guid, method)
+SetHeroGuid = function(guid, method)
     if not guid or guid=="" then return end
-    if not IsValidUUID(guid) then
-        warn("[ ASH ] SetHeroGuid: bukan UUID valid → "..tostring(guid))
-        return
-    end
-    -- Skip hanya jika GUID benar-benar sama persis
+    if not IsValidUUID(guid) then return end
     if _rollHeroGuid == guid then return end
 
     local isSwitch = _rollCaptured and _rollHeroGuid ~= "" and _rollHeroGuid ~= guid
     _rollHeroGuid  = guid
     _rollCaptured  = true
     _captureMethod = method or "unknown"
-
-    if isSwitch then
-        print("[ ASH ] Hero berganti! GUID baru via ["..(_captureMethod).."]")
-    else
-        print("[ ASH ] heroGuid captured via ["..(_captureMethod).."]")
-    end
-    print("[ ASH ] GUID = ".._rollHeroGuid)
 
     if _rerollStatusLbl then
         local txt = isSwitch
@@ -1164,10 +1106,7 @@ local function SetHeroGuid(guid, method)
         _rollDotRef.BackgroundColor3 = Color3.fromRGB(80,220,80)
     end
 
-    -- Jika AutoReroll sedang aktif dan hero berganti, restart semua slot loop
-    -- agar langsung pakai GUID terbaru tanpa perlu toggle ulang
     if isSwitch and STATE.autoRoll then
-        print("[ ASH ] AutoReroll restart karena hero berganti...")
         task.spawn(function()
             for i = 1, 3 do
                 _slotRunning[i] = false
@@ -1186,15 +1125,9 @@ local function SetHeroGuid(guid, method)
     end
 end
 
--- =====================================================
--- LAYER 0 : TARGETED HOOK — RandomHeroQuirk
--- Confirmed via diagnostic: remote=RandomHeroQuirk,
--- payload={heroGuid=UUID, drawId=920001}
--- =====================================================
 local _layer0Active = false
 local _spyLog       = {}
 
--- Tambahkan quirk ke slot tertentu (dipakai oleh spy hook)
 local function AddQuirkToSlot(slotIndex, quirkId, quirkName)
     if not slotIndex or not quirkId then return end
     local list = QUIRK_LIST_PER_SLOT[slotIndex]
@@ -1212,184 +1145,184 @@ end
 local function SetupUniversalSpy()
     if _layer0Active then return end
 
-    -- Cek apakah getrawmetatable tersedia (Delta/exploit env)
-    if type(getrawmetatable) ~= "function" then
-        warn("[ ASH ] getrawmetatable tidak tersedia di executor ini")
-        if _captureStatusLbl then
-            _captureStatusLbl.Text = "⚠ Executor tidak support hook — input manual"
-            _captureStatusLbl.TextColor3 = Color3.fromRGB(255,80,80)
+    local function HandleRequest(self, method, ...)
+        local args = {...}
+
+        if RE_EquipWeapon and self == RE_EquipWeapon then
+            local g = args[1]
+            if type(g) == "string" and IsValidUUID(g) then
+                SetWeaponGuid(g)
+            elseif type(g) == "table" then
+                local gv = g.guid or g.weaponGuid or g.id
+                if gv and IsValidUUID(tostring(gv)) then SetWeaponGuid(tostring(gv)) end
+            end
         end
-        return
+
+        if RE_HeroMove and self == RE_HeroMove then
+            local a = args[1]
+            if type(a) == "table" and type(a.heroTagetPosInfos) == "table" then
+                for hGuid in pairs(a.heroTagetPosInfos) do
+                    if IsValidUUID(tostring(hGuid)) then
+                        HERO_GUIDS = {tostring(hGuid)}
+                        SetHeroGuid(tostring(hGuid), "HeroMove")
+                        break
+                    end
+                end
+            end
+        end
+
+        if self == RE_RandomHeroQuirk or self == RE_AutoHeroQuirk then
+            local a = args[1]
+            if type(a) == "table" then
+                local g = a.heroGuid or a.HeroGuid or a.hero_guid or a.guid
+                if g and IsValidUUID(tostring(g)) then
+                    SetHeroGuid(tostring(g), tostring(self.Name))
+                end
+                local d = a.drawId or a.DrawId
+                if type(d) == "number" then
+                    local found = false
+                    for si = 1, 3 do
+                        if _slotDrawId[si] == d then
+                            _slotDrawIdCaptured[si] = true
+                            found = true; break
+                        end
+                    end
+                    if not found then
+                        for si = 1, 3 do
+                            if not _slotDrawIdCaptured[si] then
+                                _slotDrawId[si] = d
+                                _slotDrawIdCaptured[si] = true
+                                break
+                            end
+                        end
+                    end
+                end
+                if type(a.stopQuirkIds) == "table" then
+                    local slotIdx = nil
+                    local d2 = a.drawId or a.DrawId
+                    if type(d2) == "number" then
+                        for si,did in ipairs(_slotDrawId) do
+                            if did == d2 then slotIdx = si; break end
+                        end
+                    end
+                    if slotIdx then
+                        for _, qid in ipairs(a.stopQuirkIds) do
+                            if type(qid) == "number" and not QUIRK_MAP[qid] then
+                                AddQuirkToSlot(slotIdx, qid, "ID:"..qid)
+                            end
+                        end
+                    end
+                end
+            end
+        end
     end
 
-    _layer0Active = true
-    local ok, err = pcall(function()
-        local mt    = getrawmetatable(game)
-        local oldNC = mt.__namecall
-        setreadonly(mt, false)
-
-        mt.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            local args   = table.pack(...)
-
-            if method == "InvokeServer" or method == "FireServer" then
-                if self == RE_RandomHeroQuirk or self == RE_AutoHeroQuirk then
-                    for i = 1, args.n do
-                        local a = args[i]
-                        if type(a) == "table" then
-                            local g = a.heroGuid or a.HeroGuid or a.hero_guid
-                                   or a.guid or a.Guid or a.id or a.heroId
-                            if g and IsValidUUID(tostring(g)) then
-                                -- Selalu panggil SetHeroGuid agar ganti hero ter-detect
-                                SetHeroGuid(tostring(g), "hook:"..tostring(self.Name))
-                            end
-                            local d = a.drawId or a.DrawId or a.draw_id
-                            if type(d) == "number" then
-                                local SLOT_HINTS = {
-                                    {idx=1, default=920001},
-                                    {idx=2, default=920002},
-                                    {idx=3, default=920003},
-                                }
-                                local matched = false
-                                for _,s in ipairs(SLOT_HINTS) do
-                                    if _slotDrawId[s.idx] == d then matched = true; break end
-                                end
-                                if not matched then
-                                    for _,s in ipairs(SLOT_HINTS) do
-                                        if not _slotDrawIdCaptured[s.idx] then
-                                            _slotDrawId[s.idx] = d
-                                            _slotDrawIdCaptured[s.idx] = true
-                                            print("[ ASH ✓ ] drawId Slot "..s.idx.." captured dari game → "..d)
-                                            break
-                                        end
-                                    end
-                                else
-                                    for _,s in ipairs(SLOT_HINTS) do
-                                        if _slotDrawId[s.idx] == d and not _slotDrawIdCaptured[s.idx] then
-                                            _slotDrawIdCaptured[s.idx] = true
-                                            print("[ ASH ✓ ] drawId Slot "..s.idx.." confirmed → "..d)
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
+    local function HandleResponse(self, sentArgs, res)
+        if self ~= RE_RandomHeroQuirk and self ~= RE_AutoHeroQuirk then return end
+        if type(res) ~= "table" then return end
+        local slotIdx = nil
+        local a = sentArgs[1]
+        if type(a) == "table" then
+            local d = a.drawId or a.DrawId
+            if type(d) == "number" then
+                for si, did in ipairs(_slotDrawId) do
+                    if did == d then slotIdx = si; break end
                 end
             end
-
-            -- Intercept RESPONSE dari InvokeServer untuk capture nama quirk asli
-            local rets = table.pack(oldNC(self, table.unpack(args, 1, args.n)))
-            if method == "InvokeServer"
-            and (self == RE_RandomHeroQuirk or self == RE_AutoHeroQuirk) then
-                -- Cari slotIndex dari drawId yang dikirim
-                local sentDrawId = nil
-                for i=1, args.n do
-                    local a = args[i]
-                    if type(a)=="table" then
-                        sentDrawId = a.drawId or a.DrawId or a.draw_id
-                    end
-                end
-                local slotIdx = nil
-                if sentDrawId then
-                    for si, did in ipairs(_slotDrawId) do
-                        if did == sentDrawId then slotIdx = si; break end
-                    end
-                end
-
-                -- Populate quirk dari field stopQuirkIds di REQUEST (berisi semua ID pool slot ini)
-                -- lalu nama dari response
-                for i=1, args.n do
-                    local a = args[i]
-                    if type(a)=="table" and type(a.stopQuirkIds)=="table" and slotIdx then
-                        -- stopQuirkIds berisi semua ID quirk milik slot ini
-                        -- nama akan kita isi dari response nanti, untuk sekarang register ID-nya
-                        for _, qid in ipairs(a.stopQuirkIds) do
-                            if type(qid)=="number" then
-                                -- Tambahkan dengan nama sementara "ID:xxxxx" jika belum ada
-                                if not QUIRK_MAP[qid] then
-                                    AddQuirkToSlot(slotIdx, qid, "ID:"..qid)
-                                end
-                            end
-                        end
-                    end
-                end
-
-                -- Parse RESPONSE untuk dapatkan nama asli quirk
-                local res = rets[1]
-                if type(res) == "table" then
-                    local function ScanResponseForQuirks(tbl, depth, si)
-                        if depth > 5 or type(tbl)~="table" then return end
-                        -- Pola {id=XXXXX, name="..."} atau {quirkId=..., quirkName=...}
-                        local id   = tbl.quirkId or tbl.finalResultId or tbl.resultId
-                                  or tbl.id or tbl.Id or tbl.quirk_id
-                        local name = tbl.quirkName or tbl.name or tbl.quirk_name
-                                  or tbl.Name or tbl.title or tbl.displayName
-                        if type(id)=="number" and id>=90000 and id<=99999
-                        and type(name)=="string" and #name>0 and not name:find("^ID:") then
-                            local targetSlot = si
-                            -- Kalau belum tahu slotnya, tebak dari ID
-                            if not targetSlot then
-                                for si2, list in ipairs(QUIRK_LIST_PER_SLOT) do
-                                    for _, q in ipairs(list) do
-                                        if q.id == id then targetSlot = si2; break end
-                                    end
-                                    if targetSlot then break end
-                                end
-                                if not targetSlot then targetSlot = 1 end
-                            end
-                            AddQuirkToSlot(targetSlot, id, name)
-                        end
-                        -- Scan array of quirks
-                        for _, v in pairs(tbl) do
-                            if type(v)=="table" then
-                                ScanResponseForQuirks(v, depth+1, si)
-                            end
-                        end
-                    end
-                    ScanResponseForQuirks(res, 0, slotIdx)
-                end
+        end
+        local function ScanQuirks(tbl, depth)
+            if depth > 5 or type(tbl) ~= "table" then return end
+            local id   = tbl.quirkId or tbl.finalResultId or tbl.resultId or tbl.id or tbl.Id
+            local name = tbl.quirkName or tbl.name or tbl.Name or tbl.title or tbl.displayName
+            if type(id)=="number" and id>=90000 and id<=99999
+            and type(name)=="string" and #name>0 and not name:find("^ID:") then
+                AddQuirkToSlot(slotIdx or 1, id, name)
             end
-            return table.unpack(rets, 1, rets.n)
+            for _,v in pairs(tbl) do
+                if type(v)=="table" then ScanQuirks(v, depth+1) end
+            end
+        end
+        ScanQuirks(res, 0)
+    end
+
+    local hooked = false
+
+    if not hooked and type(hookmetamethod) == "function" then
+        local ok, err = pcall(function()
+            local oldNC
+            oldNC = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                HandleRequest(self, method, ...)
+                if method == "InvokeServer"
+                and (self == RE_RandomHeroQuirk or self == RE_AutoHeroQuirk) then
+                    local sentArgs = {...}
+                    local res = oldNC(self, ...)
+                    HandleResponse(self, sentArgs, res)
+                    return res
+                end
+                return oldNC(self, ...)
+            end)
         end)
+        if ok then
+            hooked = true
+            warn("[ ASH ] Hook: hookmetamethod OK (Delta/Xeno)")
+        else
+            warn("[ ASH ] hookmetamethod gagal: "..tostring(err))
+        end
+    end
 
-        setreadonly(mt, true)
-    end)
+    if not hooked and type(getrawmetatable) == "function" and type(setreadonly) == "function" then
+        local ok, err = pcall(function()
+            local mt    = getrawmetatable(game)
+            local oldNC = rawget(mt, "__namecall")
+            setreadonly(mt, false)
+            local newFn = function(self, ...)
+                local method = getnamecallmethod()
+                HandleRequest(self, method, ...)
+                if method == "InvokeServer"
+                and (self == RE_RandomHeroQuirk or self == RE_AutoHeroQuirk) then
+                    local sentArgs = {...}
+                    local ok2, res = pcall(oldNC, self, ...)
+                    if ok2 then HandleResponse(self, sentArgs, res) end
+                    return res
+                end
+                return oldNC(self, ...)
+            end
+            mt.__namecall = (type(newcclosure)=="function") and newcclosure(newFn) or newFn
+            setreadonly(mt, true)
+        end)
+        if ok then
+            hooked = true
+            warn("[ ASH ] Hook: getrawmetatable OK (fallback)")
+        else
+            warn("[ ASH ] getrawmetatable gagal: "..tostring(err))
+        end
+    end
 
-    if ok then
-        print("[ ASH ] Layer 0 (targeted hook) aktif ✓")
+    if hooked then
+        _layer0Active = true
         if _captureStatusLbl then
-            _captureStatusLbl.Text = "⟳ Hook aktif — klik ReRoll 1x di game"
+            _captureStatusLbl.Text = "⟳ Hook aktif — equip weapon / klik ReRoll 1x"
             _captureStatusLbl.TextColor3 = Color3.fromRGB(255,200,100)
         end
     else
-        warn("[ ASH ] Layer 0 gagal: "..tostring(err))
+        warn("[ ASH ] Semua method hook gagal — gunakan scan manual")
         if _captureStatusLbl then
-            _captureStatusLbl.Text = "⚠ Hook gagal — coba scan manual"
+            _captureStatusLbl.Text = "⚠ Hook gagal — executor tidak support"
             _captureStatusLbl.TextColor3 = Color3.fromRGB(255,80,80)
         end
     end
 end
 
--- =====================================================
--- LAYER 2 : DEEP SCAN seluruh game tree
--- Scan UUID dari semua Instance + attribute di game
--- =====================================================
 local function ScanHeroGuidFromData()
     if _rollCaptured then return true end
-
-    -- Key-key yang sering dipakai untuk menyimpan heroGuid
     local GUID_KEYS = {
         "heroGuid","HeroGuid","hero_guid","HEROGUID",
-        "guid","GUID","Guid",
-        "heroId","HeroId","hero_id",
-        "entityGuid","EntityGuid",
-        "selectedHero","SelectedHero",
-        "activeHero","ActiveHero",
+        "guid","GUID","Guid","heroId","HeroId","hero_id",
+        "entityGuid","EntityGuid","selectedHero","SelectedHero","activeHero","ActiveHero",
     }
-
     local function TryScanInstance(obj)
         if not obj then return end
-        -- Cek semua attribute
         pcall(function()
             local attrs = obj:GetAttributes()
             for k,v in pairs(attrs) do
@@ -1402,7 +1335,6 @@ local function ScanHeroGuidFromData()
                 end
             end
         end)
-        -- Cek StringValue / children
         pcall(function()
             for _,key in ipairs(GUID_KEYS) do
                 local child=obj:FindFirstChild(key)
@@ -1413,25 +1345,16 @@ local function ScanHeroGuidFromData()
             end
         end)
     end
-
-    -- Scan dari berbagai root
     local roots = {
         LP, LP.Character,
-        LP:FindFirstChild("leaderstats"),
-        LP:FindFirstChild("PlayerData"),
-        LP:FindFirstChild("Data"),
-        RS:FindFirstChild("PlayerData"),
-        RS:FindFirstChild("Data"),
-        RS:FindFirstChild("Players"),
-        workspace:FindFirstChild("Players"),
-        workspace:FindFirstChild("Characters"),
+        LP:FindFirstChild("leaderstats"), LP:FindFirstChild("PlayerData"), LP:FindFirstChild("Data"),
+        RS:FindFirstChild("PlayerData"), RS:FindFirstChild("Data"), RS:FindFirstChild("Players"),
+        workspace:FindFirstChild("Players"), workspace:FindFirstChild("Characters"),
     }
-
     for _,root in ipairs(roots) do
         if _rollCaptured then return true end
         if root then
             TryScanInstance(root)
-            -- Scan satu level dalam
             pcall(function()
                 for _,child in ipairs(root:GetChildren()) do
                     if _rollCaptured then break end
@@ -1440,13 +1363,10 @@ local function ScanHeroGuidFromData()
             end)
         end
     end
-
-    -- Coba scan khusus folder player di RS
     pcall(function()
         for _,folder in ipairs(RS:GetChildren()) do
             if _rollCaptured then break end
-            local myFolder = folder:FindFirstChild(LP.Name)
-                or folder:FindFirstChild(tostring(LP.UserId))
+            local myFolder = folder:FindFirstChild(LP.Name) or folder:FindFirstChild(tostring(LP.UserId))
             if myFolder then
                 TryScanInstance(myFolder)
                 for _,c in ipairs(myFolder:GetChildren()) do
@@ -1456,22 +1376,13 @@ local function ScanHeroGuidFromData()
             end
         end
     end)
-
     return _rollCaptured
 end
 
--- =====================================================
--- LAYER 3 : ATTRIBUTE CHANGE WATCHER
--- Pasang :GetAttributeChangedSignal pada semua
--- instance yang mungkin punya heroGuid, auto capture
--- saat nilainya berubah/di-set
--- =====================================================
 local _watcherConns = {}
 local function SetupAttributeWatcher()
     if #_watcherConns > 0 then return end
-
     local WATCH_KEYS = {"heroGuid","HeroGuid","guid","GUID","heroId","HeroId","selectedHero"}
-
     local function WatchInstance(obj)
         if not obj then return end
         for _,key in ipairs(WATCH_KEYS) do
@@ -1487,13 +1398,9 @@ local function SetupAttributeWatcher()
             end)
         end
     end
-
-    -- Watch instance-instance kunci
     WatchInstance(LP)
     if LP.Character then WatchInstance(LP.Character) end
     LP.CharacterAdded:Connect(function(char) WatchInstance(char) end)
-
-    -- Watch RS.DescendantAdded — kalau ada folder/object baru dengan UUID
     table.insert(_watcherConns, RS.DescendantAdded:Connect(function(obj)
         if _rollCaptured then return end
         pcall(function()
@@ -1507,35 +1414,15 @@ local function SetupAttributeWatcher()
         end)
         WatchInstance(obj)
     end))
-
-    print("[ ASH ] Layer 3 (Attribute Watcher) aktif ✓")
 end
 
--- =====================================================
--- MASTER CAPTURE INIT — semua layer jalan sekaligus
--- =====================================================
 local function InitAllCaptureLayers()
-    print("[ ASH ] Initializing capture layers...")
-
-    -- Layer 0: Universal Remote Spy — PERTAMA & PALING KUAT
     SetupUniversalSpy()
-
     task.spawn(function()
         task.wait(0.3)
-
-        -- Layer 2: Deep scan data lokal
-        if not _rollCaptured then
-            ScanHeroGuidFromData()
-        end
-
+        if not _rollCaptured then ScanHeroGuidFromData() end
         task.wait(0.2)
-
-        -- Layer 3: Attribute watcher
-        if not _rollCaptured then
-            SetupAttributeWatcher()
-        end
-
-        -- Update status UI
+        if not _rollCaptured then SetupAttributeWatcher() end
         if not _rollCaptured then
             if _captureStatusLbl then
                 _captureStatusLbl.Text = "⟳ Spy aktif — klik ReRoll 1x di game"
@@ -1543,31 +1430,22 @@ local function InitAllCaptureLayers()
             end
         end
     end)
-
-    -- Periodik re-scan setiap 4 detik sampai berhasil
     task.spawn(function()
         local attempt = 0
         while not _rollCaptured do
             task.wait(4)
             attempt = attempt + 1
             if not _rollCaptured then
-                print("[ ASH ] Re-scan #"..attempt.."...")
                 ScanHeroGuidFromData()
-                -- Setelah 5 kali gagal, log semua UUID yang pernah ketangkap spy
                 if attempt >= 5 and not _rollCaptured then
                     local count = 0
-                    for uuid,src in pairs(_spyLog) do
-                        count = count + 1
-                        print("[ ASH SPY LOG #"..count.."] "..uuid.." | "..src)
-                    end
+                    for uuid,src in pairs(_spyLog) do count = count + 1 end
                     if count == 0 then
-                        print("[ ASH ] Belum ada UUID yang tertangkap spy sama sekali.")
                         if _captureStatusLbl then
                             _captureStatusLbl.Text = "⚠ Belum ada UUID — pastikan panel ReRoll terbuka di game"
                             _captureStatusLbl.TextColor3 = Color3.fromRGB(255,80,80)
                         end
                     else
-                        print("[ ASH ] "..count.." UUID tertangkap spy tapi belum match — cek console")
                         if _captureStatusLbl then
                             _captureStatusLbl.Text = "⚠ "..count.." UUID spy — belum ada yg cocok, cek console"
                             _captureStatusLbl.TextColor3 = Color3.fromRGB(255,150,50)
@@ -1576,11 +1454,9 @@ local function InitAllCaptureLayers()
                 end
             end
         end
-        print("[ ASH ] Capture berhasil! Loop scan berhenti.")
     end)
 end
 
--- Fungsi untuk force rescan (dipanggil dari tombol UI)
 local function ForceRescan()
     _rollCaptured = false
     _rollHeroGuid = ""
@@ -1599,7 +1475,6 @@ local function ForceRescan()
         task.wait(0.1)
         ScanHeroGuidFromData()
         if not _rollCaptured then SetupAttributeWatcher() end
-        -- Spy tetap aktif dari sebelumnya (tidak perlu reinit)
     end)
 end
 
@@ -1612,7 +1487,6 @@ local function StopSlotRoll(slotIndex, reason)
         _slotStatusLbl[slotIndex].Text = reason or "✓ Selesai"
         _slotStatusLbl[slotIndex].TextColor3 = Color3.fromRGB(80,220,80)
     end
-    -- Hero Status label diupdate oleh StartSlotLoop saat hit, tidak perlu overwrite di sini
     if not (_slotRunning[1] or _slotRunning[2] or _slotRunning[3]) then
         _rollRunning = false
         STATE.autoRoll = false
@@ -1639,14 +1513,9 @@ local function StopAllRolls(reason)
 end
 
 local function StartSlotLoop(slotIndex)
-    -- Kumpulkan semua ID di pool slot ini sebagai stopQuirkIds default
-    -- (berarti berhenti saat dapat quirk apapun dari slot ini)
     local slotPool = QUIRK_LIST_PER_SLOT[slotIndex]
     local allIdsInSlot = {}
     for _,q in ipairs(slotPool) do table.insert(allIdsInSlot, q.id) end
-
-    -- Jika user pilih target tertentu, stopQuirkIds = target pilihan saja
-    -- Jika tidak ada target, stopQuirkIds = semua ID slot (berhenti di quirk apapun)
     local targets = {}
     for id,_ in pairs(_slotTarget[slotIndex]) do table.insert(targets, id) end
     local hasTarget = (#targets > 0)
@@ -1664,16 +1533,10 @@ local function StartSlotLoop(slotIndex)
         _weaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(255,200,100)
     end
 
-    print("[Roll S"..slotIndex.."] START via RandomHeroQuirk | drawId=".._slotDrawId[slotIndex]
-        ..((_slotDrawIdCaptured[slotIndex] and " ✓captured") or " ⚠default")
-        .." | target: "..targetStr)
-
     LOOPS["roll"..slotIndex] = task.spawn(function()
         local attempt = 0
         while _slotRunning[slotIndex] do
             attempt = attempt + 1
-
-            -- Baca target terbaru (support ganti pilihan on-the-fly)
             local curTargets = {}
             for id,_ in pairs(_slotTarget[slotIndex]) do table.insert(curTargets, id) end
             local curHasTarget = (#curTargets > 0)
@@ -1689,16 +1552,10 @@ local function StartSlotLoop(slotIndex)
                 _weaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(255,200,100)
             end
 
-            -- Selalu pakai RandomHeroQuirk — ini remote reroll manual yang valid
-            -- AutoRandomHeroQuirk diabaikan karena server menolak (balik nil)
             if not RE_RandomHeroQuirk then
                 RE_RandomHeroQuirk = Remotes:FindFirstChild("RandomHeroQuirk")
             end
-            if not RE_RandomHeroQuirk then
-                warn("[Roll S"..slotIndex.."] RandomHeroQuirk nil! Retry...")
-                task.wait(2)
-                continue
-            end
+            if not RE_RandomHeroQuirk then task.wait(2); continue end
 
             local ok, result = pcall(function()
                 return RE_RandomHeroQuirk:InvokeServer({
@@ -1707,13 +1564,9 @@ local function StartSlotLoop(slotIndex)
                 })
             end)
 
-            if not ok then
-                warn("[Roll S"..slotIndex.."] InvokeServer error #"..attempt..": "..tostring(result))
-                task.wait(0.5)
-            end
+            if not ok then task.wait(0.5) end
 
             if ok and type(result) == "table" then
-                -- Deep scan result untuk cari gotId
                 local slotIdSet = {}
                 for _,q in ipairs(slotPool) do slotIdSet[q.id]=true end
 
@@ -1742,31 +1595,15 @@ local function StartSlotLoop(slotIndex)
                 end
 
                 local gotId = ScanResultForId(result, 0)
-
-                -- Debug dump 3 kali pertama untuk semua slot
-                if attempt <= 3 then
-                    local dump = "[ ASH DEBUG S"..slotIndex.." #"..attempt.." ] "
-                    for k,v in pairs(result) do
-                        dump = dump..tostring(k).."="..tostring(v).." | "
-                    end
-                    print(dump)
-                    print("[ ASH DEBUG S"..slotIndex.."] gotId → "
-                        ..tostring(gotId).." = "..(QUIRK_MAP[gotId] or "?"))
-                end
-
                 local name = QUIRK_MAP[gotId] or (gotId and ("ID:"..tostring(gotId)) or "???")
-                print("[Roll S"..slotIndex.."] #"..attempt.." → "..name)
 
                 if _weaponSlotLbls[slotIndex] then
                     _weaponSlotLbls[slotIndex].Text = "Slot "..slotIndex..": ⚡ "..name
                     _weaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(220,220,80)
                 end
 
-                -- Cek apakah hasil ini adalah target yang dicari (sepenuhnya di sisi script)
                 local curTargetSet = {}
                 for _,id in ipairs(curStopIds) do curTargetSet[id] = true end
-                -- Jika ada target spesifik: stop hanya kalau gotId ada di target
-                -- Jika tidak ada target: stop kapanpun dapat quirk valid dari slot ini
                 local slotIdSetCur = {}
                 for _,q in ipairs(slotPool) do slotIdSetCur[q.id] = true end
                 local isValidQuirk = gotId ~= nil and (slotIdSetCur[gotId] or QUIRK_MAP[gotId])
@@ -1782,17 +1619,13 @@ local function StartSlotLoop(slotIndex)
                 end
                 task.wait(0.05)
             elseif ok then
-                -- result bukan table (bisa nil/false/string) — tetap lanjut roll
-                warn("[Roll S"..slotIndex.."] result bukan table (#"..attempt.."): "..tostring(result))
                 task.wait(0.3)
             end
         end
-        print("[Roll S"..slotIndex.."] loop berhenti.")
     end)
 end
 
 local function DoAutoRoll(on)
-    -- Stop semua slot dulu (non-blocking via spawn)
     for i=1,3 do _slotRunning[i]=false end
     StopLoop("roll1"); StopLoop("roll2"); StopLoop("roll3")
 
@@ -1806,7 +1639,6 @@ local function DoAutoRoll(on)
         return
     end
 
-    -- Fallback: coba ambil GUID dari HERO_GUIDS
     if (not _rollCaptured or _rollHeroGuid=="") and #HERO_GUIDS > 0 then
         SetHeroGuid(HERO_GUIDS[1], "fallback:HeroGuids")
     end
@@ -1819,24 +1651,16 @@ local function DoAutoRoll(on)
         STATE.autoRoll=false; RefreshStatus(); return
     end
 
-    -- Spawn agar tidak block UI thread saat start
     task.spawn(function()
-        task.wait(0.05) -- beri jeda kecil agar StopLoop selesai cancel task lama
-        if not STATE.autoRoll then return end -- cek ulang, mungkin user toggle off lagi
+        task.wait(0.05)
+        if not STATE.autoRoll then return end
         _rollRunning = true
         if _rollDotRef then _rollDotRef.BackgroundColor3=Color3.fromRGB(255,200,60) end
-        print("[Roll] START 3 slot paralel — heroGuid=".._rollHeroGuid)
         StartSlotLoop(1)
         StartSlotLoop(2)
         StartSlotLoop(3)
     end)
 end
-
--- =====================================================
--- DROPDOWN MULTI-SELECT (max 3 per slot)
--- List kosong saat awal — diisi otomatis dari server
--- saat user klik ReRoll manual 1x di game
--- =====================================================
 
 local function MakeDropdown(parent, slotIndex, order)
     local row=Frame(parent,C.SURFACE,UDim2.new(1,0,0,40))
@@ -1859,12 +1683,10 @@ local function MakeDropdown(parent, slotIndex, order)
     local arrowLbl=Label(ddBtn,"▼",10,C.ACC,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
     arrowLbl.Size=UDim2.new(0,16,1,0); arrowLbl.Position=UDim2.new(1,-18,0,0)
 
-    -- State popup aktif
     local _activeScrollPop = nil
     local _activeRowRefs   = {}
     local _activeCountLbl  = nil
 
-    -- Rebuild isi popup (dipanggil saat popup terbuka & saat data baru masuk)
     local function RebuildPopupList()
         if not _activeScrollPop then return end
         for _, c in ipairs(_activeScrollPop:GetChildren()) do
@@ -1896,7 +1718,6 @@ local function MakeDropdown(parent, slotIndex, order)
             tickMark.Size=UDim2.new(1,0,1,0); tickMark.ZIndex=9999
             tickMark.Visible=(_slotTarget[slotIndex][q.id]==true)
 
-            -- Nama: kalau masih "ID:xxxxx" tampilkan dengan warna beda + icon tanya
             local isResolved = not q.name:find("^ID:")
             local displayName = isResolved and q.name or ("❓ "..q.name)
             local nameColor   = isResolved and C.TXT or Color3.fromRGB(200,150,80)
@@ -1908,12 +1729,6 @@ local function MakeDropdown(parent, slotIndex, order)
 
             _activeRowRefs[q.id]={bg=qRow,tick=tickMark,lbl=qLbl}
             if _slotTarget[slotIndex][q.id] then qRow.BackgroundColor3=Color3.fromRGB(140,52,0) end
-
-            qRow.MouseEnter:Connect(function()
-                if not (_slotTarget[slotIndex][q.id]==true) then qRow.BackgroundColor3=C.DD_HOVER end end)
-            qRow.MouseLeave:Connect(function()
-                if not (_slotTarget[slotIndex][q.id]==true) then qRow.BackgroundColor3=C.DD_BG
-                else qRow.BackgroundColor3=Color3.fromRGB(140,52,0) end end)
 
             qRow.MouseButton1Click:Connect(function()
                 if _slotTarget[slotIndex][q.id]==true then
@@ -1938,7 +1753,6 @@ local function MakeDropdown(parent, slotIndex, order)
                     end
                     _slotTarget[slotIndex][q.id]=true
                 end
-                -- Refresh visual semua row
                 for qid,ref in pairs(_activeRowRefs) do
                     local sel=(_slotTarget[slotIndex][qid]==true)
                     ref.bg.BackgroundColor3=sel and Color3.fromRGB(140,52,0) or C.DD_BG
@@ -1983,7 +1797,7 @@ local function MakeDropdown(parent, slotIndex, order)
             Parent=popup, Size=UDim2.new(1,0,0,50),
             Position=UDim2.new(0,0,0,28),
             BackgroundTransparency=1, BorderSizePixel=0,
-            ScrollBarThickness=3, ScrollBarImageColor3=C.ACC,
+            ScrollBarThickness=_isSmallScreen and 5 or 3, ScrollBarImageColor3=C.ACC,
             CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y,
             ZIndex=9999,
         })
@@ -1991,7 +1805,6 @@ local function MakeDropdown(parent, slotIndex, order)
         Padding(scrollPop,3,3,4,4)
         _activeScrollPop=scrollPop
 
-        -- Update count
         local n=0; for _ in pairs(_slotTarget[slotIndex]) do n=n+1 end
         countLbl.Text=n.."/"..MAX_PER_SLOT.." dipilih"
         countLbl.TextColor3=n>=MAX_PER_SLOT and Color3.fromRGB(255,100,80) or C.ACC2
@@ -2024,11 +1837,16 @@ local function MakeDropdown(parent, slotIndex, order)
     return row
 end
 
+local agDot, agTxtLbl, agKLbl, agELbl
+local eEnemyRows, eEnemyNames, activeEName
+local eBox, ePlaceholder, eList
+local eBtnRefresh, eBtnRefLbl, eCntL
+local FindLiveEnemyByName, SelectEnemyName, RefreshEnemies
+local OpenDD, CloseAllDD, _openDDs
 
+InitAllCaptureLayers()
 
--- =====================================================
 -- PANEL : MAIN
--- =====================================================
 do
     local p=NewPanel("main")
     SectionHeader(p,"PENGATURAN CEPAT",0)
@@ -2036,33 +1854,27 @@ do
         if STATE.autoDestroyer then STATE.autoCollect=on; DoAutoCollect(on); RefreshStatus() end end)
 end
 
--- =====================================================
--- =====================================================
--- PANEL : FARM (Auto Goyang — dari sc_baru)
--- =====================================================
+-- PANEL : FARM
 do
     local p=NewPanel("farm")
 
-    -- ── STATUS BAR ─────────────────────────────────────
     local agSBF=Frame(p,C.SURFACE,UDim2.new(1,0,0,28))
     agSBF.LayoutOrder=0; Corner(agSBF,7); Stroke(agSBF,C.AG,1,0.3)
 
-    local agDot=Frame(agSBF,C.DK,UDim2.new(0,8,0,8))
+    agDot=Frame(agSBF,C.DK,UDim2.new(0,8,0,8))
     agDot.Position=UDim2.new(0,8,0.5,-4); agDot.BorderSizePixel=0
     Instance.new("UICorner",agDot).CornerRadius=UDim.new(1,0)
 
-    local agTxtLbl=Label(agSBF,"STANDBY",10,C.DIM,Enum.Font.GothamBold)
+    agTxtLbl=Label(agSBF,"STANDBY",10,C.DIM,Enum.Font.GothamBold)
     agTxtLbl.Size=UDim2.new(0.5,0,1,0); agTxtLbl.Position=UDim2.new(0,22,0,0)
     agTxtLbl.TextTruncate=Enum.TextTruncate.AtEnd
 
-    local agKLbl=Label(agSBF,"0 kill  0 item",9,C.AG,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
+    agKLbl=Label(agSBF,"0 kill  0 item",9,C.AG,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
     agKLbl.Size=UDim2.new(0.44,0,1,0); agKLbl.Position=UDim2.new(0.50,4,0,0)
 
-    -- ── INFO BARIS (jenis / total musuh) ───────────────
-    local agELbl=Label(p,"Belum di-refresh",9,C.DIM,Enum.Font.Gotham)
+    agELbl=Label(p,"Belum di-refresh",9,C.DIM,Enum.Font.Gotham)
     agELbl.Size=UDim2.new(1,0,0,14); agELbl.LayoutOrder=1
 
-    -- ── AUTO COLLECT ROW ───────────────────────────────
     local acCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,36))
     acCard.LayoutOrder=2; Corner(acCard,7); Stroke(acCard,C.BORD,1,0.4)
     Padding(acCard,6,6,10,8)
@@ -2086,30 +1898,26 @@ do
         acSub.TextColor3=acOn and C.GRN or C.RED
     end)
 
-    -- ── SECTION HEADER: TARGET MUSUH ───────────────────
     local tgtHdr=Label(p,"Target Musuh (pilih yang mau diserang)",10,C.AG,Enum.Font.GothamBold)
     tgtHdr.Size=UDim2.new(1,0,0,18); tgtHdr.LayoutOrder=3
 
-    -- ── ENEMY LIST CARD ────────────────────────────────
     local eCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,260))
     eCard.LayoutOrder=4; Corner(eCard,9); Stroke(eCard,C.BORD,1,0.4)
     Padding(eCard,6,6,10,8)
 
-    -- Header row: counter kiri, tombol refresh kanan
     local eHeaderRow=Frame(eCard,C.BLACK,UDim2.new(1,0,0,22))
     eHeaderRow.BackgroundTransparency=1; eHeaderRow.Position=UDim2.new(0,0,0,0)
 
-    local eCntL=Label(eHeaderRow,"—",9,C.DK,Enum.Font.GothamBold)
+    eCntL=Label(eHeaderRow,"—",9,C.DK,Enum.Font.GothamBold)
     eCntL.Size=UDim2.new(0.6,0,1,0); eCntL.Position=UDim2.new(0,0,0,0)
 
-    local eBtnRefresh=Btn(eHeaderRow,Color3.fromRGB(20,80,40),UDim2.new(0,80,0,20))
+    eBtnRefresh=Btn(eHeaderRow,Color3.fromRGB(20,80,40),UDim2.new(0,80,0,20))
     eBtnRefresh.Position=UDim2.new(1,-80,0,1); Corner(eBtnRefresh,6)
     Stroke(eBtnRefresh,C.GRN,1,0.3)
-    local eBtnRefLbl=Label(eBtnRefresh,"Refresh",9,C.GRN,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    eBtnRefLbl=Label(eBtnRefresh,"Refresh",9,C.GRN,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
     eBtnRefLbl.Size=UDim2.new(1,0,1,0)
 
-    -- ScrollingFrame list musuh
-    local eBox=Instance.new("ScrollingFrame",eCard)
+    eBox=Instance.new("ScrollingFrame",eCard)
     eBox.Size=UDim2.new(1,0,0,224); eBox.Position=UDim2.new(0,0,0,28)
     eBox.BackgroundColor3=Color3.fromRGB(13,7,26); eBox.BorderSizePixel=0
     eBox.ScrollBarThickness=3; eBox.ScrollBarImageColor3=C.AG
@@ -2118,19 +1926,17 @@ do
     local ePad=Instance.new("UIPadding",eBox)
     ePad.PaddingTop=UDim.new(0,5); ePad.PaddingBottom=UDim.new(0,5)
     ePad.PaddingLeft=UDim.new(0,5); ePad.PaddingRight=UDim.new(0,5)
-    local eList=Instance.new("UIListLayout",eBox)
+    eList=Instance.new("UIListLayout",eBox)
     eList.Padding=UDim.new(0,4); eList.SortOrder=Enum.SortOrder.LayoutOrder
 
-    -- Placeholder awal
-    local ePlaceholder=Instance.new("TextLabel",eBox)
+    ePlaceholder=Instance.new("TextLabel",eBox)
     ePlaceholder.Size=UDim2.new(1,0,0,44); ePlaceholder.BackgroundTransparency=1
     ePlaceholder.Text="Tekan Refresh untuk memuat daftar musuh di map ini"
     ePlaceholder.TextSize=9; ePlaceholder.Font=Enum.Font.Gotham
     ePlaceholder.TextColor3=C.DK; ePlaceholder.TextXAlignment=Enum.TextXAlignment.Center
     ePlaceholder.TextWrapped=true
 
-    -- ── FUNGSI HELPER ──────────────────────────────────
-    local eEnemyRows={}; local eEnemyNames={}; local activeEName=nil
+    eEnemyRows={}; eEnemyNames={}; activeEName=nil
 
     local function EnemyIco(name)
         local n=name:lower()
@@ -2151,15 +1957,14 @@ do
         else return "👾" end
     end
 
-    local function FindLiveEnemyByName(nm)
+    FindLiveEnemyByName = function(nm)
         for _,e in ipairs(GetEnemies()) do
             if e.model.Name==nm and not IsDead(e) then return e end
         end
         return nil
     end
 
-    local function SelectEnemyName(nm)
-        -- Deselect yang lama
+    SelectEnemyName = function(nm)
         if activeEName and eEnemyRows[activeEName] then
             local old=eEnemyRows[activeEName]
             TweenService:Create(old.row,TweenInfo.new(0.12),{BackgroundColor3=Color3.fromRGB(18,10,36)}):Play()
@@ -2176,8 +1981,7 @@ do
         AG.currentTarget=FindLiveEnemyByName(nm)
     end
 
-    local function RefreshEnemies()
-        -- Bersihkan list lama
+    RefreshEnemies = function()
         for _,r in pairs(eEnemyRows) do
             if r.row and r.row.Parent then r.row:Destroy() end
         end
@@ -2249,8 +2053,12 @@ do
         agELbl.Text=#names.." jenis  |  "..#enemies.." total  —  tap untuk serang"
         agELbl.TextColor3=C.GRN
     end
+end
 
-    -- ── LIVE COUNTER UPDATE (update jumlah hidup tiap 0.5 detik) ────
+-- PANEL : FARM lanjutan
+do
+    local p = Panels["farm"]
+
     task.spawn(function()
         while ScreenGui.Parent do
             if #eEnemyNames>0 then
@@ -2266,7 +2074,6 @@ do
                     r.cntLbl.Text="x"..alive
                     r.cntLbl.TextColor3=alive==0 and Color3.fromRGB(120,40,40) or C.DK
                 end
-                -- Re-lock target jika instance mati, cari instance hidup lain
                 if activeEName and (AG.currentTarget==nil or IsDead(AG.currentTarget) or not AG.currentTarget.model.Parent) then
                     AG.currentTarget=FindLiveEnemyByName(activeEName)
                 end
@@ -2275,7 +2082,6 @@ do
         end
     end)
 
-    -- ── TOMBOL REFRESH ─────────────────────────────────
     eBtnRefresh.MouseButton1Click:Connect(function()
         eBtnRefLbl.Text="Loading..."
         task.spawn(function()
@@ -2285,7 +2091,6 @@ do
         end)
     end)
 
-    -- ── TOMBOL MULAI AUTO GOYANG ───────────────────────
     local agBtn=Btn(p,C.ACC,UDim2.new(1,0,0,44))
     agBtn.LayoutOrder=5; Corner(agBtn,9)
     do
@@ -2299,7 +2104,6 @@ do
     local agBtnLbl=Label(agBtn,"MULAI AUTO GOYANG",13,C.TXT,Enum.Font.GothamBold)
     agBtnLbl.Size=UDim2.new(1,0,1,0); agBtnLbl.TextXAlignment=Enum.TextXAlignment.Center
 
-    -- SetAGUI: update tampilan saat ON/OFF
     local function SetAGUI(on)
         if on then
             TweenService:Create(agBtn,TweenInfo.new(0.15),{BackgroundColor3=Color3.fromRGB(200,40,40)}):Play()
@@ -2330,34 +2134,29 @@ do
     end)
 end
 
--- =====================================================
--- PANEL : ATTACK (Mass Attack)
--- =====================================================
+-- PANEL : ATTACK
 do
     local p=NewPanel("attack")
 
-    -- Backdrop untuk menutup dropdown saat klik di luar
     local ddBackdrop=Instance.new("TextButton",ScreenGui)
     ddBackdrop.Size=UDim2.new(1,0,1,0); ddBackdrop.Position=UDim2.new(0,0,0,0)
     ddBackdrop.BackgroundTransparency=1; ddBackdrop.Text=""; ddBackdrop.ZIndex=49
     ddBackdrop.AutoButtonColor=false; ddBackdrop.Visible=false
-    local _openDDs={}
-    local function OpenDD(list)
+    _openDDs={}
+    OpenDD = function(list)
         for _,d in ipairs(_openDDs) do d.Visible=false end
         _openDDs={}
         list.Visible=true; table.insert(_openDDs,list)
         ddBackdrop.Visible=true
     end
-    local function CloseAllDD()
+    CloseAllDD = function()
         for _,d in ipairs(_openDDs) do d.Visible=false end
         _openDDs={}; ddBackdrop.Visible=false
     end
     ddBackdrop.MouseButton1Click:Connect(CloseAllDD)
 
-    -- ── MASS ATTACK ──────────────────────────────────
     SectionHeader(p,"MASS ATTACK",0)
 
-    -- Status card
     local maCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
     maCard.LayoutOrder=1; Corner(maCard,8); Stroke(maCard,C.BORD,1,0.4)
     Padding(maCard,6,6,12,8)
@@ -2368,7 +2167,6 @@ do
     maStatusText.TextTruncate=Enum.TextTruncate.AtEnd
     _maStatusLbl=maStatusText
 
-    -- ── KILL TARGET (dropdown) ──────────────────────
     do
         local ktCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
         ktCard.LayoutOrder=2; Corner(ktCard,8); Stroke(ktCard,C.BORD,1,0.4)
@@ -2380,7 +2178,6 @@ do
         local ktVals={5,10,15,20,0}
         local ktIdx=1; MA.killTarget=ktVals[1]
 
-        -- Dropdown button
         local ktDDBtn=Btn(ktCard,C.BG3,UDim2.new(0.5,-4,1,-4))
         ktDDBtn.Position=UDim2.new(0.5,0,0,2); Corner(ktDDBtn,6)
         Stroke(ktDDBtn,C.BORD,1,0.2)
@@ -2389,7 +2186,6 @@ do
         local ktArrow=Label(ktDDBtn,"▾",11,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
         ktArrow.Size=UDim2.new(0,16,1,0); ktArrow.Position=UDim2.new(1,-18,0,0)
 
-        -- Dropdown list (overlay, ZIndex tinggi)
         local ktList=Instance.new("Frame",ScreenGui)
         ktList.Size=UDim2.new(0,120,0,#ktOpts*28+8)
         ktList.BackgroundColor3=Color3.fromRGB(22,18,14); ktList.BorderSizePixel=0
@@ -2429,14 +2225,17 @@ do
         ktDDBtn.MouseButton1Click:Connect(function()
             if ktList.Visible then CloseAllDD(); return end
             local ap=ktDDBtn.AbsolutePosition; local as=ktDDBtn.AbsoluteSize
-            local inset=GuiService:GetGuiInset()
-            ktList.Position=UDim2.new(0,ap.X,0,ap.Y+as.Y+2-inset.Y)
+            ktList.Position=UDim2.new(0,ap.X,0,ap.Y+as.Y+2-GuiInsetY())
             ktList.Size=UDim2.new(0,as.X,0,#ktOpts*28+8)
             OpenDD(ktList)
         end)
     end
+end
 
-    -- ── ROTATION MAP (dropdown scroll) ──────────────
+-- PANEL : ATTACK lanjutan
+do
+    local p = Panels["attack"]
+
     do
         local mapCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
         mapCard.LayoutOrder=3; Corner(mapCard,8); Stroke(mapCard,C.BORD,1,0.4)
@@ -2446,7 +2245,6 @@ do
 
         local mapOpts={"Semua Map"}
         for i=1,18 do mapOpts[i+1]="Map "..i end
-        -- "Semua Map" = pilih semua, sisanya toggle per map
         local mapSelSet={}
         local mapDDBtn=Btn(mapCard,C.BG3,UDim2.new(0.5,-4,1,-4))
         mapDDBtn.Position=UDim2.new(0.5,0,0,2); Corner(mapDDBtn,6)
@@ -2463,7 +2261,6 @@ do
             else mapDDLbl.Text="  "..count.." Map dipilih" end
         end
 
-        -- Dropdown list dengan scroll (max tinggi 180px untuk 18 item)
         local mapListH=math.min(#mapOpts*28+8, 180)
         local mapList=Instance.new("Frame",ScreenGui)
         mapList.Size=UDim2.new(0,130,0,mapListH)
@@ -2503,7 +2300,6 @@ do
             local ii=i
             item.MouseButton1Click:Connect(function()
                 if ii==1 then
-                    -- Toggle semua
                     local anyOff=false
                     for j=1,18 do if not mapSelSet[j] then anyOff=true; break end end
                     if anyOff then
@@ -2519,7 +2315,6 @@ do
                     mapSelSet[mi]=not mapSelSet[mi]; MR.selected[mi]=mapSelSet[mi]
                     mapItemRefs[ii].chk.Text=mapSelSet[mi] and "✓" or ""
                     mapItemRefs[ii].lbl.TextColor3=mapSelSet[mi] and C.ACC2 or C.TXT
-                    -- Update "Semua Map" checkmark
                     local allOn=true
                     for j=1,18 do if not mapSelSet[j] then allOn=false; break end end
                     mapItemRefs[1].chk.Text=allOn and "✓" or ""; mapItemRefs[1].lbl.TextColor3=allOn and C.ACC2 or C.TXT
@@ -2530,13 +2325,11 @@ do
         mapDDBtn.MouseButton1Click:Connect(function()
             if mapList.Visible then CloseAllDD(); return end
             local ap=mapDDBtn.AbsolutePosition; local as=mapDDBtn.AbsoluteSize
-            local inset=GuiService:GetGuiInset()
-            mapList.Position=UDim2.new(0,ap.X,0,ap.Y+as.Y+2-inset.Y)
+            mapList.Position=UDim2.new(0,ap.X,0,ap.Y+as.Y+2-GuiInsetY())
             OpenDD(mapList)
         end)
     end
 
-    -- ── DELAY PINDAH MAP (dropdown) ──────────────────
     do
         local delayCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
         delayCard.LayoutOrder=4; Corner(delayCard,8); Stroke(delayCard,C.BORD,1,0.4)
@@ -2595,13 +2388,11 @@ do
         delayDDBtn.MouseButton1Click:Connect(function()
             if delayList.Visible then CloseAllDD(); return end
             local ap=delayDDBtn.AbsolutePosition; local as=delayDDBtn.AbsoluteSize
-            local inset=GuiService:GetGuiInset()
-            delayList.Position=UDim2.new(0,ap.X,0,ap.Y+as.Y+2-inset.Y)
+            delayList.Position=UDim2.new(0,ap.X,0,ap.Y+as.Y+2-GuiInsetY())
             OpenDD(delayList)
         end)
     end
 
-    -- ── AUTO SKILL ────────────────────────────────────
     local skillCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,52))
     skillCard.LayoutOrder=5; Corner(skillCard,8); Stroke(skillCard,C.BORD,1,0.4)
     Padding(skillCard,6,6,12,8)
@@ -2613,7 +2404,7 @@ do
         SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,4)})
     for _,d in ipairs({{n="Z",c=Color3.fromRGB(255,80,80)},{n="X",c=Color3.fromRGB(255,160,40)},{n="C",c=Color3.fromRGB(80,220,120)},{n="V",c=Color3.fromRGB(80,180,255)},{n="F",c=Color3.fromRGB(200,80,255)}}) do
         local sb=Btn(skillRow,C.BG3,UDim2.new(0,40,0,26)); sb.LayoutOrder=_; Corner(sb,6)
-        local sk=Stroke(sb,C.BORD,1,0.3)
+        Stroke(sb,C.BORD,1,0.3)
         local sl=Label(sb,d.n,12,d.c,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
         sl.Size=UDim2.new(1,0,0.6,0); sl.Position=UDim2.new(0,0,0,0)
         local st=Label(sb,"OFF",9,C.TXT3,Enum.Font.Gotham,Enum.TextXAlignment.Center)
@@ -2631,16 +2422,12 @@ do
     ToggleRow(p,"Mass Attack","Serang semua musuh di map sekaligus",6,function(on)
         DoMassAttack(on)
     end)
-
 end
 
--- =====================================================
 -- PANEL : PLAYER
--- =====================================================
 do
     local p=NewPanel("player")
 
-    -- ── CARD SESI & WAKTU (paling atas, sebelum header) ──
     local afkCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,54))
     afkCard.LayoutOrder=-1; Corner(afkCard,8); Stroke(afkCard,C.BORD,1,0.4)
     Padding(afkCard,6,6,12,8)
@@ -2651,7 +2438,6 @@ do
     local afkTimeLbl=Label(afkCard,"WIB: --:--:--  |  Aktif: 00:00:00",10.5,C.TXT2,Enum.Font.Gotham)
     afkTimeLbl.Size=UDim2.new(1,0,0,13); afkTimeLbl.Position=UDim2.new(0,0,0,22)
 
-    -- Update jam WIB + durasi aktif setiap detik
     task.spawn(function()
         while true do
             task.wait(1)
@@ -2678,7 +2464,6 @@ do
 
     SectionHeader(p,"PLAYER SETTINGS",0)
 
-    -- ── WALKSPEED SLIDER ─────────────────────────────
     local wsCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,70))
     wsCard.LayoutOrder=1; Corner(wsCard,8); Stroke(wsCard,C.BORD,1,0.4)
     Padding(wsCard,8,8,12,8)
@@ -2703,7 +2488,7 @@ do
     local presetRow=Frame(wsCard,C.BLACK,UDim2.new(1,0,0,16))
     presetRow.BackgroundTransparency=1; presetRow.Position=UDim2.new(0,0,0,46)
     local presets={{lbl="0%",v=0},{lbl="100%",v=16},{lbl="300%",v=48},{lbl="500%",v=80},{lbl="1000%",v=160}}
-    local presetW=1/#presets
+    local presetW = 1/#presets
     for i,pr in ipairs(presets) do
         local pb=Btn(presetRow,C.BG3,UDim2.new(presetW,-2,1,0))
         pb.Position=UDim2.new((i-1)*presetW,1,0,0); Corner(pb,3)
@@ -2753,7 +2538,6 @@ do
         end
     end)
 
-    -- ── NO CLIP ──────────────────────────────────────
     ToggleRow(p,"No Clip","Tembus tembok & objek apapun selama aktif",2,function(on)
         STATE.noClip=on
         if _noClipConn then _noClipConn:Disconnect(); _noClipConn=nil end
@@ -2789,7 +2573,6 @@ do
         end
     end)
 
-    -- ── ANTI AFK ─────────────────────────────────────
     ToggleRow(p,"Anti AFK","Mencegah kick sistem idle 15 menit",4,function(on)
         STATE.antiAfk=on
         if _antiAfkThread then task.cancel(_antiAfkThread); _antiAfkThread=nil end
@@ -2797,8 +2580,6 @@ do
             _antiAfkStart=os.time()
             _antiAfkThread=task.spawn(function()
                 while STATE.antiAfk do
-                    -- Putar kamera micro 0.001 radian bolak-balik
-                    -- Tidak menekan tombol apapun → tidak ganggu gerakan player
                     pcall(function()
                         local cam=workspace.CurrentCamera
                         if cam then
@@ -2808,7 +2589,7 @@ do
                             cam.CFrame=cf
                         end
                     end)
-                    task.wait(60) -- trigger tiap 60 detik
+                    task.wait(60)
                 end
             end)
         else
@@ -2823,7 +2604,6 @@ do
         end
     end)
 
-    -- ── REJOIN ───────────────────────────────────────
     SectionHeader(p,"LAINNYA",10)
     local rejoinCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,50))
     rejoinCard.LayoutOrder=11; Corner(rejoinCard,8); Stroke(rejoinCard,C.BORD,1,0.4)
@@ -2844,16 +2624,12 @@ do
     end)
 end
 
--- =====================================================
 -- PANEL : AUTO ROLL
--- =====================================================
 do
     local p=NewPanel("autoroll")
 
-    -- ── DROPDOWN: HERO ABILITY FASTROLL ──────────────
     local ddOpen=false
 
-    -- Header tombol dropdown
     local ddHeader=Btn(p,C.SURFACE,UDim2.new(1,0,0,38))
     ddHeader.LayoutOrder=0; Corner(ddHeader,8); Stroke(ddHeader,C.BORD,1,0.4)
 
@@ -2863,7 +2639,6 @@ do
     local ddLabel=Label(ddHeader,"⚡  Hero Ability Fastroll",13,C.TXT,Enum.Font.GothamBold)
     ddLabel.Size=UDim2.new(1,-40,1,0); ddLabel.Position=UDim2.new(0,30,0,0)
 
-    -- Container isi dropdown (tersembunyi default)
     local ddBody=Frame(p,C.BG2,UDim2.new(1,0,0,0))
     ddBody.LayoutOrder=1; ddBody.ClipsDescendants=true; Corner(ddBody,8)
     Stroke(ddBody,C.BORD,1,0.3)
@@ -2876,7 +2651,6 @@ do
         SortOrder=Enum.SortOrder.LayoutOrder,
         Padding=UDim.new(0,6)})
 
-    -- Fungsi rebuild ukuran ddBody sesuai konten
     local function ResizeDDBody()
         ddLayout:ApplyLayout()
         local h=ddLayout.AbsoluteContentSize.Y+16
@@ -2884,7 +2658,6 @@ do
         ddBody.Size=UDim2.new(1,0,0,h+16)
     end
 
-    -- ── HERO STATUS (dalam dropdown) ──────────────────
     local weaponCard=Frame(ddInner,C.SURFACE,UDim2.new(1,0,0,76))
     weaponCard.LayoutOrder=0; Corner(weaponCard,8); Stroke(weaponCard,C.BORD,1,0.4)
     Padding(weaponCard,8,8,12,8)
@@ -2901,7 +2674,6 @@ do
     _weaponSlotLbls={wsSlot1,wsSlot2,wsSlot3}
     _slotStatusLbl={wsSlot1,wsSlot2,wsSlot3}
 
-    -- ── AUTOREROLL STATUS (dalam dropdown) ────────────
     local statusCard=Frame(ddInner,C.SURFACE,UDim2.new(1,0,0,44))
     statusCard.LayoutOrder=1; Corner(statusCard,8); Stroke(statusCard,C.BORD,1,0.4)
     Padding(statusCard,6,6,12,8)
@@ -2918,10 +2690,7 @@ do
     arStatusLbl.TextWrapped=true
     _rerollStatusLbl=arStatusLbl
 
-    -- ── TARGET DROPDOWN SLOT 1, 2, 3 (dalam dropdown) ─
-    -- Buat dummy parent wrapper agar MakeDropdown bisa pakai ddInner
     local function MakeDropdownInParent(parent, slotIndex, order)
-        -- MakeDropdown asli pakai parent langsung
         local row=MakeDropdown(parent, slotIndex, order)
         return row
     end
@@ -2929,10 +2698,8 @@ do
     MakeDropdownInParent(ddInner,2,3)
     MakeDropdownInParent(ddInner,3,4)
 
-    -- ── ENABLE AUTOREROLL TOGGLE (dalam dropdown) ─────
     local enRow=Frame(ddInner,C.SURFACE,UDim2.new(1,0,0,44))
     enRow.LayoutOrder=5; Corner(enRow,8); Stroke(enRow,C.BORD,1,0.4)
-    -- Buat toggle row manual agar bisa masuk ddInner
     local enLbl=Label(enRow,"Enable AutoReroll",12,C.TXT,Enum.Font.GothamBold)
     enLbl.Size=UDim2.new(0.7,0,0,18); enLbl.Position=UDim2.new(0,12,0,6)
     local enSub=Label(enRow,"Aktifkan auto reroll semua slot",10,C.TXT3,Enum.Font.Gotham)
@@ -2948,44 +2715,232 @@ do
         STATE.autoRoll=enOn
         enToggle.BackgroundColor3=enOn and C.ACC or Color3.fromRGB(60,60,60)
         enKnob.Position=enOn and UDim2.new(1,-18,0.5,-8) or UDim2.new(0,2,0.5,-8)
-        -- DoAutoRoll dulu sebelum RefreshSlotUI
-        -- agar STATE sudah siap sebelum slot UI di-refresh
         DoAutoRoll(enOn)
         for i=1,3 do RefreshSlotUI(i) end
         RefreshStatus()
     end)
 
-    -- Toggle buka/tutup dropdown
     ddHeader.MouseButton1Click:Connect(function()
         ddOpen=not ddOpen
         ddBody.Visible=ddOpen
         ddIcon.Text=ddOpen and "▼" or "▶"
-        if ddOpen then
-            task.defer(ResizeDDBody)
-        end
+        if ddOpen then task.defer(ResizeDDBody) end
     end)
-
-    -- Init capture layers
-    _captureStatusLbl=nil
-    InitAllCaptureLayers()
-
-    -- Spacer untuk ruang panel kanan (bisa diisi reroll lain nanti)
-    SectionHeader(p,"AUTO REROLL LAINNYA",10)
-    local spacerLbl=Label(p,"— Slot kosong, siap diisi fitur reroll lain —",9,C.TXT3,Enum.Font.Gotham,Enum.TextXAlignment.Center)
-    spacerLbl.Size=UDim2.new(1,0,0,28)
-    local spacerFrame=Frame(p,C.SURFACE,UDim2.new(1,0,0,28))
-    spacerFrame.LayoutOrder=11; Corner(spacerFrame,8); Stroke(spacerFrame,C.BORD,1,0.3)
-    spacerLbl.Parent=spacerFrame
 end
 
--- =====================================================
+local function MakeWeaponSlotPopup(ddBtn, slotIndex)
+    CloseActiveDD()
+    local absPos  = ddBtn.AbsolutePosition
+    local absSize = ddBtn.AbsoluteSize
+    local popup   = Frame(DDLayer, C.DD_BG, UDim2.new(0,absSize.X+30,0,0))
+    popup.Position       = UDim2.new(0,absPos.X,0,absPos.Y+absSize.Y+3)
+    popup.AutomaticSize  = Enum.AutomaticSize.Y
+    popup.ZIndex=9999; Corner(popup,8); Stroke(popup,C.BORD2,1,0.2)
+    popup.ClipsDescendants=true
+
+    local popHeader=Frame(popup,Color3.fromRGB(90,30,0),UDim2.new(1,0,0,28))
+    popHeader.ZIndex=9999
+    local countLbl=Label(popHeader,"0/"..W_MAX_PER_SLOT.." dipilih",10.5,C.ACC2,Enum.Font.GothamBold)
+    countLbl.Size=UDim2.new(0.6,0,1,0); countLbl.Position=UDim2.new(0,8,0,0); countLbl.ZIndex=9999
+    local clearBtn=Btn(popHeader,Color3.fromRGB(180,50,50),UDim2.new(0,50,0,20))
+    clearBtn.Position=UDim2.new(1,-56,0.5,-10); Corner(clearBtn,5); clearBtn.ZIndex=9999
+    local cLbl=Label(clearBtn,"Clear",10,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    cLbl.Size=UDim2.new(1,0,1,0); cLbl.ZIndex=9999
+
+    local scrollPop=Frame(popup,C.DD_BG,UDim2.new(1,0,0,0))
+    scrollPop.ZIndex=9999; scrollPop.Position=UDim2.new(0,0,0,30)
+    New("UIListLayout",{Parent=scrollPop,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,2)})
+    New("UIPadding",{Parent=scrollPop,PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4),PaddingLeft=UDim.new(0,4),PaddingRight=UDim.new(0,4)})
+    scrollPop.AutomaticSize=Enum.AutomaticSize.Y
+
+    local wRowRefs = {}
+    local list = W_QUIRK_LIST_PER_SLOT[slotIndex]
+    scrollPop.Size = UDim2.new(1,0,0,min(#list*30+8,190))
+
+    for _,q in ipairs(list) do
+        local qRow=Btn(scrollPop,C.DD_BG,UDim2.new(1,-8,0,28))
+        qRow.ZIndex=9999; Corner(qRow,5)
+        local tickBox=Frame(qRow,C.SEL_BG,UDim2.new(0,16,0,16))
+        tickBox.Position=UDim2.new(0,6,0.5,-8); Corner(tickBox,3); tickBox.ZIndex=9999; Stroke(tickBox,C.BORD2,1,0.4)
+        local tickMark=Label(tickBox,"✓",11,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+        tickMark.Size=UDim2.new(1,0,1,0); tickMark.ZIndex=9999
+        tickMark.Visible=(_wSlotTarget[slotIndex][q.id]==true)
+        local qLbl=Label(qRow,"  "..q.name,11,_wSlotTarget[slotIndex][q.id] and C.ACC2 or C.TXT,Enum.Font.Gotham)
+        qLbl.Size=UDim2.new(1,-30,1,0); qLbl.Position=UDim2.new(0,28,0,0); qLbl.ZIndex=9999
+        if _wSlotTarget[slotIndex][q.id] then qRow.BackgroundColor3=Color3.fromRGB(140,52,0) end
+        wRowRefs[q.id]={bg=qRow,tick=tickMark,lbl=qLbl}
+
+        qRow.MouseButton1Click:Connect(function()
+            if _wSlotTarget[slotIndex][q.id] then
+                _wSlotTarget[slotIndex][q.id]=nil
+            else
+                local n=0; for _ in pairs(_wSlotTarget[slotIndex]) do n=n+1 end
+                if n>=W_MAX_PER_SLOT then
+                    countLbl.TextColor3=Color3.fromRGB(255,60,60)
+                    countLbl.Text="MAX "..W_MAX_PER_SLOT.." tercapai!"
+                    task.delay(1.2,function()
+                        local n2=0; for _ in pairs(_wSlotTarget[slotIndex]) do n2=n2+1 end
+                        countLbl.Text=n2.."/"..W_MAX_PER_SLOT.." dipilih"
+                        countLbl.TextColor3=n2>=W_MAX_PER_SLOT and Color3.fromRGB(255,100,80) or C.ACC2
+                    end)
+                    return
+                end
+                _wSlotTarget[slotIndex][q.id]=true
+            end
+            for qid,ref in pairs(wRowRefs) do
+                local sel=(_wSlotTarget[slotIndex][qid]==true)
+                ref.bg.BackgroundColor3=sel and Color3.fromRGB(140,52,0) or C.DD_BG
+                ref.tick.Visible=sel; ref.lbl.TextColor3=sel and C.ACC2 or C.TXT
+            end
+            local n=0; for _ in pairs(_wSlotTarget[slotIndex]) do n=n+1 end
+            countLbl.Text=n.."/"..W_MAX_PER_SLOT.." dipilih"
+            countLbl.TextColor3=n>=W_MAX_PER_SLOT and Color3.fromRGB(255,100,80) or C.ACC2
+            RefreshWeaponSlotUI(slotIndex)
+        end)
+    end
+
+    local n=0; for _ in pairs(_wSlotTarget[slotIndex]) do n=n+1 end
+    countLbl.Text=n.."/"..W_MAX_PER_SLOT.." dipilih"
+    clearBtn.MouseButton1Click:Connect(function()
+        _wSlotTarget[slotIndex]={}
+        for _,ref in pairs(wRowRefs) do ref.bg.BackgroundColor3=C.DD_BG; ref.tick.Visible=false; ref.lbl.TextColor3=C.TXT end
+        countLbl.Text="0/"..W_MAX_PER_SLOT.." dipilih"; countLbl.TextColor3=C.ACC2
+        RefreshWeaponSlotUI(slotIndex)
+    end)
+
+    DDLayer.Visible=true
+    _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
+end
+
+-- PANEL : AUTO ROLL — WEAPON
+do
+    local p=Panels["autoroll"]
+
+    local wddOpen=false
+
+    local wddHeader=Btn(p,C.SURFACE,UDim2.new(1,0,0,38))
+    wddHeader.LayoutOrder=10; Corner(wddHeader,8); Stroke(wddHeader,C.BORD,1,0.4)
+
+    local wddIcon=Label(wddHeader,"▶",12,C.ACC2,Enum.Font.GothamBold)
+    wddIcon.Size=UDim2.new(0,20,1,0); wddIcon.Position=UDim2.new(0,10,0,0)
+
+    local wddLabel=Label(wddHeader,"⚔  Weapon Ability Fastroll",13,C.TXT,Enum.Font.GothamBold)
+    wddLabel.Size=UDim2.new(1,-40,1,0); wddLabel.Position=UDim2.new(0,30,0,0)
+
+    local wddBody=Frame(p,C.BG2,UDim2.new(1,0,0,0))
+    wddBody.LayoutOrder=11; wddBody.ClipsDescendants=true; Corner(wddBody,8)
+    Stroke(wddBody,C.BORD,1,0.3)
+    wddBody.Visible=false
+
+    local wddInner=Frame(wddBody,C.BLACK,UDim2.new(1,-16,0,0))
+    wddInner.BackgroundTransparency=1
+    wddInner.Position=UDim2.new(0,8,0,8)
+    local wddLayout=New("UIListLayout",{Parent=wddInner,
+        SortOrder=Enum.SortOrder.LayoutOrder,
+        Padding=UDim.new(0,6)})
+
+    local function ResizeWDDBody()
+        wddLayout:ApplyLayout()
+        local h=wddLayout.AbsoluteContentSize.Y+16
+        wddInner.Size=UDim2.new(1,0,0,h)
+        wddBody.Size=UDim2.new(1,0,0,h+16)
+    end
+
+    local wStatusCard=Frame(wddInner,C.SURFACE,UDim2.new(1,0,0,76))
+    wStatusCard.LayoutOrder=0; Corner(wStatusCard,8); Stroke(wStatusCard,C.BORD,1,0.4)
+    Padding(wStatusCard,8,8,12,8)
+
+    local wstTitle=Label(wStatusCard,"Weapon Status",12,C.TXT,Enum.Font.GothamBold)
+    wstTitle.Size=UDim2.new(1,0,0,16); wstTitle.Position=UDim2.new(0,0,0,6)
+
+    local wstSlot1=Label(wStatusCard,"Slot 1: —",10.5,C.TXT2,Enum.Font.Gotham)
+    wstSlot1.Size=UDim2.new(1,0,0,13); wstSlot1.Position=UDim2.new(0,0,0,26)
+    local wstSlot2=Label(wStatusCard,"Slot 2: —",10.5,C.TXT2,Enum.Font.Gotham)
+    wstSlot2.Size=UDim2.new(1,0,0,13); wstSlot2.Position=UDim2.new(0,0,0,41)
+    local wstSlot3=Label(wStatusCard,"Slot 3: —",10.5,C.TXT2,Enum.Font.Gotham)
+    wstSlot3.Size=UDim2.new(1,0,0,13); wstSlot3.Position=UDim2.new(0,0,0,56)
+    _wWeaponSlotLbls={wstSlot1,wstSlot2,wstSlot3}
+
+    local wArCard=Frame(wddInner,C.SURFACE,UDim2.new(1,0,0,44))
+    wArCard.LayoutOrder=1; Corner(wArCard,8); Stroke(wArCard,C.BORD,1,0.4)
+    Padding(wArCard,6,6,12,8)
+
+    local wArTitle=Label(wArCard,"AutoReroll Status",12,C.TXT,Enum.Font.GothamBold)
+    wArTitle.Size=UDim2.new(1,0,0,16); wArTitle.Position=UDim2.new(0,0,0,4)
+
+    local wArDot=Frame(wArCard,Color3.fromRGB(100,100,100),UDim2.new(0,7,0,7))
+    wArDot.Position=UDim2.new(0,0,0,25); Corner(wArDot,4)
+    _wRollDotRef=wArDot
+
+    local wArStatusLbl=Label(wArCard,"Idle",10.5,C.TXT2,Enum.Font.Gotham)
+    wArStatusLbl.Size=UDim2.new(1,-12,0,13); wArStatusLbl.Position=UDim2.new(0,12,0,24)
+    wArStatusLbl.TextWrapped=true
+    _wRerollStatusLbl=wArStatusLbl
+
+    for wsi = 1, 3 do
+        local wsi_local = wsi
+        local wSlotRow = Frame(wddInner, C.SURFACE, UDim2.new(1,0,0,40))
+        wSlotRow.LayoutOrder = wsi + 1; Corner(wSlotRow,8); Stroke(wSlotRow,C.BORD,1,0.4)
+
+        local wSlotLbl = Label(wSlotRow, "Target Slot "..wsi, 12, C.TXT, Enum.Font.GothamBold)
+        wSlotLbl.Size = UDim2.new(0,90,0,18); wSlotLbl.Position = UDim2.new(0,12,0,4)
+
+        local wSlotSub = Label(wSlotRow, "(max "..W_MAX_PER_SLOT..")", 9.5, C.TXT3, Enum.Font.Gotham)
+        wSlotSub.Size = UDim2.new(0,90,0,12); wSlotSub.Position = UDim2.new(0,12,0,22)
+
+        local wDdBtn = Btn(wSlotRow, C.DD_BG, UDim2.new(0.52,0,0,28))
+        wDdBtn.Position = UDim2.new(0.46,0,0.5,-14); Corner(wDdBtn,6); Stroke(wDdBtn,C.BORD2,1,0.3)
+
+        local wDdLbl = Label(wDdBtn, "--", 10.5, C.TXT2, Enum.Font.Gotham, Enum.TextXAlignment.Left)
+        wDdLbl.Size = UDim2.new(1,-20,1,0); wDdLbl.Position = UDim2.new(0,7,0,0)
+        wDdLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        _wSlotSummaryLbls[wsi] = wDdLbl
+
+        local wArrowLbl = Label(wDdBtn, "▼", 10, C.ACC, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+        wArrowLbl.Size = UDim2.new(0,16,1,0); wArrowLbl.Position = UDim2.new(1,-18,0,0)
+
+        wDdBtn.MouseButton1Click:Connect(function()
+            MakeWeaponSlotPopup(wDdBtn, wsi_local)
+        end)
+    end
+
+    local wEnRow=Frame(wddInner,C.SURFACE,UDim2.new(1,0,0,44))
+    wEnRow.LayoutOrder=5; Corner(wEnRow,8); Stroke(wEnRow,C.BORD,1,0.4)
+
+    do
+        local wEnLbl=Label(wEnRow,"Enable AutoReroll",12,C.TXT,Enum.Font.GothamBold)
+        wEnLbl.Size=UDim2.new(0.7,0,0,18); wEnLbl.Position=UDim2.new(0,12,0,6)
+        local wEnSub=Label(wEnRow,"Aktifkan auto reroll weapon",10,C.TXT3,Enum.Font.Gotham)
+        wEnSub.Size=UDim2.new(0.85,0,0,13); wEnSub.Position=UDim2.new(0,12,0,24)
+    end
+
+    local wEnToggle=Btn(wEnRow,Color3.fromRGB(60,60,60),UDim2.new(0,36,0,20))
+    wEnToggle.Position=UDim2.new(1,-48,0.5,-10); Corner(wEnToggle,10)
+    local wEnKnob=Frame(wEnToggle,C.TXT,UDim2.new(0,16,0,16))
+    wEnKnob.Position=UDim2.new(0,2,0.5,-8); Corner(wEnKnob,8)
+    local wEnOn=false
+    wEnToggle.MouseButton1Click:Connect(function()
+        wEnOn=not wEnOn
+        _wRunning=wEnOn
+        wEnToggle.BackgroundColor3=wEnOn and C.ACC or Color3.fromRGB(60,60,60)
+        wEnKnob.Position=wEnOn and UDim2.new(1,-18,0.5,-8) or UDim2.new(0,2,0.5,-8)
+        DoAutoRollWeapon(wEnOn)
+        for i=1,3 do RefreshWeaponSlotUI(i) end
+    end)
+
+    wddHeader.MouseButton1Click:Connect(function()
+        wddOpen=not wddOpen
+        wddBody.Visible=wddOpen
+        wddIcon.Text=wddOpen and "▼" or "▶"
+        if wddOpen then task.defer(ResizeWDDBody) end
+    end)
+end
+
 -- PANEL : SETTINGS
--- =====================================================
 do
     local p=NewPanel("settings")
     SectionHeader(p,"PENGATURAN LANJUTAN",0)
 
-    -- Network permission (untuk Key, Webhook Discord, dll)
     local netCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,54))
     netCard.LayoutOrder=1; Corner(netCard,8); Stroke(netCard,C.BORD,1,0.4)
     Padding(netCard,8,8,12,8)
@@ -3001,29 +2956,7 @@ do
     end)
 end
 
--- =====================================================
--- PANEL : INFO
--- =====================================================
-do
-    local p=NewPanel("info")
-    SectionHeader(p,"INFO",0)
-    local card=Frame(p,C.SURFACE,UDim2.new(1,0,0,130))
-    card.LayoutOrder=1; Corner(card,8); Stroke(card,C.BORD,1,0.4)
-    local txt=Label(card,
-        "Arise Shadow Hunt — Auto Farming GUI\nBy FLa Project\n\n"..
-        "Remotes:\n"..
-        "• CollectItem:InvokeServer(guid)\n"..
-        "• ExtraReward:FireServer({isSell, guid})\n"..
-        "• ExtraReward:FireServer({isSell=false, isAuto=false, guid})\n"..
-        "• RandomHeroQuirk:InvokeServer({heroGuid, drawId})",
-        9,C.TXT2,Enum.Font.Gotham)
-    txt.Size=UDim2.new(1,-16,1,0); txt.Position=UDim2.new(0,8,0,0)
-    txt.TextWrapped=true; txt.LineHeight=1.5
-end
-
--- =====================================================
 -- DEFAULT TAB
--- =====================================================
 SwitchTab("main")
 RefreshStatus()
 
