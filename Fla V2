@@ -557,17 +557,91 @@ local function SubItem(panel, ico, title, order)
 end
 
 -- =====================================================
+-- REMOTE REFERENCES
+-- =====================================================
+local RS             = game:GetService("ReplicatedStorage")
+local RE_CollectItem = RS:WaitForChild("Remotes"):WaitForChild("CollectItem")
+local RE_ExtraReward = RS:WaitForChild("Remotes"):WaitForChild("ExtraReward")
+
+-- =====================================================
 -- MAIN STATE
 -- =====================================================
-local MAIN_STATE = { autoCollectDrops = false }
+local MAIN_STATE      = { autoCollectDrops = false }
 local _autoCollectLoop = nil
+local _collectedGuids  = {}  -- cache guid yg sudah di-collect, hindari double invoke
+
+-- Scan seluruh workspace, cari guid item drop
+-- Game menyimpan guid sebagai: Attribute, StringValue, atau nama object berbentuk UUID
+local function GetAllDropGuids()
+    local guids = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        local guid = nil
+
+        -- 1) coba via Attribute
+        pcall(function()
+            guid = obj:GetAttribute("guid")
+                or obj:GetAttribute("GUID")
+                or obj:GetAttribute("Id")
+                or obj:GetAttribute("id")
+        end)
+
+        -- 2) coba via StringValue child
+        if not guid then
+            pcall(function()
+                local sv = obj:FindFirstChild("guid")
+                    or obj:FindFirstChild("GUID")
+                    or obj:FindFirstChild("Id")
+                if sv and sv:IsA("StringValue") then
+                    guid = sv.Value
+                end
+            end)
+        end
+
+        -- 3) coba nama object itu sendiri kalau berbentuk UUID
+        if not guid then
+            pcall(function()
+                if obj.Name:match("^%x+%-%x+%-%x+%-%x+%-%x+$") then
+                    guid = obj.Name
+                end
+            end)
+        end
+
+        if guid and guid ~= "" and not _collectedGuids[guid] then
+            table.insert(guids, guid)
+        end
+    end
+    return guids
+end
 
 local function DoAutoCollect(on)
     if on then
-        _autoCollectLoop = task.spawn(function()
+        _collectedGuids   = {}
+        _autoCollectLoop  = task.spawn(function()
             while MAIN_STATE.autoCollectDrops do
-                -- TODO: panggil remote collect drop di sini
-                task.wait(0.3)
+                local guids = GetAllDropGuids()
+
+                for _, guid in ipairs(guids) do
+                    if not MAIN_STATE.autoCollectDrops then break end
+
+                    _collectedGuids[guid] = true
+
+                    -- Collect item utama
+                    pcall(function()
+                        RE_CollectItem:InvokeServer(guid)
+                    end)
+
+                    -- Extra reward / bonus gold
+                    pcall(function()
+                        RE_ExtraReward:FireServer({
+                            isSell = true,
+                            guid   = guid,
+                        })
+                    end)
+
+                    task.wait(0.08) -- jeda kecil antar item
+                end
+
+                task.wait(0.4) -- interval scan ulang workspace
             end
         end)
     else
@@ -575,6 +649,7 @@ local function DoAutoCollect(on)
             pcall(function() task.cancel(_autoCollectLoop) end)
             _autoCollectLoop = nil
         end
+        _collectedGuids = {}
     end
 end
 
