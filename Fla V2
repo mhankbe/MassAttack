@@ -1,7 +1,7 @@
 -- =====================================================
 --   Arise Shadow Hunt — Auto Farming GUI
 --   Theme : Full Orange iPhone 17 Pro Max
---   By    : FLa Project V.1
+--   By    : FLa Project
 --   Xeno  : Compatible
 -- =====================================================
 
@@ -443,7 +443,7 @@ local function DoAutoCollect(on)
 end
 
 -- =====================================================
--- LOGIC : AUTO DESTROY
+-- LOGIC : AUTO DESTROYER
 -- =====================================================
 local _destroyerConn=nil
 local function DoAutoDestroyer(on)
@@ -1621,18 +1621,18 @@ end
 -- PANEL : MAIN
 -- =====================================================
 do
-    local p=NewPanel("MAIN")
-    SectionHeader(p,"PILIH FITUR",0)
+    local p=NewPanel("main")
+    SectionHeader(p,"PENGATURAN CEPAT",0)
     ToggleRow(p,"Auto Collect + Destroyer","Aktifkan Auto Collect otomatis saat Destroyer ON",1,function(on)
         if STATE.autoDestroyer then STATE.autoCollect=on; DoAutoCollect(on); RefreshStatus() end end)
 end
 
 -- =====================================================
--- PANEL : FARMING
+-- PANEL : FARM
 -- =====================================================
 do
-    local p=NewPanel("FARMING")
-    SectionHeader(p,"PILIH FITUR",0)
+    local p=NewPanel("farm")
+    SectionHeader(p,"AUTO FARM",0)
     ToggleRow(p,"Auto Magnet Gold","Collect semua gold di Workspace.Golds",1,function(on)
         STATE.autoCollect=on; DoAutoCollect(on); RefreshStatus() end)
 end
@@ -1641,7 +1641,7 @@ end
 -- PANEL : PLAYER
 -- =====================================================
 do
-    local p=NewPanel("PLAYER")
+    local p=NewPanel("player")
 
     -- ── CARD SESI & WAKTU (paling atas, sebelum header) ──
     local afkCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,54))
@@ -1757,7 +1757,7 @@ do
     end)
 
     -- ── NO CLIP ──────────────────────────────────────
-    ToggleRow(p,"No Clip / Tembus","Tembus tembok & objek apapun selama aktif",2,function(on)
+    ToggleRow(p,"No Clip","Tembus tembok & objek apapun selama aktif",2,function(on)
         STATE.noClip=on
         if _noClipConn then _noClipConn:Disconnect(); _noClipConn=nil end
         if on then
@@ -1793,7 +1793,7 @@ do
     end)
 
     -- ── ANTI AFK ─────────────────────────────────────
-    ToggleRow(p,"Anti AFK / Disconect","Mencegah kick sistem idle 15 menit",4,function(on)
+    ToggleRow(p,"Anti AFK","Mencegah kick sistem idle 15 menit",4,function(on)
         STATE.antiAfk=on
         if _antiAfkThread then task.cancel(_antiAfkThread); _antiAfkThread=nil end
         if on then
@@ -1990,7 +1990,7 @@ do
     local card=Frame(p,C.SURFACE,UDim2.new(1,0,0,130))
     card.LayoutOrder=1; Corner(card,8); Stroke(card,C.BORD,1,0.4)
     local txt=Label(card,
-        "Script Auto Farming GUI\nBy FLa Project V.1\n\n"..
+        "Arise Shadow Hunt — Auto Farming GUI\nBy FLa Project\n\n"..
         "Remotes:\n"..
         "• CollectItem:InvokeServer(guid)\n"..
         "• ExtraReward:FireServer({isSell, guid})\n"..
