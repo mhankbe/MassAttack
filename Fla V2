@@ -1,0 +1,672 @@
+-- =====================================================
+--   Auto Farming GUI
+--   Theme: Full Orange iPhone 17 Pro Max
+--   By FLa Project
+-- =====================================================
+
+local Players           = game:GetService("Players")
+local TweenService      = game:GetService("TweenService")
+local UserInputService  = game:GetService("UserInputService")
+local GuiService        = game:GetService("GuiService")
+
+local LP = Players.LocalPlayer
+
+-- =====================================================
+-- DESTROY OLD GUI
+-- =====================================================
+pcall(function()
+    local old = LP.PlayerGui:FindFirstChild("ASH_GUI")
+    if old then old:Destroy() end
+    local oldDD = LP.PlayerGui:FindFirstChild("ASH_DD")
+    if oldDD then oldDD:Destroy() end
+end)
+task.wait(0.05)
+
+-- =====================================================
+-- WARNA — Full Orange iPhone 17 Pro Max
+-- =====================================================
+local C = {
+    -- Background utama: oranye penuh
+    BG        = Color3.fromRGB(210, 85, 10),
+    BG2       = Color3.fromRGB(185, 70, 5),
+    BG3       = Color3.fromRGB(165, 58, 2),
+
+    -- Surface card
+    SURFACE   = Color3.fromRGB(175, 65, 5),
+    SURFACE2  = Color3.fromRGB(195, 75, 8),
+
+    -- Sidebar
+    SIDEBAR   = Color3.fromRGB(155, 55, 2),
+
+    -- Accent highlight
+    ACC       = Color3.fromRGB(255, 160, 60),
+    ACC2      = Color3.fromRGB(255, 200, 100),
+    ACC3      = Color3.fromRGB(255, 220, 140),
+    ACCGLOW   = Color3.fromRGB(140, 45, 0),
+
+    -- Border
+    BORD      = Color3.fromRGB(230, 110, 30),
+    BORD2     = Color3.fromRGB(255, 150, 55),
+
+    -- Text
+    TXT       = Color3.fromRGB(255, 250, 240),
+    TXT2      = Color3.fromRGB(255, 220, 170),
+    TXT3      = Color3.fromRGB(220, 160, 90),
+
+    -- Status
+    GRN       = Color3.fromRGB(60, 215, 100),
+    RED       = Color3.fromRGB(220, 55, 65),
+    YEL       = Color3.fromRGB(255, 200, 60),
+    BLU       = Color3.fromRGB(65, 160, 255),
+
+    -- Sidebar item aktif
+    SEL_BG    = Color3.fromRGB(140, 48, 0),
+    SEL_BORD  = Color3.fromRGB(255, 190, 80),
+
+    -- Window controls
+    WIN_CLOSE = Color3.fromRGB(220, 55, 65),
+    WIN_MIN   = Color3.fromRGB(255, 190, 50),
+    WIN_MAX   = Color3.fromRGB(60, 210, 80),
+
+    -- Titlebar
+    TBAR      = Color3.fromRGB(145, 50, 0),
+}
+
+-- =====================================================
+-- HELPER FUNCTIONS
+-- =====================================================
+local function Corner(parent, radius)
+    local c = Instance.new("UICorner", parent)
+    c.CornerRadius = UDim.new(0, radius or 8)
+    return c
+end
+
+local function Stroke(parent, color, thickness, transparency)
+    local s = Instance.new("UIStroke", parent)
+    s.Color = color or C.BORD
+    s.Thickness = thickness or 1
+    s.Transparency = transparency or 0
+    return s
+end
+
+local function Gradient(parent, c0, c1, rotation)
+    local g = Instance.new("UIGradient", parent)
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, c0),
+        ColorSequenceKeypoint.new(1, c1),
+    })
+    g.Rotation = rotation or 90
+    return g
+end
+
+local function Label(parent, text, size, color, font, xAlign)
+    local l = Instance.new("TextLabel", parent)
+    l.BackgroundTransparency = 1
+    l.Text = text
+    l.TextSize = size or 10
+    l.TextColor3 = color or C.TXT
+    l.Font = font or Enum.Font.GothamBold
+    l.TextXAlignment = xAlign or Enum.TextXAlignment.Left
+    l.TextWrapped = true
+    l.Size = UDim2.new(1, 0, 1, 0)
+    return l
+end
+
+local function Frame(parent, bg, size, pos)
+    local f = Instance.new("Frame", parent)
+    f.BackgroundColor3 = bg or C.SURFACE
+    f.BorderSizePixel = 0
+    if size then f.Size = size end
+    if pos  then f.Position = pos end
+    return f
+end
+
+local function Btn(parent, bg, size, pos)
+    local b = Instance.new("TextButton", parent)
+    b.BackgroundColor3 = bg or C.SURFACE
+    b.BorderSizePixel = 0
+    b.Text = ""
+    b.AutoButtonColor = false
+    if size then b.Size = size end
+    if pos  then b.Position = pos end
+    return b
+end
+
+-- =====================================================
+-- SCREEN GUI
+-- =====================================================
+local SG = Instance.new("ScreenGui")
+SG.Name = "ASH_GUI"
+SG.ResetOnSpawn = false
+SG.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+SG.DisplayOrder = 9999
+SG.Parent = LP.PlayerGui
+
+local DD_SG = Instance.new("ScreenGui")
+DD_SG.Name = "ASH_DD"
+DD_SG.ResetOnSpawn = false
+DD_SG.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+DD_SG.DisplayOrder = 19999
+DD_SG.IgnoreGuiInset = false
+DD_SG.Parent = LP.PlayerGui
+
+-- =====================================================
+-- BUBBLE — tulisan "FLa" oranye, tanpa teks lain
+-- =====================================================
+local Bubble = Btn(SG, C.TBAR, UDim2.new(0, 52, 0, 52))
+Bubble.Position = UDim2.new(0.5, -26, 0, 60)
+Bubble.Visible = false
+Corner(Bubble, 26)
+do
+    Gradient(Bubble, Color3.fromRGB(200, 80, 8), Color3.fromRGB(130, 40, 0), 135)
+    Stroke(Bubble, C.ACC, 1.8, 0)
+    local lFLa = Label(Bubble, "FLa", 17, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+    lFLa.Size = UDim2.new(1, 0, 1, 0)
+end
+
+-- Bubble drag
+do
+    local bd, bsm, bsp = false, Vector2.new(), Vector2.new()
+    Bubble.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            bd = true
+            bsm = Vector2.new(i.Position.X, i.Position.Y)
+            bsp = Vector2.new(Bubble.AbsolutePosition.X, Bubble.AbsolutePosition.Y)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if bd and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local inset = GuiService:GetGuiInset()
+            local vp = workspace.CurrentCamera.ViewportSize
+            Bubble.Position = UDim2.new(0,
+                math.clamp(bsp.X + (i.Position.X - bsm.X), 0, vp.X - 52), 0,
+                math.clamp(bsp.Y + (i.Position.Y - bsm.Y) - inset.Y, 0, vp.Y - 52))
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            bd = false
+        end
+    end)
+end
+
+-- =====================================================
+-- MAIN WINDOW
+-- =====================================================
+local WIN_W = 480
+local WIN_H = 340
+local TBAR_H = 42
+local SIDE_W = 130
+
+-- State fullscreen
+local isFullscreen = false
+local normalSize   = UDim2.new(0, WIN_W, 0, WIN_H)
+local normalPos    = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2)
+
+local Win = Frame(SG, C.BG, normalSize)
+Win.Position = normalPos
+Win.ClipsDescendants = false
+Corner(Win, 14)
+Stroke(Win, C.BORD2, 1.5, 0)
+do
+    -- outer glow oranye
+    local glow = Frame(Win, C.ACC, UDim2.new(1, 6, 1, 6), UDim2.new(0, -3, 0, -3))
+    glow.ZIndex = 0; Corner(glow, 17)
+    glow.BackgroundTransparency = 0.82
+end
+-- gradient oranye penuh di background window
+Gradient(Win, Color3.fromRGB(230, 95, 15), Color3.fromRGB(155, 55, 2), 135)
+
+-- Window drag (hanya saat bukan fullscreen)
+do
+    local wd, wdm, wdp = false, Vector2.new(), Vector2.new()
+    Win.InputBegan:Connect(function(i)
+        if not isFullscreen and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then
+            wd = true
+            wdm = Vector2.new(i.Position.X, i.Position.Y)
+            wdp = Vector2.new(Win.AbsolutePosition.X, Win.AbsolutePosition.Y)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if wd and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local inset = GuiService:GetGuiInset()
+            local vp = workspace.CurrentCamera.ViewportSize
+            Win.Position = UDim2.new(0,
+                math.clamp(wdp.X + (i.Position.X - wdm.X), 0, vp.X - WIN_W), 0,
+                math.clamp(wdp.Y + (i.Position.Y - wdm.Y) - inset.Y, 0, vp.Y - WIN_H))
+            normalPos = Win.Position
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            wd = false
+        end
+    end)
+end
+
+-- =====================================================
+-- TITLEBAR
+-- =====================================================
+local TBar = Frame(Win, C.TBAR, UDim2.new(1, 0, 0, TBAR_H))
+TBar.Position = UDim2.new(0, 0, 0, 0)
+do
+    Corner(TBar, 14)
+    local fix = Frame(TBar, C.TBAR, UDim2.new(1, 0, 0, 14))
+    fix.Position = UDim2.new(0, 0, 1, -14)
+    Gradient(TBar, Color3.fromRGB(160, 58, 2), Color3.fromRGB(120, 38, 0), 90)
+
+    -- ── ICON DUA PEDANG SILANG ────────────────────────
+    local iconBg = Frame(TBar, Color3.fromRGB(200, 80, 8), UDim2.new(0, 28, 0, 28))
+    iconBg.Position = UDim2.new(0, 10, 0.5, -14)
+    Corner(iconBg, 7)
+    Gradient(iconBg, Color3.fromRGB(255, 140, 40), Color3.fromRGB(160, 55, 5), 135)
+    Stroke(iconBg, C.ACC, 1, 0.1)
+    local iconL = Label(iconBg, "⚔", 15, Color3.fromRGB(255, 245, 220), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+    iconL.Size = UDim2.new(1, 0, 1, 0)
+
+    -- ── TITLE: "Auto Farming" + "by FLa" (1 baris judul) ──
+    local titleF = Frame(TBar, Color3.fromRGB(0,0,0), UDim2.new(0, 200, 0, TBAR_H))
+    titleF.Position = UDim2.new(0, 44, 0, 0)
+    titleF.BackgroundTransparency = 1
+    local t1 = Label(titleF, "Auto Farming", 11, C.TXT, Enum.Font.GothamBold)
+    t1.Size = UDim2.new(1, 0, 0, 16); t1.Position = UDim2.new(0, 0, 0, 7)
+    local t2 = Label(titleF, "by FLa", 8, C.ACC2, Enum.Font.GothamBold)
+    t2.Size = UDim2.new(1, 0, 0, 12); t2.Position = UDim2.new(0, 0, 0, 24)
+
+    -- ── WINDOW CONTROLS ──────────────────────────────
+    -- kanan → kiri: ✕ merah | □ hijau (fullscreen) | — kuning (minimize)
+    local function WinBtn(xOff, bg, txt, txtCol)
+        local b = Btn(TBar, bg, UDim2.new(0, 22, 0, 22))
+        b.Position = UDim2.new(1, xOff, 0.5, -11)
+        Corner(b, 6)
+        Label(b, txt, 11, txtCol or C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+        return b
+    end
+
+    local btnClose = WinBtn(-28, C.WIN_CLOSE, "✕",  Color3.fromRGB(255,255,255))
+    local btnMax   = WinBtn(-54, C.WIN_MAX,   "⛶",  Color3.fromRGB(255,255,255))
+    local btnMin   = WinBtn(-80, C.WIN_MIN,   "—",  Color3.fromRGB(40,20,0))
+
+    -- ── CLOSE: hentikan script total ─────────────────
+    btnClose.MouseButton1Click:Connect(function()
+        TweenService:Create(Win, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+            Size     = UDim2.new(0, 0, 0, 0),
+            Position = UDim2.new(0,
+                Win.AbsolutePosition.X + Win.AbsoluteSize.X/2, 0,
+                Win.AbsolutePosition.Y + Win.AbsoluteSize.Y/2),
+        }):Play()
+        task.wait(0.2)
+        pcall(function() DD_SG:Destroy() end)
+        pcall(function() SG:Destroy() end)
+        -- cleanup sisa di PlayerGui
+        pcall(function()
+            for _, v in ipairs(LP.PlayerGui:GetChildren()) do
+                if v.Name == "ASH_GUI" or v.Name == "ASH_DD" then v:Destroy() end
+            end
+        end)
+        print("[ Auto Farming GUI ] Ditutup — semua script dihentikan.")
+    end)
+
+    -- ── FULLSCREEN / NORMAL ───────────────────────────
+    btnMax.MouseButton1Click:Connect(function()
+        isFullscreen = not isFullscreen
+        if isFullscreen then
+            normalPos  = Win.Position
+            normalSize = Win.Size
+            local vp    = workspace.CurrentCamera.ViewportSize
+            local inset = GuiService:GetGuiInset()
+            TweenService:Create(Win, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+                Size     = UDim2.new(0, vp.X, 0, vp.Y - inset.Y),
+                Position = UDim2.new(0, 0, 0, 0),
+            }):Play()
+        else
+            TweenService:Create(Win, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+                Size     = normalSize,
+                Position = normalPos,
+            }):Play()
+        end
+    end)
+
+    -- ── MINIMIZE ──────────────────────────────────────
+    local function DoMinimize()
+        Win.Visible = false
+        local vp = workspace.CurrentCamera.ViewportSize
+        Bubble.Position = UDim2.new(0, vp.X/2-26, 0, 60)
+        Bubble.Size = UDim2.new(0, 0, 0, 0)
+        Bubble.Visible = true
+        TweenService:Create(Bubble, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+            {Size=UDim2.new(0,52,0,52)}):Play()
+        task.spawn(function()
+            local t = 0
+            while Bubble.Visible do
+                t = t + task.wait(0.03)
+                local p = Bubble.Position
+                Bubble.Position = UDim2.new(p.X.Scale, p.X.Offset, p.Y.Scale,
+                    p.Y.Offset + math.sin(t*2)*3.5 - math.sin((t-0.03)*2)*3.5)
+            end
+        end)
+    end
+
+    local function DoRestore()
+        TweenService:Create(Bubble, TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+            {Size=UDim2.new(0,0,0,0)}):Play()
+        task.wait(0.17)
+        Bubble.Visible = false
+        Bubble.Size = UDim2.new(0,52,0,52)
+        Win.Visible = true
+    end
+
+    btnMin.MouseButton1Click:Connect(DoMinimize)
+    Bubble.MouseButton1Click:Connect(DoRestore)
+end
+
+-- =====================================================
+-- BODY
+-- =====================================================
+local Body = Frame(Win, C.BG2, UDim2.new(1, 0, 1, -TBAR_H))
+Body.Position = UDim2.new(0, 0, 0, TBAR_H)
+Body.ClipsDescendants = true
+Corner(Body, 14)
+Gradient(Body, Color3.fromRGB(195, 72, 6), Color3.fromRGB(145, 48, 0), 135)
+
+-- =====================================================
+-- SIDEBAR
+-- =====================================================
+local Sidebar = Frame(Body, C.SIDEBAR, UDim2.new(0, SIDE_W, 1, 0))
+Sidebar.ZIndex = 2
+Gradient(Sidebar, Color3.fromRGB(148, 54, 2), Color3.fromRGB(112, 36, 0), 90)
+
+local Div = Frame(Body, C.BORD, UDim2.new(0, 1, 1, 0))
+Div.Position = UDim2.new(0, SIDE_W, 0, 0)
+Div.BackgroundTransparency = 0.4
+
+local SideScroll = Instance.new("ScrollingFrame", Sidebar)
+SideScroll.Size = UDim2.new(1, 0, 1, 0)
+SideScroll.BackgroundTransparency = 1
+SideScroll.BorderSizePixel = 0
+SideScroll.ScrollBarThickness = 0
+SideScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+SideScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+local SidePad = Instance.new("UIPadding", SideScroll)
+SidePad.PaddingTop = UDim.new(0, 8)
+SidePad.PaddingLeft = UDim.new(0, 6)
+SidePad.PaddingRight = UDim.new(0, 6)
+SidePad.PaddingBottom = UDim.new(0, 8)
+
+local SideList = Instance.new("UIListLayout", SideScroll)
+SideList.Padding = UDim.new(0, 2)
+SideList.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- =====================================================
+-- CONTENT AREA
+-- =====================================================
+local ContentArea = Frame(Body, Color3.fromRGB(0,0,0), UDim2.new(1, -SIDE_W-1, 1, 0))
+ContentArea.Position = UDim2.new(0, SIDE_W+1, 0, 0)
+ContentArea.BackgroundTransparency = 1
+ContentArea.ClipsDescendants = true
+
+-- =====================================================
+-- NAV ITEMS
+-- =====================================================
+local NAV_ITEMS = {
+    { ico="⌂",  lbl="Main",          tag="main"    },
+    { ico="★",  lbl="Exclusive",     tag="excl"    },
+    { ico="⚔",  lbl="Farm",          tag="farm"    },
+    { ico="⚙",  lbl="Automation",    tag="auto"    },
+    { ico="✦",  lbl="Reroling",      tag="rerol"   },
+    { ico="⬡",  lbl="Potion",        tag="potion"  },
+    { ico="◎",  lbl="Raid Notifier", tag="raid"    },
+    { ico="≡",  lbl="Misc",          tag="misc"    },
+    { ico="◈",  lbl="Settings",      tag="set"     },
+    { ico="ℹ",  lbl="Info",          tag="info"    },
+}
+
+-- =====================================================
+-- PANEL SYSTEM
+-- =====================================================
+local Panels = {}
+local ActiveTab = nil
+local NavRefs = {}
+
+local function NewPanel(tag)
+    local p = Instance.new("ScrollingFrame", ContentArea)
+    p.Name = tag
+    p.Size = UDim2.new(1, 0, 1, 0)
+    p.BackgroundTransparency = 1
+    p.BorderSizePixel = 0
+    p.ScrollBarThickness = 3
+    p.ScrollBarImageColor3 = C.ACC
+    p.CanvasSize = UDim2.new(0, 0, 0, 0)
+    p.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    p.Visible = false
+    local pad = Instance.new("UIPadding", p)
+    pad.PaddingTop = UDim.new(0, 10)
+    pad.PaddingBottom = UDim.new(0, 16)
+    pad.PaddingLeft = UDim.new(0, 12)
+    pad.PaddingRight = UDim.new(0, 12)
+    local list = Instance.new("UIListLayout", p)
+    list.Padding = UDim.new(0, 6)
+    list.SortOrder = Enum.SortOrder.LayoutOrder
+    Panels[tag] = p
+    return p
+end
+
+local function SwitchTab(tag)
+    for _, p in pairs(Panels) do p.Visible = false end
+    if Panels[tag] then Panels[tag].Visible = true end
+    ActiveTab = tag
+    for _, r in pairs(NavRefs) do
+        local on = (r.tag == tag)
+        TweenService:Create(r.bg, TweenInfo.new(0.14), {
+            BackgroundColor3       = on and C.SEL_BG or C.SIDEBAR,
+            BackgroundTransparency = on and 0 or 1,
+        }):Play()
+        r.bar.BackgroundColor3 = on and C.ACC or C.SIDEBAR
+        r.ico.TextColor3 = on and C.ACC2 or C.TXT3
+        r.lbl.TextColor3 = on and C.TXT or C.TXT2
+        r.lbl.Font = on and Enum.Font.GothamBold or Enum.Font.Gotham
+        if on then
+            Stroke(r.bg, C.SEL_BORD, 1, 0)
+        else
+            local s = r.bg:FindFirstChildOfClass("UIStroke")
+            if s then s:Destroy() end
+        end
+    end
+end
+
+-- =====================================================
+-- BUILD NAV
+-- =====================================================
+for i, item in ipairs(NAV_ITEMS) do
+    local NAV_H = 32
+    local bg = Btn(SideScroll, C.SIDEBAR, UDim2.new(1, 0, 0, NAV_H))
+    bg.LayoutOrder = i
+    bg.BackgroundTransparency = 1
+    Corner(bg, 8)
+
+    local bar = Frame(bg, C.SIDEBAR, UDim2.new(0, 3, 0.55, 0))
+    bar.Position = UDim2.new(0, 0, 0.22, 0)
+    Corner(bar, 2)
+
+    local icoL = Label(bg, item.ico, 12, C.TXT3, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+    icoL.Size = UDim2.new(0, 22, 1, 0); icoL.Position = UDim2.new(0, 8, 0, 0)
+
+    local lblL = Label(bg, item.lbl, 9.5, C.TXT2, Enum.Font.Gotham, Enum.TextXAlignment.Left)
+    lblL.Size = UDim2.new(1, -34, 1, 0); lblL.Position = UDim2.new(0, 33, 0, 0)
+    lblL.TextTruncate = Enum.TextTruncate.AtEnd
+
+    NavRefs[i] = { tag=item.tag, bg=bg, bar=bar, ico=icoL, lbl=lblL }
+
+    bg.MouseButton1Click:Connect(function()
+        SwitchTab(item.tag)
+        TweenService:Create(bg, TweenInfo.new(0.06), {Size=UDim2.new(1,0,0,NAV_H-2)}):Play()
+        task.wait(0.06)
+        TweenService:Create(bg, TweenInfo.new(0.09), {Size=UDim2.new(1,0,0,NAV_H)}):Play()
+    end)
+    bg.MouseEnter:Connect(function()
+        if ActiveTab ~= item.tag then
+            TweenService:Create(bg, TweenInfo.new(0.1), {BackgroundTransparency=0, BackgroundColor3=Color3.fromRGB(180,68,5)}):Play()
+        end
+    end)
+    bg.MouseLeave:Connect(function()
+        if ActiveTab ~= item.tag then
+            TweenService:Create(bg, TweenInfo.new(0.1), {BackgroundTransparency=1}):Play()
+        end
+    end)
+end
+
+-- =====================================================
+-- PANEL HELPERS
+-- =====================================================
+local function PanelHeader(panel, title, order)
+    local f = Frame(panel, Color3.fromRGB(0,0,0), UDim2.new(1,0,0,20))
+    f.BackgroundTransparency = 1; f.LayoutOrder = order or 0
+    local l = Label(f, title, 9, C.ACC2, Enum.Font.GothamBold)
+    l.Size = UDim2.new(0.7, 0, 1, 0)
+    local line = Frame(f, C.ACC2, UDim2.new(1,0,0,1))
+    line.Position = UDim2.new(0,0,1,-1); line.BackgroundTransparency = 0.5
+    return f
+end
+
+local function EmptyCard(panel, height, order)
+    local card = Frame(panel, C.SURFACE, UDim2.new(1,0,0,height or 38))
+    card.LayoutOrder = order or 1
+    Corner(card, 8); Stroke(card, C.BORD, 1, 0.3)
+    return card
+end
+
+local function SubItem(panel, ico, title, order)
+    local card = Btn(panel, C.SURFACE, UDim2.new(1,0,0,38))
+    card.LayoutOrder = order or 1
+    Corner(card, 8); Stroke(card, C.BORD, 1, 0.3)
+
+    local iconBg = Frame(card, C.SEL_BG, UDim2.new(0,28,0,28))
+    iconBg.Position = UDim2.new(0,6,0.5,-14); Corner(iconBg, 7)
+    Label(iconBg, ico, 13, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+
+    local titleL = Label(card, title, 10, C.TXT, Enum.Font.GothamBold)
+    titleL.Size = UDim2.new(1,-70,1,0); titleL.Position = UDim2.new(0,40,0,0)
+
+    local arrow = Label(card, "›", 14, C.TXT3, Enum.Font.GothamBold, Enum.TextXAlignment.Right)
+    arrow.Size = UDim2.new(0,20,1,0); arrow.Position = UDim2.new(1,-24,0,0)
+
+    card.MouseEnter:Connect(function() TweenService:Create(card, TweenInfo.new(0.1), {BackgroundColor3=C.SURFACE2}):Play() end)
+    card.MouseLeave:Connect(function() TweenService:Create(card, TweenInfo.new(0.1), {BackgroundColor3=C.SURFACE}):Play() end)
+    return card
+end
+
+-- =====================================================
+-- MAIN STATE
+-- =====================================================
+local MAIN_STATE = { autoCollectDrops = false }
+local _autoCollectLoop = nil
+
+local function DoAutoCollect(on)
+    if on then
+        _autoCollectLoop = task.spawn(function()
+            while MAIN_STATE.autoCollectDrops do
+                -- TODO: panggil remote collect drop di sini
+                task.wait(0.3)
+            end
+        end)
+    else
+        if _autoCollectLoop then
+            pcall(function() task.cancel(_autoCollectLoop) end)
+            _autoCollectLoop = nil
+        end
+    end
+end
+
+-- =====================================================
+-- MAIN PANEL
+-- =====================================================
+do
+    local p = NewPanel("main")
+
+    local function MakePill(parent)
+        local pill = Btn(parent, Color3.fromRGB(130,45,0), UDim2.new(0,42,0,22))
+        pill.Position = UDim2.new(1,-50,0.5,-11); Corner(pill, 11)
+        local knob = Frame(pill, Color3.fromRGB(200,140,80), UDim2.new(0,16,0,16))
+        knob.Position = UDim2.new(0,3,0.5,-8); Corner(knob, 8)
+        return pill, knob
+    end
+
+    local function SetPill(pill, knob, on)
+        TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.ACC2 or Color3.fromRGB(130,45,0)}):Play()
+        TweenService:Create(knob, TweenInfo.new(0.16), {
+            Position = on and UDim2.new(1,-19,0.5,-8) or UDim2.new(0,3,0.5,-8),
+            BackgroundColor3 = on and Color3.fromRGB(255,255,255) or Color3.fromRGB(200,140,80),
+        }):Play()
+    end
+
+    local function ToggleRow(panel, title, order, onToggle)
+        local row = Frame(panel, C.SURFACE, UDim2.new(1,0,0,38))
+        row.LayoutOrder = order; Corner(row, 8); Stroke(row, C.BORD, 1, 0.3)
+        local lbl = Label(row, title, 10, C.TXT, Enum.Font.GothamBold)
+        lbl.Size = UDim2.new(1,-60,1,0); lbl.Position = UDim2.new(0,12,0,0)
+        local pill, knob = MakePill(row)
+        local state = false
+        pill.MouseButton1Click:Connect(function()
+            state = not state; SetPill(pill, knob, state)
+            if onToggle then onToggle(state) end
+        end)
+        row.MouseEnter:Connect(function() TweenService:Create(row, TweenInfo.new(0.1), {BackgroundColor3=C.SURFACE2}):Play() end)
+        row.MouseLeave:Connect(function() TweenService:Create(row, TweenInfo.new(0.1), {BackgroundColor3=C.SURFACE}):Play() end)
+        return row, pill, knob
+    end
+
+    ToggleRow(p, "Auto Magnet Gold", 1, function(on)
+        MAIN_STATE.autoCollectDrops = on
+        DoAutoCollect(on)
+    end)
+end
+
+-- =====================================================
+-- PANELS LAINNYA
+-- =====================================================
+do local p = NewPanel("excl");   PanelHeader(p,"EXCLUSIVE",0);    EmptyCard(p,38,1); EmptyCard(p,38,2) end
+do local p = NewPanel("farm");   PanelHeader(p,"FARM",0);         EmptyCard(p,38,1); EmptyCard(p,38,2); EmptyCard(p,38,3) end
+do local p = NewPanel("auto");   PanelHeader(p,"AUTOMATION",0);   EmptyCard(p,38,1); EmptyCard(p,38,2) end
+do
+    local p = NewPanel("rerol"); PanelHeader(p,"REROLING",0)
+    SubItem(p,"⚙","Hero Gear Fastroll",1)
+    SubItem(p,"⚒","Weapon Ability Fastroll",2)
+    SubItem(p,"✦","Hero Ability Fastroll",3)
+    SubItem(p,"◎","Auto Roll Halo",4)
+end
+do local p = NewPanel("potion"); PanelHeader(p,"POTION",0);       EmptyCard(p,38,1) end
+do local p = NewPanel("raid");   PanelHeader(p,"RAID NOTIFIER",0); EmptyCard(p,38,1); EmptyCard(p,38,2) end
+do local p = NewPanel("misc");   PanelHeader(p,"MISC",0);         EmptyCard(p,38,1) end
+do local p = NewPanel("set");    PanelHeader(p,"SETTINGS",0);     EmptyCard(p,38,1); EmptyCard(p,38,2) end
+do
+    local p = NewPanel("info"); PanelHeader(p,"INFO",0)
+    local card = EmptyCard(p, 80, 1)
+    local lines = {
+        {"Script",  "Auto Farming GUI"},
+        {"Author",  "FLa Project"},
+        {"Version", "1.0"},
+        {"Game",    "Arise Shadow Hunt"},
+    }
+    for i, ln in ipairs(lines) do
+        local row = Frame(card, Color3.fromRGB(0,0,0), UDim2.new(1,0,0,16))
+        row.Position = UDim2.new(0,8,0,(i-1)*17+6); row.BackgroundTransparency = 1
+        local k = Label(row, ln[1]..":", 8.5, C.TXT3, Enum.Font.GothamBold); k.Size = UDim2.new(0,70,1,0)
+        local v = Label(row, ln[2], 8.5, C.TXT, Enum.Font.Gotham)
+        v.Size = UDim2.new(1,-74,1,0); v.Position = UDim2.new(0,74,0,0)
+    end
+end
+
+-- =====================================================
+-- DEFAULT TAB & KEEP ON TOP
+-- =====================================================
+SwitchTab("main")
+
+task.spawn(function()
+    while SG and SG.Parent do
+        SG.DisplayOrder = 9999
+        task.wait(2)
+    end
+end)
+
+print("[ Auto Farming GUI ] Loaded — Full Orange Theme | by FLa")
