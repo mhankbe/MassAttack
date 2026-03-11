@@ -185,39 +185,29 @@ UserInputService.InputChanged:Connect(function(i)
         local d=i.Position-dragStart
         Window.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y) end end)
 
+-- FLOATING BUBBLE — diam di tempat, default tengah atas, bisa drag bebas
 local Bubble=Btn(ScreenGui,C.TBAR,UDim2.new(0,60,0,60))
-Bubble.Position=UDim2.new(0,20,0.5,-30); Bubble.Visible=false
+Bubble.Position=UDim2.new(0.5,-30,0,20) -- default: tengah atas
+Bubble.Visible=false
 Corner(Bubble,30); Stroke(Bubble,C.ACC,2,0)
 local BubbleLbl=Label(Bubble,"FLa",22,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
 BubbleLbl.Size=UDim2.new(1,0,1,0)
 
-local bubbleConn
-local function StopFloat()
-    if bubbleConn then bubbleConn:Disconnect(); bubbleConn=nil end
-end
-local function StartFloat()
-    StopFloat()
-    local t     = 0
-    local baseX = Bubble.Position.X.Offset
-    local baseY = Bubble.Position.Y.Offset
-    bubbleConn  = RunService.Heartbeat:Connect(function(dt)
-        t = t + dt
-        Bubble.Position = UDim2.new(0, baseX, 0, baseY + math.sin(t*2)*8)
-    end)
-end
-
 local bDrag        = false
 local bDragMoved   = false
 local bDragStart   = nil
-local bStartPos    = nil
+local bStartAbsX   = 0
+local bStartAbsY   = 0
 local DRAG_THRESH  = 6
 
 Bubble.InputBegan:Connect(function(i)
     if i.UserInputType==Enum.UserInputType.MouseButton1
     or i.UserInputType==Enum.UserInputType.Touch then
         bDrag=true; bDragMoved=false
-        bDragStart=i.Position; bStartPos=Bubble.Position
-        StopFloat()
+        bDragStart=i.Position
+        -- Pakai AbsolutePosition agar tidak terpengaruh Scale
+        bStartAbsX = Bubble.AbsolutePosition.X
+        bStartAbsY = Bubble.AbsolutePosition.Y
     end
 end)
 
@@ -226,10 +216,7 @@ Bubble.InputEnded:Connect(function(i)
     or i.UserInputType==Enum.UserInputType.Touch then
         local wasDrag = bDragMoved
         bDrag=false; bDragMoved=false
-        if wasDrag then
-            if Bubble.Visible then StartFloat() end
-        else
-            StopFloat()
+        if not wasDrag then
             Bubble.Visible = false
             Window.Visible = true
         end
@@ -244,16 +231,18 @@ UserInputService.InputChanged:Connect(function(i)
             bDragMoved=true
         end
         if bDragMoved then
-            Bubble.Position=UDim2.new(0,bStartPos.X.Offset+d.X,0,bStartPos.Y.Offset+d.Y)
+            -- Pure Offset (Scale=0) agar posisi tidak loncat
+            Bubble.Position = UDim2.new(0, bStartAbsX + d.X, 0, bStartAbsY + d.Y)
         end
     end
 end)
 
 BtnMin.MouseButton1Click:Connect(function()
     Window.Visible=false
-    Bubble.Position=UDim2.new(0,20,0.5,-30)
+    -- Posisi tengah atas menggunakan pure Offset dari viewport
+    local vp = workspace.CurrentCamera.ViewportSize
+    Bubble.Position = UDim2.new(0, vp.X/2 - 30, 0, 20)
     Bubble.Visible=true
-    StartFloat()
 end)
 
 local isFS,prevSz,prevPs=false,Window.Size,Window.Position
@@ -2747,15 +2736,27 @@ local function MakeWeaponSlotPopup(ddBtn, slotIndex)
     local cLbl=Label(clearBtn,"Clear",10,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
     cLbl.Size=UDim2.new(1,0,1,0); cLbl.ZIndex=9999
 
-    local scrollPop=Frame(popup,C.DD_BG,UDim2.new(1,0,0,0))
-    scrollPop.ZIndex=9999; scrollPop.Position=UDim2.new(0,0,0,30)
+    local list = W_QUIRK_LIST_PER_SLOT[slotIndex]
+    local MAX_POPUP_H = _isSmallScreen and 180 or 200
+    local contentH = #list * 30 + 16
+    -- Pakai ScrollingFrame agar bisa scroll ke bawah
+    local scrollPop = New("ScrollingFrame", {
+        Parent=popup, BackgroundColor3=C.DD_BG, BorderSizePixel=0,
+        Size=UDim2.new(1,0,0,math.min(contentH, MAX_POPUP_H)),
+        Position=UDim2.new(0,0,0,30),
+        CanvasSize=UDim2.new(0,0,0,contentH),
+        ScrollBarThickness=_isSmallScreen and 5 or 4,
+        ScrollBarImageColor3=C.ACC,
+        ScrollingDirection=Enum.ScrollingDirection.Y,
+        ZIndex=9999,
+    })
     New("UIListLayout",{Parent=scrollPop,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,2)})
     New("UIPadding",{Parent=scrollPop,PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4),PaddingLeft=UDim.new(0,4),PaddingRight=UDim.new(0,4)})
-    scrollPop.AutomaticSize=Enum.AutomaticSize.Y
+    -- Sesuaikan ukuran popup container
+    popup.AutomaticSize = Enum.AutomaticSize.None
+    popup.Size = UDim2.new(0,absSize.X+30,0,28+math.min(contentH,MAX_POPUP_H))
 
     local wRowRefs = {}
-    local list = W_QUIRK_LIST_PER_SLOT[slotIndex]
-    scrollPop.Size = UDim2.new(1,0,0,min(#list*30+8,190))
 
     for _,q in ipairs(list) do
         local qRow=Btn(scrollPop,C.DD_BG,UDim2.new(1,-8,0,28))
