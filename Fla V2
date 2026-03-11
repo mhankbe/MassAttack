@@ -28,11 +28,20 @@ task.wait(3) -- tunggu game fully loaded sebelum script berjalan
 -- =====================================================
 -- REMOTES
 -- =====================================================
-local Remotes          = RS:WaitForChild("Remotes", 1)
-local RE_CollectItem   = Remotes:WaitForChild("CollectItem", 1)
-local RE_ExtraReward   = Remotes:WaitForChild("ExtraReward", 1)
-local RE_AutoHeroQuirk  = Remotes:WaitForChild("AutoRandomHeroQuirk", 1)
-local RE_RandomHeroQuirk = Remotes:WaitForChild("RandomHeroQuirk", 1)
+local Remotes          = RS:WaitForChild("Remotes", 10)
+local RE_CollectItem   = Remotes:WaitForChild("CollectItem", 10)
+local RE_ExtraReward   = Remotes:WaitForChild("ExtraReward", 10)
+-- AutoRandomHeroQuirk: remote khusus auto roll (mungkin tidak ada di semua server)
+-- RandomHeroQuirk: remote reroll manual biasa — ini yang PASTI ada
+local RE_AutoHeroQuirk   = Remotes:FindFirstChild("AutoRandomHeroQuirk")
+local RE_RandomHeroQuirk = Remotes:WaitForChild("RandomHeroQuirk", 10)
+
+-- Log status remote saat load
+print("[ ASH ] RE_AutoHeroQuirk  = "..tostring(RE_AutoHeroQuirk))
+print("[ ASH ] RE_RandomHeroQuirk = "..tostring(RE_RandomHeroQuirk))
+if not RE_RandomHeroQuirk then
+    warn("[ ASH ] FATAL: RandomHeroQuirk tidak ditemukan! AutoReroll tidak akan berfungsi.")
+end
 
 -- Remotes tambahan: Mass Attack & Auto Goyang
 local RE_Click     = Remotes:FindFirstChild("ClickEnemy")
@@ -46,6 +55,7 @@ local MY_USER_ID = LP.UserId
 local HERO_GUIDS = {}
 
 -- Hook heroGuid dari HeroMoveToEnemyPos
+-- Setiap kali hero bergerak (termasuk ganti hero), GUID langsung di-capture ulang
 pcall(function()
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
@@ -55,7 +65,11 @@ pcall(function()
             if args[1] and type(args[1])=="table" and args[1].heroTagetPosInfos then
                 local newGuids = {}
                 for hGuid,_ in pairs(args[1].heroTagetPosInfos) do table.insert(newGuids,hGuid) end
-                if #newGuids>0 then HERO_GUIDS=newGuids end
+                if #newGuids > 0 then
+                    HERO_GUIDS = newGuids
+                    -- Langsung update heroGuid aktif — deteksi ganti hero otomatis
+                    pcall(SetHeroGuid, newGuids[1], "HeroMove")
+                end
             end
         end
         return oldNamecall(self, ...)
@@ -708,7 +722,13 @@ local function DoRejoin()
     pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,LP) end)
 end
 
--- StopLoop: deprecated, diganti inline
+-- StopLoop: cancel task dari LOOPS table
+local function StopLoop(key)
+    if LOOPS[key] then
+        pcall(function() task.cancel(LOOPS[key]) end)
+        LOOPS[key] = nil
+    end
+end
 
 
 local StatusDots,StatusLbls={},{}
@@ -944,45 +964,44 @@ local QUIRK_LIST_PER_SLOT = {
         {id=99014,name="Hyper Sprint"},
         {id=99015,name="Time Skipper"},
         {id=99016,name="Cosmic Luck"},
-        {id=99017,name="Destiny Rewriter"},
-        {id=99018,name="Final Judgment"},
+        {id=99017,name="Destiny Rewrite"},
     },
     -- Slot 2 / Mesin 2 (drawId=920002)
     {
-        {id=99019,name="Sharp Instinct"},
-        {id=99020,name="Mana Surge"},
-        {id=99021,name="Thrifty Novice"},
-        {id=99022,name="Elemental Affinity"},
-        {id=99023,name="Meticulous"},
-        {id=99024,name="Keen Eyes"},
+        {id=99019,name="Thrifty Novice"},
+        {id=99020,name="Sharp Instinct"},
+        {id=99021,name="Mana Surge"},
+        {id=99022,name="Meticulous"},
+        {id=99023,name="Keen Eyes"},
+        {id=99024,name="Elemental Affinity"},
         {id=99025,name="Resource Master"},
-        {id=99026,name="Arcane Mastery"},
-        {id=99027,name="Killer Instinct"},
+        {id=99026,name="Killer Instinct"},
+        {id=99027,name="Arcane Mastery"},
         {id=99028,name="Combat Optimization"},
-        {id=99029,name="Savage Blow"},
-        {id=99030,name="Efficient Destruction"},
+        {id=99029,name="Efficient Destruction"},
+        {id=99030,name="Savage Blow"},
         {id=99031,name="Resource Conqueror"},
         {id=99032,name="Elemental Overload"},
-        {id=99033,name="Apocalypse Carnival"},
-        {id=99034,name="Divine Judgment"},
-        {id=99035,name="God's Gift"},
-        {id=99036,name="Crimson Executioner"},
+        {id=99033,name="Crimson Executioner"},
+        {id=99034,name="God's Gift"},
+        {id=99035,name="Apocalypse Carnival"},
+        {id=99036,name="Divine Judgment"},
     },
     -- Slot 3 / Mesin 3 (drawId=920003)
     {
-        {id=99037,name="Omen of Doom"},
-        {id=99038,name="Awakening Will"},
-        {id=99041,name="Sharp Edge"},
-        {id=99042,name="Breath of the End"},
-        {id=99043,name="Breaking Power"},
-        {id=99045,name="Boiling Fury"},
+        {id=99037,name="Awakening Will"},
+        {id=99038,name="Omen of Doom"},
+        {id=99041,name="Breath of the End"},
+        {id=99042,name="Sharp Edge"},
+        {id=99043,name="Boiling Fury"},
+        {id=99045,name="Breaking Power"},
         {id=99047,name="Whisper of Death"},
         {id=99048,name="Annihilation Boost"},
         {id=99049,name="Slayer's Instinct"},
         {id=99050,name="Harbinger of Ruin"},
         {id=99052,name="Godslayer's Fury"},
-        {id=99053,name="Final Arbiter"},
-        {id=99054,name="Deicide's Endgame"},
+        {id=99053,name="Deicide's Endgame"},
+        {id=99054,name="Final Arbiter"},
     },
 }
 
@@ -1062,8 +1081,12 @@ local function RefreshSlotUI(slotIndex)
     if STATE.autoRoll and _slotRunning[slotIndex] and _rollCaptured and _rollHeroGuid~="" then
         _slotRunning[slotIndex] = false
         StopLoop("roll"..slotIndex)
-        task.wait(0.05)
-        StartSlotLoop(slotIndex)
+        task.spawn(function()
+            task.wait(0.05)
+            if STATE.autoRoll then
+                StartSlotLoop(slotIndex)
+            end
+        end)
     end
 end
 
@@ -1103,6 +1126,7 @@ end
 
 -- =====================================================
 -- CAPTURE HELPER — set heroGuid, log ke console
+-- Support ganti hero on-the-fly: selalu update jika GUID berubah
 -- =====================================================
 local function SetHeroGuid(guid, method)
     if not guid or guid=="" then return end
@@ -1110,22 +1134,55 @@ local function SetHeroGuid(guid, method)
         warn("[ ASH ] SetHeroGuid: bukan UUID valid → "..tostring(guid))
         return
     end
-    if _rollCaptured and _rollHeroGuid==guid then return end
+    -- Skip hanya jika GUID benar-benar sama persis
+    if _rollHeroGuid == guid then return end
+
+    local isSwitch = _rollCaptured and _rollHeroGuid ~= "" and _rollHeroGuid ~= guid
     _rollHeroGuid  = guid
     _rollCaptured  = true
     _captureMethod = method or "unknown"
-    print("[ ASH ✓ ] heroGuid captured via ["..(_captureMethod).."]")
-    print("[ ASH ✓ ] GUID = ".._rollHeroGuid)
+
+    if isSwitch then
+        print("[ ASH ] Hero berganti! GUID baru via ["..(_captureMethod).."]")
+    else
+        print("[ ASH ] heroGuid captured via ["..(_captureMethod).."]")
+    end
+    print("[ ASH ] GUID = ".._rollHeroGuid)
+
     if _rerollStatusLbl then
-        _rerollStatusLbl.Text = "✓ Captured ["..(_captureMethod).."] — siap reroll"
+        local txt = isSwitch
+            and "Hero berganti — GUID updated!"
+            or  "Captured ["..(_captureMethod).."] — siap reroll"
+        _rerollStatusLbl.Text = txt
         _rerollStatusLbl.TextColor3 = Color3.fromRGB(80,220,80)
     end
     if _captureStatusLbl then
-        _captureStatusLbl.Text = "✓ ["..(_captureMethod).."] — ".._rollHeroGuid:sub(1,18).."..."
+        _captureStatusLbl.Text = "["..(_captureMethod).."] — ".._rollHeroGuid:sub(1,18).."..."
         _captureStatusLbl.TextColor3 = Color3.fromRGB(80,220,80)
     end
     if _rollDotRef then
         _rollDotRef.BackgroundColor3 = Color3.fromRGB(80,220,80)
+    end
+
+    -- Jika AutoReroll sedang aktif dan hero berganti, restart semua slot loop
+    -- agar langsung pakai GUID terbaru tanpa perlu toggle ulang
+    if isSwitch and STATE.autoRoll then
+        print("[ ASH ] AutoReroll restart karena hero berganti...")
+        task.spawn(function()
+            for i = 1, 3 do
+                _slotRunning[i] = false
+                StopLoop("roll"..i)
+            end
+            task.wait(0.1)
+            if not STATE.autoRoll then return end
+            for i = 1, 3 do
+                StartSlotLoop(i)
+            end
+            if _rerollStatusLbl then
+                _rerollStatusLbl.Text = "Restart — hero baru aktif"
+                _rerollStatusLbl.TextColor3 = Color3.fromRGB(255,200,60)
+            end
+        end)
     end
 end
 
@@ -1181,7 +1238,9 @@ local function SetupUniversalSpy()
                         local a = args[i]
                         if type(a) == "table" then
                             local g = a.heroGuid or a.HeroGuid or a.hero_guid
+                                   or a.guid or a.Guid or a.id or a.heroId
                             if g and IsValidUUID(tostring(g)) then
+                                -- Selalu panggil SetHeroGuid agar ganti hero ter-detect
                                 SetHeroGuid(tostring(g), "hook:"..tostring(self.Name))
                             end
                             local d = a.drawId or a.DrawId or a.draw_id
@@ -1605,9 +1664,9 @@ local function StartSlotLoop(slotIndex)
         _weaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(255,200,100)
     end
 
-    print("[Roll S"..slotIndex.."] START via AutoRandomHeroQuirk | drawId=".._slotDrawId[slotIndex]
+    print("[Roll S"..slotIndex.."] START via RandomHeroQuirk | drawId=".._slotDrawId[slotIndex]
         ..((_slotDrawIdCaptured[slotIndex] and " ✓captured") or " ⚠default")
-        .." | stopQuirkIds="..#stopIds.." ids | target: "..targetStr)
+        .." | target: "..targetStr)
 
     LOOPS["roll"..slotIndex] = task.spawn(function()
         local attempt = 0
@@ -1630,29 +1689,30 @@ local function StartSlotLoop(slotIndex)
                 _weaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(255,200,100)
             end
 
+            -- Selalu pakai RandomHeroQuirk — ini remote reroll manual yang valid
+            -- AutoRandomHeroQuirk diabaikan karena server menolak (balik nil)
+            if not RE_RandomHeroQuirk then
+                RE_RandomHeroQuirk = Remotes:FindFirstChild("RandomHeroQuirk")
+            end
+            if not RE_RandomHeroQuirk then
+                warn("[Roll S"..slotIndex.."] RandomHeroQuirk nil! Retry...")
+                task.wait(2)
+                continue
+            end
+
             local ok, result = pcall(function()
-                return RE_AutoHeroQuirk:InvokeServer({
-                    heroGuid    = _rollHeroGuid,
-                    drawId      = _slotDrawId[slotIndex],
-                    stopQuirkIds = curStopIds,
+                return RE_RandomHeroQuirk:InvokeServer({
+                    heroGuid = _rollHeroGuid,
+                    drawId   = _slotDrawId[slotIndex],
                 })
             end)
 
             if not ok then
-                warn("[Roll S"..slotIndex.."] AutoQuirk error #"..attempt.." — fallback RandomHeroQuirk")
-                if _weaponSlotLbls[slotIndex] then
-                    _weaponSlotLbls[slotIndex].Text = "Slot "..slotIndex..": ⚠ Error, retry..."
-                    _weaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(255,80,80)
-                end
-                -- Fallback ke RandomHeroQuirk manual jika AutoRandomHeroQuirk gagal
-                pcall(function()
-                    RE_RandomHeroQuirk:InvokeServer({
-                        heroGuid = _rollHeroGuid,
-                        drawId   = _slotDrawId[slotIndex],
-                    })
-                end)
-                task.wait(1)
-            elseif type(result) == "table" then
+                warn("[Roll S"..slotIndex.."] InvokeServer error #"..attempt..": "..tostring(result))
+                task.wait(0.5)
+            end
+
+            if ok and type(result) == "table" then
                 -- Deep scan result untuk cari gotId
                 local slotIdSet = {}
                 for _,q in ipairs(slotPool) do slotIdSet[q.id]=true end
@@ -1702,10 +1762,15 @@ local function StartSlotLoop(slotIndex)
                     _weaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(220,220,80)
                 end
 
-                -- Cek apakah hasil ini adalah target yang dicari
+                -- Cek apakah hasil ini adalah target yang dicari (sepenuhnya di sisi script)
                 local curTargetSet = {}
-                for _,id in ipairs(curStopIds) do curTargetSet[id]=true end
-                local hit = (gotId~=nil) and (not curHasTarget or curTargetSet[gotId]==true)
+                for _,id in ipairs(curStopIds) do curTargetSet[id] = true end
+                -- Jika ada target spesifik: stop hanya kalau gotId ada di target
+                -- Jika tidak ada target: stop kapanpun dapat quirk valid dari slot ini
+                local slotIdSetCur = {}
+                for _,q in ipairs(slotPool) do slotIdSetCur[q.id] = true end
+                local isValidQuirk = gotId ~= nil and (slotIdSetCur[gotId] or QUIRK_MAP[gotId])
+                local hit = isValidQuirk and (not curHasTarget or curTargetSet[gotId] == true)
 
                 if hit then
                     StopSlotRoll(slotIndex, "✓ "..name.." (#"..attempt..")")
@@ -1716,9 +1781,10 @@ local function StartSlotLoop(slotIndex)
                     return
                 end
                 task.wait(0.05)
-            else
-                warn("[Roll S"..slotIndex.."] result bukan table: "..tostring(result))
-                task.wait(0.5)
+            elseif ok then
+                -- result bukan table (bisa nil/false/string) — tetap lanjut roll
+                warn("[Roll S"..slotIndex.."] result bukan table (#"..attempt.."): "..tostring(result))
+                task.wait(0.3)
             end
         end
         print("[Roll S"..slotIndex.."] loop berhenti.")
@@ -1726,10 +1792,12 @@ local function StartSlotLoop(slotIndex)
 end
 
 local function DoAutoRoll(on)
+    -- Stop semua slot dulu (non-blocking via spawn)
     for i=1,3 do _slotRunning[i]=false end
-    task.wait(0.1)
     StopLoop("roll1"); StopLoop("roll2"); StopLoop("roll3")
+
     if not on then
+        _rollRunning = false
         if _rerollStatusLbl then _rerollStatusLbl.Text="Idle"; _rerollStatusLbl.TextColor3=C.TXT2 end
         if _rollDotRef then _rollDotRef.BackgroundColor3=Color3.fromRGB(100,100,100) end
         for i=1,3 do
@@ -1737,19 +1805,31 @@ local function DoAutoRoll(on)
         end
         return
     end
+
+    -- Fallback: coba ambil GUID dari HERO_GUIDS
+    if (not _rollCaptured or _rollHeroGuid=="") and #HERO_GUIDS > 0 then
+        SetHeroGuid(HERO_GUIDS[1], "fallback:HeroGuids")
+    end
+
     if not _rollCaptured or _rollHeroGuid=="" then
         if _rerollStatusLbl then
-            _rerollStatusLbl.Text="⚠ Klik ReRoll manual 1x dulu!"
+            _rerollStatusLbl.Text="Klik ReRoll manual 1x dulu di game!"
             _rerollStatusLbl.TextColor3=Color3.fromRGB(255,100,60)
         end
         STATE.autoRoll=false; RefreshStatus(); return
     end
-    _rollRunning = true
-    if _rollDotRef then _rollDotRef.BackgroundColor3=Color3.fromRGB(255,200,60) end
-    print("[Roll] START 3 slot paralel — heroGuid=".._rollHeroGuid)
-    StartSlotLoop(1)
-    StartSlotLoop(2)
-    StartSlotLoop(3)
+
+    -- Spawn agar tidak block UI thread saat start
+    task.spawn(function()
+        task.wait(0.05) -- beri jeda kecil agar StopLoop selesai cancel task lama
+        if not STATE.autoRoll then return end -- cek ulang, mungkin user toggle off lagi
+        _rollRunning = true
+        if _rollDotRef then _rollDotRef.BackgroundColor3=Color3.fromRGB(255,200,60) end
+        print("[Roll] START 3 slot paralel — heroGuid=".._rollHeroGuid)
+        StartSlotLoop(1)
+        StartSlotLoop(2)
+        StartSlotLoop(3)
+    end)
 end
 
 -- =====================================================
@@ -2868,8 +2948,11 @@ do
         STATE.autoRoll=enOn
         enToggle.BackgroundColor3=enOn and C.ACC or Color3.fromRGB(60,60,60)
         enKnob.Position=enOn and UDim2.new(1,-18,0.5,-8) or UDim2.new(0,2,0.5,-8)
+        -- DoAutoRoll dulu sebelum RefreshSlotUI
+        -- agar STATE sudah siap sebelum slot UI di-refresh
+        DoAutoRoll(enOn)
         for i=1,3 do RefreshSlotUI(i) end
-        DoAutoRoll(enOn); RefreshStatus()
+        RefreshStatus()
     end)
 
     -- Toggle buka/tutup dropdown
