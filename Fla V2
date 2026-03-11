@@ -570,42 +570,17 @@ local MAIN_STATE      = { autoCollectDrops = false }
 local _autoCollectLoop = nil
 local _collectedGuids  = {}  -- cache guid yg sudah di-collect, hindari double invoke
 
--- Scan seluruh workspace, cari guid item drop
--- Game menyimpan guid sebagai: Attribute, StringValue, atau nama object berbentuk UUID
+-- Scan Workspace.Golds, ambil Attribute "GUID" dari tiap OutGold
 local function GetAllDropGuids()
     local guids = {}
-    for _, obj in ipairs(workspace:GetDescendants()) do
+    local goldsFolder = workspace:FindFirstChild("Golds")
+    if not goldsFolder then return guids end
+
+    for _, obj in ipairs(goldsFolder:GetChildren()) do
         local guid = nil
-
-        -- 1) coba via Attribute
         pcall(function()
-            guid = obj:GetAttribute("guid")
-                or obj:GetAttribute("GUID")
-                or obj:GetAttribute("Id")
-                or obj:GetAttribute("id")
+            guid = obj:GetAttribute("GUID")
         end)
-
-        -- 2) coba via StringValue child
-        if not guid then
-            pcall(function()
-                local sv = obj:FindFirstChild("guid")
-                    or obj:FindFirstChild("GUID")
-                    or obj:FindFirstChild("Id")
-                if sv and sv:IsA("StringValue") then
-                    guid = sv.Value
-                end
-            end)
-        end
-
-        -- 3) coba nama object itu sendiri kalau berbentuk UUID
-        if not guid then
-            pcall(function()
-                if obj.Name:match("^%x+%-%x+%-%x+%-%x+%-%x+$") then
-                    guid = obj.Name
-                end
-            end)
-        end
-
         if guid and guid ~= "" and not _collectedGuids[guid] then
             table.insert(guids, guid)
         end
@@ -638,10 +613,10 @@ local function DoAutoCollect(on)
                         })
                     end)
 
-                    task.wait(0.08) -- jeda kecil antar item
+                    task.wait(0.05) -- jeda kecil antar item
                 end
 
-                task.wait(0.4) -- interval scan ulang workspace
+                task.wait(0.2) -- interval scan ulang workspace
             end
         end)
     else
