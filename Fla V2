@@ -2,6 +2,7 @@
 --   Theme : Full Orange iPhone 17 Pro Max
 --   By    : FLa Project  (Fixed by Assistant)
 --   Platform : Android (Delta) + PC (Xeno) — Full Support
+--   [UPDATED] Floating Bubble diganti dengan versi sc_baru (v14.5)
 
 local Players          = game:GetService("Players")
 local TweenService     = game:GetService("TweenService")
@@ -56,7 +57,7 @@ local MY_USER_ID = LP.UserId
 local HERO_GUIDS = {}
 
 -- ============================================================
--- FIX #1: IsValidUUID DIDEFINISIKAN LEBIH AWAL
+-- IsValidUUID
 -- ============================================================
 local UUID_PATTERN = "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$"
 local function IsValidUUID(s)
@@ -198,9 +199,100 @@ New("UIGradient", {
 })
 
 -- ============================================================
+-- BUBBLE — DIGANTI DARI sc_baru (v14.5)
+-- Perubahan vs versi lama FLA_FIX_V10:
+--   • Tampilan: gradient orange + label "FLa" & "ASH"
+--   • Drag: pakai delta posisi sederhana + clamp viewport
+--   • Float: sin wave ringan via task.spawn loop
+--   • Show/Hide: pop tween Back + shrink tween Back
+-- ============================================================
+local Bubble = Btn(ScreenGui, C.TBAR, UDim2.new(0,58,0,58))
+Bubble.Position = UDim2.new(0.5,-29,0,50)
+Bubble.Visible  = false
+Bubble.ZIndex   = 10
+Corner(Bubble, 30)
+
+do
+    -- Gradient
+    local g = Instance.new("UIGradient", Bubble)
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255,120,30)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(160,50,5)),
+    })
+    g.Rotation = 135
+
+    -- Stroke
+    local s = Instance.new("UIStroke", Bubble)
+    s.Color = Color3.fromRGB(255,175,80); s.Thickness = 2; s.Transparency = 0.15
+
+    -- Label atas: "FLa"
+    local l1 = Instance.new("TextLabel", Bubble)
+    l1.Size = UDim2.new(1,0,0.55,0); l1.Position = UDim2.new(0,0,0.07,0)
+    l1.BackgroundTransparency = 1; l1.Text = "FLa"; l1.TextSize = 15
+    l1.Font = Enum.Font.GothamBold; l1.TextColor3 = Color3.fromRGB(255,255,255)
+    l1.TextXAlignment = Enum.TextXAlignment.Center
+
+    -- Label bawah: "ASH"
+    local l2 = Instance.new("TextLabel", Bubble)
+    l2.Size = UDim2.new(1,0,0.3,0); l2.Position = UDim2.new(0,0,0.64,0)
+    l2.BackgroundTransparency = 1; l2.Text = "ASH"; l2.TextSize = 7
+    l2.Font = Enum.Font.Gotham; l2.TextColor3 = C.ACC2
+    l2.TextXAlignment = Enum.TextXAlignment.Center
+end
+
+-- Float Animation
+local function FloatBubble()
+    task.spawn(function()
+        local t = 0
+        while Bubble.Visible do
+            t = t + task.wait(0.03)
+            local p = Bubble.Position
+            Bubble.Position = UDim2.new(
+                p.X.Scale, p.X.Offset,
+                p.Y.Scale, p.Y.Offset + math.sin(t*2)*4 - math.sin((t-0.03)*2)*4
+            )
+        end
+    end)
+end
+
+-- Drag Bubble
+do
+    local bd  = false
+    local bsm = Vector2.new()
+    local bsp = Vector2.new()
+
+    Bubble.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            bd  = true
+            bsm = Vector2.new(i.Position.X, i.Position.Y)
+            bsp = Vector2.new(Bubble.AbsolutePosition.X, Bubble.AbsolutePosition.Y)
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(i)
+        if bd and (i.UserInputType == Enum.UserInputType.MouseMovement
+        or i.UserInputType == Enum.UserInputType.Touch) then
+            local inset = GuiService:GetGuiInset()
+            local vp    = workspace.CurrentCamera.ViewportSize
+            Bubble.Position = UDim2.new(
+                0, math.clamp(bsp.X + (i.Position.X - bsm.X), 0, vp.X - 58),
+                0, math.clamp(bsp.Y + (i.Position.Y - bsm.Y) - inset.Y, 0, vp.Y - 58)
+            )
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            bd = false
+        end
+    end)
+end
+
+-- ============================================================
 -- TOPBAR
 -- ============================================================
-local Bubble  -- forward declare
 local function BuildTopBar()
     local TopBar = Frame(Window, C.TBAR, UDim2.new(1,0,0,40))
     Corner(TopBar, 14)
@@ -230,7 +322,7 @@ local function BuildTopBar()
     local BtnMax   = WinBtn(WIN_W - 46, C.WIN_MAX, "□")
     local BtnClose = WinBtn(WIN_W - 24, C.WIN_CLOSE, "✕")
 
-    -- Drag
+    -- Drag Window
     local dragging, dragStart, startPos = false, nil, nil
     TopBar.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1
@@ -255,71 +347,36 @@ local function BuildTopBar()
         end
     end)
 
-    -- Bubble (minimize icon)
-    Bubble = Btn(ScreenGui, C.TBAR, UDim2.new(0,60,0,60))
-    Bubble.Position = UDim2.new(0,20,0.5,-30); Bubble.Visible = false
-    Corner(Bubble, 30); Stroke(Bubble, C.ACC, 2, 0)
-    New("ImageLabel", {
-        Parent = Bubble, Size = UDim2.new(1,-8,1,-8),
-        Position = UDim2.new(0,4,0,4), BackgroundTransparency = 1,
-        Image = "rbxassetid://94345215529328", ScaleType = Enum.ScaleType.Fit, ZIndex = 5,
-    })
-
-    local bubbleConn
-    local function StopFloat()
-        if bubbleConn then bubbleConn:Disconnect(); bubbleConn = nil end
-    end
-    local function StartFloat()
-        StopFloat()
-        local t, baseX, baseY = 0, Bubble.Position.X.Offset, Bubble.Position.Y.Offset
-        bubbleConn = RunService.Heartbeat:Connect(function(dt)
-            t = t + dt
-            Bubble.Position = UDim2.new(0, baseX, 0, baseY + math.sin(t*2)*8)
-        end)
-    end
-
-    local bDrag, bDragMoved, bDragStart, bStartPos = false, false, nil, nil
-    local DRAG_THRESH = 6
-
-    Bubble.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1
-        or i.UserInputType == Enum.UserInputType.Touch then
-            bDrag = true; bDragMoved = false
-            bDragStart = i.Position; bStartPos = Bubble.Position
-            StopFloat()
-        end
-    end)
-    Bubble.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1
-        or i.UserInputType == Enum.UserInputType.Touch then
-            local wasDrag = bDragMoved
-            bDrag = false; bDragMoved = false
-            if wasDrag then
-                if Bubble.Visible then StartFloat() end
-            else
-                StopFloat(); Bubble.Visible = false; Window.Visible = true
-            end
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(i)
-        if bDrag and (i.UserInputType == Enum.UserInputType.MouseMovement
-        or i.UserInputType == Enum.UserInputType.Touch) then
-            local d = i.Position - bDragStart
-            if math.abs(d.X) > DRAG_THRESH or math.abs(d.Y) > DRAG_THRESH then
-                bDragMoved = true
-            end
-            if bDragMoved then
-                Bubble.Position = UDim2.new(0, bStartPos.X.Offset + d.X, 0, bStartPos.Y.Offset + d.Y)
-            end
-        end
-    end)
-
-    BtnMin.MouseButton1Click:Connect(function()
+    -- Show Bubble (minimize) — dari sc_baru
+    local function ShowBubble()
         Window.Visible = false
-        Bubble.Position = UDim2.new(0,20,0.5,-30)
-        Bubble.Visible = true; StartFloat()
-    end)
+        local vp = workspace.CurrentCamera.ViewportSize
+        Bubble.Position = UDim2.new(0, vp.X/2 - 29, 0, 50)
+        Bubble.Size     = UDim2.new(0,0,0,0)
+        Bubble.Visible  = true
+        TweenService:Create(Bubble,
+            TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+            {Size = UDim2.new(0,58,0,58)}
+        ):Play()
+        FloatBubble()
+    end
 
+    -- Show Window (restore) — dari sc_baru
+    local function ShowWin()
+        TweenService:Create(Bubble,
+            TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+            {Size = UDim2.new(0,0,0,0)}
+        ):Play()
+        task.wait(0.19)
+        Bubble.Visible = false
+        Bubble.Size    = UDim2.new(0,58,0,58)
+        Window.Visible = true
+    end
+
+    BtnMin.MouseButton1Click:Connect(ShowBubble)
+    Bubble.MouseButton1Click:Connect(ShowWin)
+
+    -- Maximize tetap dari versi lama
     local isFS, prevSz, prevPs = false, Window.Size, Window.Position
     BtnMax.MouseButton1Click:Connect(function()
         isFS = not isFS
@@ -473,7 +530,6 @@ local STATE = {autoCollect=false, autoDestroyer=false, autoArise=false, autoRoll
 local LOOPS = {}
 local COLLECTED = {}
 
--- FIX #2: StartLoop dan StopLoop didefinisikan bersama
 local function StopLoop(key)
     if LOOPS[key] then
         pcall(function() task.cancel(LOOPS[key]) end)
@@ -486,9 +542,7 @@ local function StartLoop(key, fn)
     LOOPS[key] = task.spawn(fn)
 end
 
--- Mass Attack state
 local MA = {running=false, thread=nil, killed=0, killTarget=7, autoCollect=true}
--- Auto Goyang state
 local AG = {running=false, thread=nil, killed=0, collected=0, currentTarget=nil, autoCollect=true}
 
 local _maStatusLbl  = nil
@@ -500,7 +554,6 @@ local _mOn          = false
 local _agOn         = false
 local ORIGIN_POS    = Vector3.new(0,0,0)
 
--- Status UI refs
 local StatusDots = {}
 local StatusLbls = {}
 
@@ -970,35 +1023,22 @@ for _, list in ipairs(W_QUIRK_LIST_PER_SLOT) do
     for _, q in ipairs(list) do W_QUIRK_MAP[q.id] = q.name end
 end
 
--- Pet Gear grades & mesin
--- ✅ DIKONFIRMASI 100% dari GUI scanner (ScanAll):
---   R-Pet (drawId 980001): 990001=E, 990002=D, 990003=C, 990004=B, 990005=A
---                          990006=S, 990007=SS, 990008=G, 990009=N, 990010=M
---   Y-Pet (drawId 980002): 990011=E, 990012=D, 990013=C, 990014=B, 990015=A
---                          990016=S, 990017=SS, 990018=G, 990019=N, 990020=M
---   B-Pet (drawId 980003): 990021=E, 990022=D, 990023=C, 990024=B, 990025=A
---                          990026=S, 990027=SS, 990028=G, 990029=N, 990030=M
 local PG_MACHINE_NAMES = {"R-Pet Gear", "Y-Pet Gear", "B-Pet Gear"}
 local PG_DRAW_IDS      = {980001, 980002, 980003}
 
--- Satu set grade yang sama (E→M), ID berbeda per mesin
--- Dipakai di dropdown dan di-match langsung dari response server
 local PG_GRADES_PER_MACHINE = {
-    -- R-Pet (drawId 980001)
     {
         {id=990001, name="E"},  {id=990002, name="D"},  {id=990003, name="C"},
         {id=990004, name="B"},  {id=990005, name="A"},  {id=990006, name="S"},
         {id=990007, name="SS"}, {id=990008, name="G"},  {id=990009, name="N"},
         {id=990010, name="M"},
     },
-    -- Y-Pet (drawId 980002)
     {
         {id=990011, name="E"},  {id=990012, name="D"},  {id=990013, name="C"},
         {id=990014, name="B"},  {id=990015, name="A"},  {id=990016, name="S"},
         {id=990017, name="SS"}, {id=990018, name="G"},  {id=990019, name="N"},
         {id=990020, name="M"},
     },
-    -- B-Pet (drawId 980003)
     {
         {id=990021, name="E"},  {id=990022, name="D"},  {id=990023, name="C"},
         {id=990024, name="B"},  {id=990025, name="A"},  {id=990026, name="S"},
@@ -1007,13 +1047,13 @@ local PG_GRADES_PER_MACHINE = {
     },
 }
 
--- Lookup ID → nama (untuk display di status bar)
 local PG_GRADE_MAP = {}
 for _, list in ipairs(PG_GRADES_PER_MACHINE) do
     for _, g in ipairs(list) do PG_GRADE_MAP[g.id] = g.name end
 end
+
 -- ============================================================
--- REROLL STATE (dalam table agar tidak konsumsi banyak locals)
+-- REROLL STATE
 -- ============================================================
 local HR = {
     guid="", captured=false, captureMethod="",
@@ -1044,22 +1084,20 @@ local WR = {
 local PGR = {
     guids       = {"","",""},
     captured    = {false,false,false},
-    targets     = {{},{},{}},       -- selTable grade: {["G"]=true,...}
+    targets     = {{},{},{}},
     running     = {false,false,false},
-    -- UI refs (diisi saat panel dibuat)
-    statLbls    = {nil,nil,nil},    -- status baris utama
-    dotRefs     = {nil,nil,nil},    -- dot indikator warna
-    sumLbls     = {nil,nil,nil},    -- summary di dd button
-    attemptLbls = {nil,nil,nil},    -- "Attempt: #xxx"
-    lastLbls    = {nil,nil,nil},    -- "Last: <grade>"
-    toggleBtns  = {nil,nil,nil},    -- ref toggle btn (untuk auto-off)
-    toggleKnobs = {nil,nil,nil},    -- ref knob toggle
+    statLbls    = {nil,nil,nil},
+    dotRefs     = {nil,nil,nil},
+    sumLbls     = {nil,nil,nil},
+    attemptLbls = {nil,nil,nil},
+    lastLbls    = {nil,nil,nil},
+    toggleBtns  = {nil,nil,nil},
+    toggleKnobs = {nil,nil,nil},
     enOnFlags   = {false,false,false},
 }
 
--- Halo Roll state
 local HALO_NAMES   = {"Bronze Halo", "Gold Halo", "Diamond Halo"}
-local HALO_DRAW_ID = {1, 2, 3}   -- arg yg dikirim ke RerollHalo:InvokeServer
+local HALO_DRAW_ID = {1, 2, 3}
 local HALO = {
     running    = {false, false, false},
     statLbls   = {nil, nil, nil},
@@ -1136,7 +1174,7 @@ local function GetWeaponSlotSummary(slotIndex)
 end
 
 -- ============================================================
--- FORWARD DECLARATIONS (FIX #3)
+-- FORWARD DECLARATIONS
 -- ============================================================
 local StartSlotLoop
 local StartWeaponSlotLoop
@@ -1222,7 +1260,6 @@ local function _ScanQuirkId(tbl, slotIdSet, depth)
     return nil
 end
 
--- FIX #3: Definisi StartSlotLoop yang sesungguhnya
 StartSlotLoop = function(slotIndex)
     local slotPool = QUIRK_LIST_PER_SLOT[slotIndex]
     local allIdsInSlot = {}
@@ -1241,7 +1278,6 @@ StartSlotLoop = function(slotIndex)
         local attempt = 0
         while HR.slotRunning[slotIndex] do
             attempt = attempt + 1
-            -- Refresh target saat tick
             local curTargets = {}
             for id in pairs(HR.slotTarget[slotIndex]) do table.insert(curTargets, id) end
             local curHasTarget = (#curTargets > 0)
@@ -1271,7 +1307,6 @@ StartSlotLoop = function(slotIndex)
                     HR.weaponSlotLbls[slotIndex].Text = "Slot "..slotIndex..": ⚡ "..name
                     HR.weaponSlotLbls[slotIndex].TextColor3 = Color3.fromRGB(220,220,80)
                 end
-                -- Check hit
                 local curTargetSet = {}
                 for _, id in ipairs(curTargets) do curTargetSet[id] = true end
                 local isHit = gotId ~= nil and (slotIdSet[gotId] or QUIRK_MAP[gotId])
@@ -1371,7 +1406,6 @@ StartWeaponSlotLoop = function(slotIndex)
             if type(result) == "table" then
                 local slotIdSet = {}
                 for _, q in ipairs(slotPool) do slotIdSet[q.id] = true end
-                -- Scan gotId
                 local gotId = nil
                 local PRIO = {"finalResultId","quirkId","resultId","id","Id","result","Result"}
                 for _, key in ipairs(PRIO) do
@@ -1464,7 +1498,6 @@ local function SetPetGearGuid(guid, drawId)
     end
 end
 
--- Helpers: toggle Pet Gear OFF dari dalam loop (auto-off saat target tercapai)
 local function PGR_SetToggleOff(si)
     PGR.enOnFlags[si] = false
     if PGR.toggleBtns[si] then
@@ -1475,7 +1508,6 @@ local function PGR_SetToggleOff(si)
     end
 end
 
--- Helper: ambil daftar grade target saat ini sebagai string (pakai ID angka)
 local function PGR_GetTargetStr(si)
     local list = {}
     for _, g in ipairs(PG_GRADES_PER_MACHINE[si]) do
@@ -1486,7 +1518,6 @@ end
 
 local function DoAutoRollPetGear(si, on)
     local key = "pgroll"..si
-    -- Stop loop lama selalu
     PGR.running[si] = false
     StopLoop(key)
 
@@ -1502,7 +1533,6 @@ local function DoAutoRollPetGear(si, on)
         return
     end
 
-    -- Validasi awal sebelum spawn
     if next(PGR.targets[si]) == nil then
         setStatus(Color3.fromRGB(255,100,80), "⚠ Pilih target grade dulu!", Color3.fromRGB(255,100,80))
         PGR_SetToggleOff(si)
@@ -1513,83 +1543,45 @@ local function DoAutoRollPetGear(si, on)
 
     LOOPS[key] = task.spawn(function()
         local attempt   = 0
-        local lastGrade = "—"
         setStatus(Color3.fromRGB(255,200,60), "⟳ Memulai roll...", Color3.fromRGB(255,200,60))
 
-        -- ─────────────────────────────────────────────────────────
-        -- PG Grade ID set untuk mesin ini (sama persis pola Weapon Roll)
-        -- PGR.targets[si] menyimpan {[id_angka]=true} — match langsung
-        -- ─────────────────────────────────────────────────────────
         local myGradePool = PG_GRADES_PER_MACHINE[si]
         local myGradeIdSet = {}
         for _, g in ipairs(myGradePool) do myGradeIdSet[g.id] = true end
         while PGR.running[si] do
-
-            -- ── Cek GUID ──────────────────────────────────────────
             if not PGR.captured[si] or PGR.guids[si] == "" then
-                setStatus(
-                    Color3.fromRGB(255,200,60),
-                    "⚠ Roll "..PG_MACHINE_NAMES[si].." 1x dulu di game!",
-                    Color3.fromRGB(255,200,60)
-                )
+                setStatus(Color3.fromRGB(255,200,60), "⚠ Roll "..PG_MACHINE_NAMES[si].." 1x dulu di game!", Color3.fromRGB(255,200,60))
                 task.wait(1); continue
             end
-
-            -- ── Cek target dipilih ────────────────────────────────
             if next(PGR.targets[si]) == nil then
-                setStatus(
-                    Color3.fromRGB(255,80,80),
-                    "⚠ Target grade kosong! Pilih dulu.",
-                    Color3.fromRGB(255,80,80)
-                )
+                setStatus(Color3.fromRGB(255,80,80), "⚠ Target grade kosong! Pilih dulu.", Color3.fromRGB(255,80,80))
                 task.wait(1); continue
             end
-
-            -- ── Cek remote ────────────────────────────────────────
             local remote = RE_RandomHeroEquipGrade
             if not remote then
                 setStatus(Color3.fromRGB(255,80,80), "⚠ Remote tidak ditemukan!", Color3.fromRGB(255,80,80))
                 task.wait(2); continue
             end
-
-            -- ── Rolling ───────────────────────────────────────────
             attempt = attempt + 1
             local targetStr = PGR_GetTargetStr(si)
-            setStatus(
-                Color3.fromRGB(255,160,30),
-                "🔄 Rolling #"..attempt.."  |  Target: "..targetStr,
-                C.ACC2
-            )
+            setStatus(Color3.fromRGB(255,160,30), "🔄 Rolling #"..attempt.."  |  Target: "..targetStr, C.ACC2)
             if PGR.attemptLbls[si] then
                 PGR.attemptLbls[si].Text = "Attempt: #"..attempt
                 PGR.attemptLbls[si].TextColor3 = C.TXT2
             end
-
             local ok, res = pcall(function()
                 return remote:InvokeServer({guid = PGR.guids[si], drawId = PG_DRAW_IDS[si]})
             end)
-
             if not ok then
                 setStatus(Color3.fromRGB(255,80,80), "⚠ Error remote (#"..attempt..")", Color3.fromRGB(255,80,80))
                 task.wait(0.5); continue
             end
-
-            -- ── Parse grade dari response ──────────────────────────────
-            -- Data confirmed: res.data.grade = ID angka (990001..990030)
-            -- myGradeIdSet = set ID valid untuk mesin si
-            -- PGR.targets[si] = {[id]=true} yang dipilih player
             local gotId   = nil
             local gotName = "?"
-
             if type(res) == "table" then
-
-                -- STEP 1: baca res.data.grade (path confirmed dari sniff)
                 if type(res.data) == "table" and type(res.data.grade) == "number" then
                     gotId = res.data.grade
                 end
-
-                -- STEP 2: fallback — scan SELURUH response cari angka yang
-                -- ada di myGradeIdSet (990001–990030 range mesin ini)
                 if not gotId then
                     local function ScanId(tbl, depth)
                         if depth > 6 or gotId then return end
@@ -1604,34 +1596,20 @@ local function DoAutoRollPetGear(si, on)
                     end
                     ScanId(res, 0)
                 end
-
-                -- STEP 3: nama dari ID
-                if gotId then
-                    gotName = PG_GRADE_MAP[gotId] or ("ID:"..tostring(gotId))
-                end
-
+                if gotId then gotName = PG_GRADE_MAP[gotId] or ("ID:"..tostring(gotId)) end
             elseif res == false or res == nil then
                 task.wait(0.5); continue
             end
-
-            -- Update label "Last"
             if PGR.lastLbls[si] then
                 local isTarget = gotId and PGR.targets[si][gotId]
                 PGR.lastLbls[si].Text = "Last: "..gotName.." (id:"..tostring(gotId or "?")..")"
-                PGR.lastLbls[si].TextColor3 = isTarget
-                    and Color3.fromRGB(80,220,80)
-                    or  Color3.fromRGB(180,180,180)
+                PGR.lastLbls[si].TextColor3 = isTarget and Color3.fromRGB(80,220,80) or Color3.fromRGB(180,180,180)
             end
-            -- ── Target tercapai? Cek apakah gotId ada di PGR.targets[si] ──
             local hit = gotId ~= nil and myGradeIdSet[gotId] and PGR.targets[si][gotId]
             if hit then
                 PGR.running[si] = false
                 StopLoop(key)
-                setStatus(
-                    Color3.fromRGB(80,220,80),
-                    "✅ DAPAT "..gotName.."!  ("..attempt.."x roll)",
-                    Color3.fromRGB(80,220,80)
-                )
+                setStatus(Color3.fromRGB(80,220,80), "✅ DAPAT "..gotName.."!  ("..attempt.."x roll)", Color3.fromRGB(80,220,80))
                 if PGR.attemptLbls[si] then
                     PGR.attemptLbls[si].Text  = "✅ Selesai dalam "..attempt.." roll"
                     PGR.attemptLbls[si].TextColor3 = Color3.fromRGB(80,220,80)
@@ -1643,11 +1621,8 @@ local function DoAutoRollPetGear(si, on)
                 PGR_SetToggleOff(si)
                 return
             end
-
             task.wait(0.1)
         end
-
-        -- Loop berhenti dari luar (toggle dimatikan manual)
         setStatus(Color3.fromRGB(100,100,100), "⏹ Dihentikan ("..attempt.."x roll)", C.TXT2)
         if PGR.attemptLbls[si] then
             PGR.attemptLbls[si].Text = "Attempt: "..attempt.."x"
@@ -1655,6 +1630,7 @@ local function DoAutoRollPetGear(si, on)
         end
     end)
 end
+
 -- ============================================================
 -- AUTO ROLL HALO
 -- ============================================================
@@ -1684,52 +1660,28 @@ local function DoAutoRollHalo(hi, on)
 
     LOOPS[key] = task.spawn(function()
         local attempt = 0
-
-        -- Cek remote tersedia
         if not RE_RerollHalo then
             setStatus(Color3.fromRGB(255,80,80), "⚠ Remote RerollHalo tidak ditemukan!", Color3.fromRGB(255,80,80))
             HALO_SetToggleOff(hi)
             HALO.running[hi] = false
             return
         end
-
-        -- Offset awal per mesin supaya tidak fire bersamaan saat multi-toggle aktif
-        -- Bronze=0s, Gold=0.15s, Diamond=0.30s
         local startOffset = (hi - 1) * 0.15
-        if startOffset > 0 then
-            task.wait(startOffset)
-        end
-
+        if startOffset > 0 then task.wait(startOffset) end
         setStatus(Color3.fromRGB(255,200,60), "⟳ Memulai gacha "..HALO_NAMES[hi].."...", Color3.fromRGB(255,200,60))
-
-        -- Interval per mesin sedikit berbeda supaya tidak pernah tabrakan
-        -- Bronze=0.30s, Gold=0.33s, Diamond=0.36s
         local interval = 0.30 + (hi - 1) * 0.03
-
         while HALO.running[hi] do
             attempt = attempt + 1
-
             if HALO.attemptLbls[hi] then
                 HALO.attemptLbls[hi].Text = "Attempt: #"..attempt
                 HALO.attemptLbls[hi].TextColor3 = C.TXT2
             end
-            setStatus(
-                Color3.fromRGB(255,160,30),
-                "🎰 Gacha #"..attempt.."  |  "..HALO_NAMES[hi],
-                C.ACC2
-            )
-
-            -- Jalankan di thread terpisah supaya tidak blocking thread lain
+            setStatus(Color3.fromRGB(255,160,30), "🎰 Gacha #"..attempt.."  |  "..HALO_NAMES[hi], C.ACC2)
             task.spawn(function()
-                pcall(function()
-                    RE_RerollHalo:InvokeServer(HALO_DRAW_ID[hi])
-                end)
+                pcall(function() RE_RerollHalo:InvokeServer(HALO_DRAW_ID[hi]) end)
             end)
-
             task.wait(interval)
         end
-
-        -- Dihentikan manual oleh player
         setStatus(Color3.fromRGB(100,100,100), "⏹ Dihentikan ("..attempt.."x gacha)", C.TXT2)
         if HALO.attemptLbls[hi] then
             HALO.attemptLbls[hi].Text = "Total: "..attempt.."x gacha"
@@ -1748,9 +1700,7 @@ SetHeroGuid = function(guid, method)
     local isSwitch = HR.captured and HR.guid ~= "" and HR.guid ~= guid
     HR.guid = guid; HR.captured = true; HR.captureMethod = method or "unknown"
     if HR.statusLbl then
-        HR.statusLbl.Text = isSwitch
-            and "Hero berganti — GUID updated!"
-            or  "Captured ["..(method or "?").."] — siap reroll"
+        HR.statusLbl.Text = isSwitch and "Hero berganti — GUID updated!" or "Captured ["..(method or "?").."] — siap reroll"
         HR.statusLbl.TextColor3 = Color3.fromRGB(80,220,80)
     end
     if HR.captureStatusLbl then
@@ -2088,7 +2038,6 @@ end
 -- DROPDOWN HELPER (shared)
 -- ============================================================
 local function MakeGenericDropdown(params)
-    -- params: {ddBtn, list, maxSel, selTable, onRefresh, summaryLbl, quirkMapRef}
     local ddBtn     = params.ddBtn
     local list      = params.list
     local maxSel    = params.maxSel or 3
@@ -2162,9 +2111,7 @@ local function MakeGenericDropdown(params)
                     if n >= maxSel then
                         local old = countLbl.Text
                         countLbl.Text = "MAX "..maxSel.." tercapai!"; countLbl.TextColor3 = Color3.fromRGB(255,60,60)
-                        task.delay(1.2, function()
-                            UpdateCount()
-                        end)
+                        task.delay(1.2, function() UpdateCount() end)
                         return
                     end
                     selTable[key] = true
@@ -2206,7 +2153,6 @@ end
 -- ============================================================
 -- PANEL : FARM
 -- ============================================================
--- Farm vars dibuat di dalam do-end sendiri agar tidak bocor ke scope utama
 local agDot, agTxtLbl, agKLbl, agELbl
 local eEnemyRows = {}
 local eEnemyNames = {}
@@ -2234,7 +2180,6 @@ do
     agELbl = Label(p,"Belum di-refresh",9,C.DIM,Enum.Font.Gotham)
     agELbl.Size = UDim2.new(1,0,0,14); agELbl.LayoutOrder = 1
 
-    -- Auto Collect card
     local acCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,36))
     acCard.LayoutOrder = 2; Corner(acCard,7); Stroke(acCard,C.BORD,1,0.4)
     Padding(acCard,6,6,10,8)
@@ -2257,7 +2202,6 @@ do
         acSub.TextColor3 = acOn and C.GRN or C.RED
     end)
 
-    -- Enemy list
     local tgtHdr = Label(p,"Target Musuh (pilih yang mau diserang)",10,C.AG,Enum.Font.GothamBold)
     tgtHdr.Size = UDim2.new(1,0,0,18); tgtHdr.LayoutOrder = 3
 
@@ -2396,7 +2340,6 @@ do
         agELbl.TextColor3 = C.GRN
     end
 
-    -- Live updater
     task.spawn(function()
         while ScreenGui.Parent do
             if #eEnemyNames > 0 then
@@ -2423,7 +2366,6 @@ do
         task.spawn(function() RefreshEnemies(); task.wait(0.3); eBtnRefLbl.Text = "Refresh" end)
     end)
 
-    -- AG button
     local agBtn = Btn(p, C.ACC, UDim2.new(1,0,0,44))
     agBtn.LayoutOrder = 5; Corner(agBtn,9)
     do
@@ -2472,7 +2414,6 @@ end
 do
     local p = NewPanel("attack")
 
-    -- Global dd backdrop for attack panel dropdowns
     local ddBackdrop = Instance.new("TextButton",ScreenGui)
     ddBackdrop.Size=UDim2.new(1,0,1,0); ddBackdrop.Position=UDim2.new(0,0,0,0)
     ddBackdrop.BackgroundTransparency=1; ddBackdrop.Text=""; ddBackdrop.ZIndex=49
@@ -2501,7 +2442,6 @@ do
     maStatusText.TextTruncate=Enum.TextTruncate.AtEnd
     _maStatusLbl = maStatusText
 
-    -- Kill Target dropdown
     local function MakeSimpleDD(card, title, opts, vals, defIdx, onSelect, lo)
         local c = Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
         c.LayoutOrder=lo; Corner(c,8); Stroke(c,C.BORD,1,0.4); Padding(c,6,6,12,8)
@@ -2563,7 +2503,6 @@ do
         {"5","10","15","20","Kill All"},{5,10,15,20,0},1,
         function(v) MA.killTarget=v end, 2)
 
-    -- Rotation Map
     do
         local mapCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
         mapCard.LayoutOrder=3; Corner(mapCard,8); Stroke(mapCard,C.BORD,1,0.4); Padding(mapCard,6,6,12,8)
@@ -2646,12 +2585,10 @@ do
         end)
     end
 
-    -- Delay
     MakeSimpleDD(nil,"Delay Pindah Map",
         {"1 detik","3 detik","5 detik","7 detik","10 detik"},{1,3,5,7,10},2,
         function(v) MR.nextMapDelay=v end, 4)
 
-    -- Auto Skill
     local skillCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,52))
     skillCard.LayoutOrder=5; Corner(skillCard,8); Stroke(skillCard,C.BORD,1,0.4); Padding(skillCard,6,6,12,8)
     local skillTitle=Label(skillCard,"Auto Skill",12,C.TXT,Enum.Font.GothamBold)
@@ -2714,7 +2651,6 @@ do
 
     SectionHeader(p,"PLAYER SETTINGS",0)
 
-    -- Walk Speed slider
     local wsCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,70))
     wsCard.LayoutOrder=1; Corner(wsCard,8); Stroke(wsCard,C.BORD,1,0.4); Padding(wsCard,8,8,12,8)
     local wsTitle=Label(wsCard,"Walk Speed",12,C.TXT,Enum.Font.GothamBold)
@@ -2855,7 +2791,6 @@ do
         ddInner.Size=UDim2.new(1,0,0,h); ddBody.Size=UDim2.new(1,0,0,h+16)
     end
 
-    -- Status card
     local weaponCard=Frame(ddInner,C.SURFACE,UDim2.new(1,0,0,76))
     weaponCard.LayoutOrder=0; Corner(weaponCard,8); Stroke(weaponCard,C.BORD,1,0.4); Padding(weaponCard,8,8,12,8)
     local wsTitle=Label(weaponCard,"Hero Status",12,C.TXT,Enum.Font.GothamBold)
@@ -2881,7 +2816,6 @@ do
     arStatusLbl.TextWrapped=true
     HR.statusLbl=arStatusLbl
 
-    -- Slot dropdowns for hero
     for si=1,3 do
         local si_l=si
         local slotRow=Frame(ddInner,C.SURFACE,UDim2.new(1,0,0,40))
@@ -2905,7 +2839,6 @@ do
         })
     end
 
-    -- Enable toggle
     local enRow=Frame(ddInner,C.SURFACE,UDim2.new(1,0,0,44))
     enRow.LayoutOrder=5; Corner(enRow,8); Stroke(enRow,C.BORD,1,0.4)
     local enLbl=Label(enRow,"Enable AutoReroll",12,C.TXT,Enum.Font.GothamBold)
@@ -3036,7 +2969,6 @@ do
     local p = Panels["autoroll"]
     local pgOpen = false
 
-    -- ── Header accordion ──────────────────────────────────────
     local pgHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,38))
     pgHeader.LayoutOrder = 20; Corner(pgHeader,8); Stroke(pgHeader,C.BORD,1,0.4)
     local pgIcon  = Label(pgHeader,"▶",12,C.ACC2,Enum.Font.GothamBold)
@@ -3058,11 +2990,9 @@ do
         pgInner.Size = UDim2.new(1,0,0,h); pgBody.Size = UDim2.new(1,0,0,h+16)
     end
 
-    -- ── Satu card per mesin (3 mesin) ─────────────────────────
     for msi = 1, 3 do
         local msi_l = msi
 
-        -- Card container
         local mCard = Frame(pgInner, C.SURFACE, UDim2.new(1,0,0,0))
         mCard.LayoutOrder = msi; Corner(mCard,8); Stroke(mCard,C.BORD,1,0.5)
         mCard.AutomaticSize = Enum.AutomaticSize.Y
@@ -3071,11 +3001,9 @@ do
         mPad.PaddingTop=UDim.new(0,10);  mPad.PaddingBottom=UDim.new(0,10)
         New("UIListLayout",{Parent=mCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
 
-        -- ── Baris judul mesin ──────────────────────────────────
         local mTitle = Label(mCard,"🐾 "..PG_MACHINE_NAMES[msi],12,C.ACC2,Enum.Font.GothamBold)
         mTitle.Size = UDim2.new(1,0,0,18); mTitle.LayoutOrder = 0
 
-        -- ── Status bar utama (dot + teks) ─────────────────────
         local statRow = Frame(mCard, Color3.fromRGB(35,35,35), UDim2.new(1,0,0,26))
         statRow.LayoutOrder = 1; Corner(statRow,6); Stroke(statRow,C.BORD2,1,0.5)
         local mDot = Frame(statRow, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
@@ -3086,7 +3014,6 @@ do
         mStLbl.TextTruncate = Enum.TextTruncate.AtEnd
         PGR.statLbls[msi] = mStLbl
 
-        -- ── Info baris: Attempt + Last grade (2 kolom) ────────
         local infoRow = Frame(mCard, Color3.fromRGB(28,28,28), UDim2.new(1,0,0,22))
         infoRow.LayoutOrder = 2; Corner(infoRow,5)
         local attLbl = Label(infoRow,"Attempt: —",9.5,C.TXT3,Enum.Font.Gotham)
@@ -3096,11 +3023,9 @@ do
         lastLbl.Size = UDim2.new(0.5,-10,1,0); lastLbl.Position = UDim2.new(0.5,0,0,0)
         PGR.lastLbls[msi] = lastLbl
 
-        -- ── Pemisah kecil ──────────────────────────────────────
         local divLine = Frame(mCard, Color3.fromRGB(60,60,60), UDim2.new(1,0,0,1))
         divLine.LayoutOrder = 3; divLine.BackgroundTransparency = 0.5
 
-        -- ── Target dropdown (maks 3 grade) ────────────────────
         local tRow = Frame(mCard, C.BG2, UDim2.new(1,0,0,32))
         tRow.LayoutOrder = 4; Corner(tRow,6)
         local tLbl = Label(tRow,"🎯 Target:",11,C.TXT,Enum.Font.GothamBold)
@@ -3115,16 +3040,12 @@ do
         local tArrow = Label(tDdBtn,"▼",9,C.ACC,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
         tArrow.Size = UDim2.new(0,14,1,0); tArrow.Position = UDim2.new(1,-16,0,0)
 
-        -- Hint maks 3
         local tHint = Label(tRow,"(maks 3)",8.5,C.TXT3,Enum.Font.Gotham,Enum.TextXAlignment.Right)
         tHint.Size = UDim2.new(0,0,1,0); tHint.AutomaticSize = Enum.AutomaticSize.X
         tHint.Position = UDim2.new(1,-4,0,0); tHint.AnchorPoint = Vector2.new(1,0)
 
-        -- Grade list dari PG_GRADES_PER_MACHINE — ID angka langsung
-        -- PGR.targets[msi] = {[id_angka]=true} persis seperti Weapon Roll
         local function onTargetChange()
             RefreshPGSummary(msi_l)
-            -- Update teks label dd button
             local names = {}
             for _, g in ipairs(PG_GRADES_PER_MACHINE[msi_l]) do
                 if PGR.targets[msi_l][g.id] then names[#names+1] = g.name end
@@ -3133,7 +3054,6 @@ do
                 PGR.sumLbls[msi_l].Text = #names > 0 and table.concat(names," / ") or "-- pilih grade --"
                 PGR.sumLbls[msi_l].TextColor3 = #names > 0 and C.ACC2 or C.TXT2
             end
-            -- Jika sedang rolling: info target berubah
             if PGR.running[msi_l] and PGR.statLbls[msi_l] then
                 if #names == 0 then
                     PGR.statLbls[msi_l].Text = "⚠ Target dikosongkan!"
@@ -3147,13 +3067,12 @@ do
 
         MakeGenericDropdown({
             ddBtn      = tDdBtn,
-            list       = PG_GRADES_PER_MACHINE[msi],  -- ID angka per mesin
+            list       = PG_GRADES_PER_MACHINE[msi],
             maxSel     = 3,
-            selTable   = PGR.targets[msi],             -- {[id_angka]=true}
+            selTable   = PGR.targets[msi],
             onRefresh  = onTargetChange,
         })
 
-        -- ── Toggle Fastroll ────────────────────────────────────
         local enRow = Frame(mCard, Color3.fromRGB(40,25,10), UDim2.new(1,0,0,34))
         enRow.LayoutOrder = 5; Corner(enRow,8); Stroke(enRow,C.ACC,1,0.7)
 
@@ -3167,7 +3086,6 @@ do
         local enKnob = Frame(enToggle, C.TXT, UDim2.new(0,18,0,18))
         enKnob.Position = UDim2.new(0,2,0.5,-9); Corner(enKnob,9)
 
-        -- Simpan refs untuk auto-off dari dalam loop
         PGR.toggleBtns[msi]  = enToggle
         PGR.toggleKnobs[msi] = enKnob
 
@@ -3189,6 +3107,7 @@ do
         if pgOpen then task.defer(ResizePGBody) end
     end)
 end
+
 -- ============================================================
 -- PANEL : AUTO ROLL — HALO
 -- ============================================================
@@ -3196,7 +3115,6 @@ do
     local p = Panels["autoroll"]
     local haloOpen = false
 
-    -- ── Header accordion ──────────────────────────────────────
     local haloHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,38))
     haloHeader.LayoutOrder = 30; Corner(haloHeader,8); Stroke(haloHeader,C.BORD,1,0.4)
     local haloIcon  = Label(haloHeader,"▶",12,C.ACC2,Enum.Font.GothamBold)
@@ -3218,15 +3136,9 @@ do
         haloInner.Size = UDim2.new(1,0,0,h); haloBody.Size = UDim2.new(1,0,0,h+16)
     end
 
-    -- Warna per jenis Halo
-    local HALO_COLORS = {
-        Color3.fromRGB(180, 100, 40),   -- Bronze
-        Color3.fromRGB(220, 180, 30),   -- Gold
-        Color3.fromRGB(100, 200, 255),  -- Diamond
-    }
-    local HALO_ICONS = {"🥉", "🥇", "💠"}
+    local HALO_COLORS = {Color3.fromRGB(180,100,40), Color3.fromRGB(220,180,30), Color3.fromRGB(100,200,255)}
+    local HALO_ICONS  = {"🥉","🥇","💠"}
 
-    -- ── Card per Halo (3 jenis) ───────────────────────────────
     for hi = 1, 3 do
         local hi_l = hi
 
@@ -3238,36 +3150,31 @@ do
         hPad.PaddingTop=UDim.new(0,10);  hPad.PaddingBottom=UDim.new(0,10)
         New("UIListLayout",{Parent=hCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
 
-        -- ── Judul ──────────────────────────────────────────────
         local hTitle = Label(hCard, HALO_ICONS[hi].." "..HALO_NAMES[hi], 12, HALO_COLORS[hi], Enum.Font.GothamBold)
         hTitle.Size = UDim2.new(1,0,0,18); hTitle.LayoutOrder = 0
 
-        -- ── Status bar ─────────────────────────────────────────
         local statRow = Frame(hCard, Color3.fromRGB(35,35,35), UDim2.new(1,0,0,26))
         statRow.LayoutOrder = 1; Corner(statRow,6); Stroke(statRow,C.BORD2,1,0.5)
         local hDot = Frame(statRow, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
         hDot.Position = UDim2.new(0,7,0.5,-4); Corner(hDot,4)
         HALO.dotRefs[hi] = hDot
-        local hStLbl = Label(statRow, "⏹ Idle — Aktifkan untuk mulai gacha", 10, C.TXT2, Enum.Font.Gotham)
+        local hStLbl = Label(statRow,"⏹ Idle — Aktifkan untuk mulai gacha",10,C.TXT2,Enum.Font.Gotham)
         hStLbl.Size = UDim2.new(1,-22,1,0); hStLbl.Position = UDim2.new(0,21,0,0)
         hStLbl.TextTruncate = Enum.TextTruncate.AtEnd
         HALO.statLbls[hi] = hStLbl
 
-        -- ── Info attempt ───────────────────────────────────────
         local infoRow = Frame(hCard, Color3.fromRGB(28,28,28), UDim2.new(1,0,0,22))
         infoRow.LayoutOrder = 2; Corner(infoRow,5)
-        local attLbl = Label(infoRow, "Attempt: —", 9.5, C.TXT3, Enum.Font.Gotham)
+        local attLbl = Label(infoRow,"Attempt: —",9.5,C.TXT3,Enum.Font.Gotham)
         attLbl.Size = UDim2.new(1,-8,1,0); attLbl.Position = UDim2.new(0,8,0,0)
         HALO.attemptLbls[hi] = attLbl
 
-        -- ── Toggle ─────────────────────────────────────────────
         local enRow = Frame(hCard, Color3.fromRGB(30,20,5), UDim2.new(1,0,0,34))
-        enRow.LayoutOrder = 4; Corner(enRow,8)
-        Stroke(enRow, HALO_COLORS[hi], 1, 0.6)
+        enRow.LayoutOrder = 4; Corner(enRow,8); Stroke(enRow, HALO_COLORS[hi], 1, 0.6)
 
-        local enLbl = Label(enRow, "⚡ Auto Gacha", 12, C.TXT, Enum.Font.GothamBold)
+        local enLbl = Label(enRow,"⚡ Auto Gacha",12,C.TXT,Enum.Font.GothamBold)
         enLbl.Size = UDim2.new(0.6,0,1,0); enLbl.Position = UDim2.new(0,10,0,0)
-        local enSub = Label(enRow, "ON = mulai gacha otomatis", 9, C.TXT3, Enum.Font.Gotham)
+        local enSub = Label(enRow,"ON = mulai gacha otomatis",9,C.TXT3,Enum.Font.Gotham)
         enSub.Size = UDim2.new(0.6,0,0,12); enSub.Position = UDim2.new(0,10,1,-14)
 
         local enToggle = Btn(enRow, Color3.fromRGB(60,60,60), UDim2.new(0,40,0,22))
@@ -3284,7 +3191,7 @@ do
             enToggle.BackgroundColor3 = enOn and HALO_COLORS[hi_l] or Color3.fromRGB(60,60,60)
             enKnob.Position = enOn and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
             enRow.BackgroundColor3 = enOn and Color3.fromRGB(50,35,5) or Color3.fromRGB(30,20,5)
-            Stroke(enRow, enOn and HALO_COLORS[hi_l] or HALO_COLORS[hi_l], 1, enOn and 0.2 or 0.6)
+            Stroke(enRow, HALO_COLORS[hi_l], 1, enOn and 0.2 or 0.6)
             DoAutoRollHalo(hi_l, enOn)
         end)
     end
@@ -3302,8 +3209,6 @@ end
 -- ============================================================
 do
     local p = Panels["autoroll"]
-
-    -- ── Header accordion ──────────────────────────────────────
     local noteOpen   = false
     local noteHeader = Btn(p, Color3.fromRGB(50,20,5), UDim2.new(1,0,0,38))
     noteHeader.LayoutOrder = 40; Corner(noteHeader,8); Stroke(noteHeader,C.ACC,1,0.5)
@@ -3326,7 +3231,6 @@ do
         noteInner.Size = UDim2.new(1,0,0,h); noteBody.Size = UDim2.new(1,0,0,h+20)
     end
 
-    -- Helper buat baris catatan
     local function NoteBlock(order, icon, title, titleColor, lines)
         local block = Frame(noteInner, Color3.fromRGB(35,18,5), UDim2.new(1,0,0,0))
         block.LayoutOrder = order; block.AutomaticSize = Enum.AutomaticSize.Y
@@ -3335,24 +3239,18 @@ do
         bPad.PaddingLeft=UDim.new(0,10); bPad.PaddingRight=UDim.new(0,10)
         bPad.PaddingTop=UDim.new(0,8);   bPad.PaddingBottom=UDim.new(0,8)
         local bLayout = New("UIListLayout",{Parent=block,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,5)})
-
-        -- Judul blok
-        local titleLbl = Label(block, icon.."  "..title, 11.5, titleColor, Enum.Font.GothamBold)
+        local titleLbl = Label(block,icon.."  "..title,11.5,titleColor,Enum.Font.GothamBold)
         titleLbl.Size = UDim2.new(1,0,0,0); titleLbl.AutomaticSize = Enum.AutomaticSize.Y
         titleLbl.TextWrapped = true; titleLbl.LayoutOrder = 0
-
-        -- Setiap baris isi
         for i, line in ipairs(lines) do
-            local lbl = Label(block, line, 10.5, Color3.fromRGB(230,210,180), Enum.Font.Gotham)
+            local lbl = Label(block,line,10.5,Color3.fromRGB(230,210,180),Enum.Font.Gotham)
             lbl.Size = UDim2.new(1,0,0,0); lbl.AutomaticSize = Enum.AutomaticSize.Y
-            lbl.TextWrapped = true; lbl.LayoutOrder = i
-            lbl.TextXAlignment = Enum.TextXAlignment.Left
+            lbl.TextWrapped = true; lbl.LayoutOrder = i; lbl.TextXAlignment = Enum.TextXAlignment.Left
         end
         return block
     end
 
-    -- ── Blok 1: Hero ──────────────────────────────────────────
-    NoteBlock(1, "⚡", "Auto Roll Hero", Color3.fromRGB(255,200,60), {
+    NoteBlock(1,"⚡","Auto Roll Hero",Color3.fromRGB(255,200,60),{
         "1.  Masuk ke Mesin Roll Hero.",
         "2.  Masukkan Hero yang ingin di-reroll.",
         "3.  Klik Reroll 1x secara manual.",
@@ -3360,17 +3258,13 @@ do
         "5.  Pilih target Quirk di slot yang diinginkan.",
         "6.  Aktifkan toggle AutoReroll → script jalan otomatis.",
     })
-
-    -- ── Blok 2: Weapon ────────────────────────────────────────
-    NoteBlock(2, "⚔️", "Auto Roll Weapon", Color3.fromRGB(180,220,255), {
+    NoteBlock(2,"⚔️","Auto Roll Weapon",Color3.fromRGB(180,220,255),{
         "1.  Equip dulu senjata yang ingin di-reroll.",
         "2.  Tunggu status berubah HIJAU (GUID terbaca).",
         "3.  Pilih target Quirk di setiap slot.",
         "4.  Aktifkan toggle AutoReroll → script jalan otomatis.",
     })
-
-    -- ── Blok 3: Pet Gear ──────────────────────────────────────
-    NoteBlock(3, "🐾", "Auto Roll Pet Gear", Color3.fromRGB(180,255,180), {
+    NoteBlock(3,"🐾","Auto Roll Pet Gear",Color3.fromRGB(180,255,180),{
         "1.  Masuk ke Mesin Roll Pet Gear (R / Y / B).",
         "2.  Pilih Pet Gear yang ingin di-reroll.",
         "3.  Klik Reroll 1x secara manual.",
@@ -3383,7 +3277,6 @@ do
         "       lalu aktifkan semua toggle.",
     })
 
-    -- ── Blok NOTE penting ─────────────────────────────────────
     local noteBlock = Frame(noteInner, Color3.fromRGB(60,10,10), UDim2.new(1,0,0,0))
     noteBlock.LayoutOrder = 4; noteBlock.AutomaticSize = Enum.AutomaticSize.Y
     Corner(noteBlock,8); Stroke(noteBlock,Color3.fromRGB(255,60,60),1,0.4)
@@ -3391,15 +3284,13 @@ do
     nbPad.PaddingLeft=UDim.new(0,10); nbPad.PaddingRight=UDim.new(0,10)
     nbPad.PaddingTop=UDim.new(0,8);   nbPad.PaddingBottom=UDim.new(0,8)
     New("UIListLayout",{Parent=noteBlock,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
-
     local noteTitleLbl = Label(noteBlock,"⚠  PENTING",12,Color3.fromRGB(255,80,80),Enum.Font.GothamBold)
     noteTitleLbl.Size = UDim2.new(1,0,0,18); noteTitleLbl.LayoutOrder = 0
-
     local noteTextLbl = Label(noteBlock,
         "Jika target sudah tercapai, keluar dari game\n"..
         "lalu masuk kembali untuk melihat hasil\n"..
         "AutoReroll yang sudah kamu dapatkan.",
-        10.5, Color3.fromRGB(255,180,180), Enum.Font.GothamBold)
+        10.5,Color3.fromRGB(255,180,180),Enum.Font.GothamBold)
     noteTextLbl.Size = UDim2.new(1,0,0,0); noteTextLbl.AutomaticSize = Enum.AutomaticSize.Y
     noteTextLbl.TextWrapped = true; noteTextLbl.LayoutOrder = 1
     noteTextLbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -3430,4 +3321,4 @@ SwitchTab("main")
 RefreshStatus()
 InitAllCaptureLayers()
 
-print("[ ASH GUI ] Loaded — by FLa (Fixed)")
+print("[ ASH GUI ] Loaded — Bubble diganti versi sc_baru (v14.5) — by FLa")
