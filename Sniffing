@@ -1,0 +1,199 @@
+-- =====================================================
+--   PET GEAR GRADE SCANNER — by FLa Project
+--   Teknik sama dengan QUIRK FINAL SCANNER:
+--   Scan GUI PlayerGui untuk dapat ID + Nama Grade
+--
+--   CARA PAKAI:
+--   1. Jalankan script ini
+--   2. Buka panel SETIAP mesin Pet Gear di game
+--      (R-Pet, Y-Pet, B-Pet) — klik roll buttonnya
+--      supaya panel grade muncul di layar
+--   3. Lihat output di console / clipboard
+-- =====================================================
+
+local LP = game:GetService("Players").LocalPlayer
+local PG = LP.PlayerGui
+
+local RESULT_GRADE  = {}   -- {id → name} untuk grade (range besar)
+local RESULT_ALL    = {}   -- semua TextLabel NameText apapun ID-nya
+
+local function ScanAll()
+    RESULT_GRADE = {}
+    RESULT_ALL   = {}
+
+    for _, obj in ipairs(PG:GetDescendants()) do
+        pcall(function()
+            if (obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox"))
+            and (obj.Name == "NameText" or obj.Name == "GradeName"
+                 or obj.Name == "GradeText" or obj.Name == "TypeText"
+                 or obj.Name == "TierText"  or obj.Name == "RankText"
+                 or obj.Name == "LabelText" or obj.Name == "ItemName"
+                 or obj.Name == "Name"      or obj.Name == "Title") then
+
+                local t = obj.Text
+                if t and #t >= 1 and #t <= 30
+                   and not t:match("^%s*$")
+                   and t ~= "MaskName" and t ~= "nil" then
+
+                    local parent = obj.Parent
+                    if parent then
+                        local id = tonumber(parent.Name)
+                        if id then
+                            -- Range lebar: weapon 90000-99999, PG bisa 980001-999999
+                            if id >= 90000 and id <= 999999 then
+                                RESULT_ALL[id] = t
+                                -- Grade range spesifik Pet Gear
+                                if id >= 980000 and id <= 999999 then
+                                    RESULT_GRADE[id] = t
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    -- ── Juga scan semua TextLabel dengan text pendek (1-3 char) yang
+    --    parent-nya punya Name berupa angka — mungkin grade label
+    for _, obj in ipairs(PG:GetDescendants()) do
+        pcall(function()
+            if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+                local t = obj.Text
+                if t and #t >= 1 and #t <= 4
+                   and not t:match("^%s*$")
+                   and t:match("^[A-Z%+%-]+$") then   -- hanya huruf kapital singkat
+                    local parent = obj.Parent
+                    if parent then
+                        local id = tonumber(parent.Name)
+                        if id and id >= 90000 and id <= 999999 then
+                            if not RESULT_ALL[id] then
+                                RESULT_ALL[id] = t
+                            end
+                            if id >= 980000 then
+                                if not RESULT_GRADE[id] then
+                                    RESULT_GRADE[id] = t
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    -- ── Print hasil GRADE (980000+) ──────────────────────────
+    local gradeList = {}
+    for id, name in pairs(RESULT_GRADE) do
+        table.insert(gradeList, {id=id, name=name})
+    end
+    table.sort(gradeList, function(a,b) return a.id < b.id end)
+
+    print("\n╔══════════════════════════════════════════╗")
+    print("║       PET GEAR GRADE MAP                 ║")
+    print("╠══════════════════════════════════════════╣")
+    if #gradeList == 0 then
+        print("  Belum ada — buka panel grade Pet Gear dulu!")
+    else
+        for _, q in ipairs(gradeList) do
+            print(string.format('  {id=%d, name="%s"},', q.id, q.name))
+        end
+        print(string.format("\n  Total: %d grade ditemukan", #gradeList))
+    end
+    print("╚══════════════════════════════════════════╝")
+
+    -- ── Print semua hasil (range lebar) ──────────────────────
+    local allList = {}
+    for id, name in pairs(RESULT_ALL) do
+        table.insert(allList, {id=id, name=name})
+    end
+    table.sort(allList, function(a,b) return a.id < b.id end)
+
+    print("\n╔══════════════════════════════════════════╗")
+    print("║     SEMUA ITEM DITEMUKAN (range lebar)   ║")
+    print("╠══════════════════════════════════════════╣")
+    if #allList == 0 then
+        print("  Tidak ada data sama sekali!")
+        print("  → Pastikan panel Pet Gear SUDAH terbuka di game")
+        print("  → Coba klik tombol roll / buka hasil roll")
+    else
+        for _, q in ipairs(allList) do
+            print(string.format('  id=%-8d  name="%s"', q.id, q.name))
+        end
+        print(string.format("\n  Total: %d item", #allList))
+    end
+    print("╚══════════════════════════════════════════╝\n")
+
+    -- ── Copy ke clipboard ─────────────────────────────────────
+    local lines = {}
+    -- Grade dulu
+    table.insert(lines, "-- PET GEAR GRADES:")
+    for _, q in ipairs(gradeList) do
+        table.insert(lines, string.format('  {id=%d, name="%s"},', q.id, q.name))
+    end
+    -- Semua item
+    table.insert(lines, "\n-- SEMUA ITEM (range lebar):")
+    for _, q in ipairs(allList) do
+        table.insert(lines, string.format('  id=%-8d  name="%s"', q.id, q.name))
+    end
+
+    local text = table.concat(lines, "\n")
+    pcall(function() setclipboard(text) end)
+    pcall(function() toclipboard(text) end)
+
+    if #gradeList > 0 or #allList > 0 then
+        print("[ OK ] Hasil sudah di-copy ke clipboard!")
+    else
+        print("[ INFO ] Tidak ada data — buka panel Pet Gear dulu lalu jalankan ulang")
+    end
+
+    return gradeList, allList
+end
+
+-- ── Jalankan scan pertama ──────────────────────────────────────
+print("[ PG SCANNER ] Scanning GUI...")
+ScanAll()
+
+-- ── Juga scan ulang setiap 3 detik (untuk tangkap panel yg baru dibuka) ──
+print("[ PG SCANNER ] Auto-scan tiap 3 detik... buka panel Pet Gear sekarang!")
+task.spawn(function()
+    local lastCount = 0
+    while true do
+        task.wait(3)
+        -- Hitung ulang tanpa print
+        local count = 0
+        for _ in pairs(RESULT_ALL) do count = count + 1 end
+        -- Jika ada data baru, scan dan print
+        local newCount = 0
+        local tempGrade = {}
+        for _, obj in ipairs(PG:GetDescendants()) do
+            pcall(function()
+                if (obj:IsA("TextLabel") or obj:IsA("TextButton")) then
+                    local t = obj.Text
+                    if t and #t >= 1 and #t <= 30
+                       and not t:match("^%s*$") and t ~= "MaskName" then
+                        local parent = obj.Parent
+                        if parent then
+                            local id = tonumber(parent.Name)
+                            if id and id >= 90000 and id <= 999999 then
+                                newCount = newCount + 1
+                                if id >= 980000 then
+                                    tempGrade[id] = t
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+        if newCount > lastCount then
+            lastCount = newCount
+            print("\n[ PG SCANNER ] Data baru terdeteksi! Total item: "..newCount)
+            print("[ PG SCANNER ] Scanning ulang...")
+            ScanAll()
+        end
+    end
+end)
+
+print("[ INFO ] Untuk scan manual ulang: ScanAll()")
+print("[ INFO ] Buka SETIAP panel Pet Gear machine (R/Y/B) di game!")
