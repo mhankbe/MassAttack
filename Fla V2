@@ -11,6 +11,7 @@ local RunService       = game:GetService("RunService")
 local RS               = game:GetService("ReplicatedStorage")
 local TeleportService  = game:GetService("TeleportService")
 local GuiService       = game:GetService("GuiService")
+local VIM              = game:GetService("VirtualInputManager")
 
 local LP  = Players.LocalPlayer
 local PG  = LP.PlayerGui
@@ -599,19 +600,21 @@ local RAID = {
     killed      = 0,
     collected   = 0,
     loopCount   = 0,
-    autoAttack  = true,
-    autoCollect = true,
-    autoJoin    = true,
-    joinDelay   = 3,
-    nextDelay   = 5,
-    raidId      = 935108,
-    raidMapId   = 50302,   -- map id raid aktif (diupdate otomatis dari difficulty selector)
+    raidId      = 0,
+    raidMapId   = 50001,
+    slotIndex   = 1,       -- dapat dari EnterRaidsUpdateInfo
+    _raidDone   = false,   -- true saat ChallengeRaidsSuccess/Fail fire
     statusLbl   = nil,
     killLbl     = nil,
     loopLbl     = nil,
     dot         = nil,
+    -- Difficulty & preferred maps
+    difficulty  = "easy",  -- "easy" | "medium" | "hard" | "preferred"
+    preferMaps  = {},      -- set: {[mapNumber]=true} (1..18)
+    diffLbl     = nil,     -- label UI difficulty
 }
-local _raidOn = false
+local _raidOn        = false
+local _raidInterrupt = false  -- true saat raid muncul & Mass Attack harus pause
 
 local _maStatusLbl  = nil
 local _noClipConn   = nil
@@ -654,23 +657,47 @@ local SKL = {
     F={on=false,t=nil,label="F"},
 }
 local SKL_TYPE = {Z=1,X=2,C=3,V=4,F=5}
+local SKL_KEY  = {
+    Z=Enum.KeyCode.Z, X=Enum.KeyCode.X, C=Enum.KeyCode.C,
+    V=Enum.KeyCode.V, F=Enum.KeyCode.F,
+}
+
+-- Simulasi tekan tombol keyboard via VirtualInputManager (sama seperti script lama)
+local function PK(k)
+    pcall(function()
+        VIM:SendKeyEvent(true,  k, false, game)
+        task.wait(0.05)
+        VIM:SendKeyEvent(false, k, false, game)
+    end)
+end
+
+-- Referensi tombol UI skill (diisi saat panel dibuat)
+local SKL_UI = {} -- {Z={btn,lbl}, X=..., ...}
+
+local function SkFireOnce(n)
+    -- Simulasi tekan tombol Z/X/C/V/F langsung via VirtualInputManager
+    -- Sama persis seperti player menekan tombol sendiri — tidak butuh enemyGuid
+    PK(SKL_KEY[n])
+end
+
+local function SkSetUI(n, on)
+    local u = SKL_UI[n]
+    if not u then return end
+    local dc = ({Z=Color3.fromRGB(255,80,80),X=Color3.fromRGB(255,160,40),
+                 C=Color3.fromRGB(80,220,120),V=Color3.fromRGB(80,180,255),
+                 F=Color3.fromRGB(200,80,255)})[n]
+    u.btn.BackgroundColor3 = on and Color3.fromRGB(20,10,42) or Color3.fromRGB(30,20,14)
+    u.lbl.Text      = on and "ON" or "OFF"
+    u.lbl.TextColor3 = on and dc or Color3.fromRGB(120,120,120)
+end
 
 local function SkOn(n)
     local s = SKL[n]; if s.t then return end
     s.on = true
+    SkSetUI(n, true)
     s.t = task.spawn(function()
         while s.on do
-            for _, hGuid in ipairs(HERO_GUIDS) do
-                if RE_HeroSkill then
-                    pcall(function()
-                        RE_HeroSkill:FireServer({
-                            heroGuid  = hGuid,
-                            skillType = SKL_TYPE[n] or 1,
-                            masterId  = MY_USER_ID,
-                        })
-                    end)
-                end
-            end
+            SkFireOnce(n)
             task.wait(0.8)
         end
         s.t = nil
@@ -679,8 +706,25 @@ end
 
 local function SkOff(n)
     local s = SKL[n]; s.on = false
+    SkSetUI(n, false)
     if s.t then pcall(function() task.cancel(s.t) end); s.t = nil end
 end
+
+-- ── Keyboard listener: tekan Z/X/C/V/F untuk toggle skill ──
+-- Bekerja di PC (keyboard) dan Android (simulasi via Roblox touch-to-keycode)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    local keyMap = {
+        [Enum.KeyCode.Z] = "Z",
+        [Enum.KeyCode.X] = "X",
+        [Enum.KeyCode.C] = "C",
+        [Enum.KeyCode.V] = "V",
+        [Enum.KeyCode.F] = "F",
+    }
+    local n = keyMap[input.KeyCode]
+    if not n then return end
+    if SKL[n].on then SkOff(n) else SkOn(n) end
+end)
 
 -- ============================================================
 -- ENEMY HELPERS
@@ -853,6 +897,9 @@ local function AttackLoop_Mass(onStatus)
                 if onStatus then onStatus("Stuck, skip map...") end; return true
             end
         end
+        -- Cek interrupt dari Auto Raid sebelum lanjut attack
+        if _raidInterrupt then return "interrupted" end
+
         for _, e in ipairs(GetEnemies()) do
             if not IsDead(e) then
                 local hrp = e.model and e.model:FindFirstChild("HumanoidRootPart")
@@ -1059,12 +1106,68 @@ local function RefreshStatus()
     end
 end
 
+-- Pause Mass Attack dan tunggu sampai raid selesai
+local function WaitRaidDone()
+    if _maStatusLbl then _maStatusLbl.Text = "⏸ Pause — Raid berlangsung..." end
+    while _raidInterrupt and MA.running do
+        task.wait(0.5)
+    end
+    if _maStatusLbl and MA.running then _maStatusLbl.Text = "▶ Lanjut..." end
+end
+
 local function DoMassAttack(on)
     if on then
         _mOn = true
-        RunLoop(MA, MR, AttackLoop_Mass,
-            function(msg) if _maStatusLbl then _maStatusLbl.Text = msg end end,
-            function() _mOn = false; if _maStatusLbl then _maStatusLbl.Text = "Selesai" end end)
+        MA.running = true
+        MA.killed  = 0
+        MA.collected = 0
+        StartDestroyWorker(function() return MA.running end)
+        MA.thread = task.spawn(function()
+            while MA.running do
+                -- Kalau raid sedang berlangsung, tunggu dulu
+                if _raidInterrupt then WaitRaidDone() end
+                if not MA.running then break end
+
+                -- Pilih map: rotation atau map saat ini
+                local mapsToUse = {}
+                for i = 1, 18 do if MR.selected[i] then table.insert(mapsToUse, MAPS[i]) end end
+                if #mapsToUse == 0 then
+                    -- Tidak ada map dipilih → serang terus di map saat ini
+                    local cont = AttackLoop_Mass(function(msg)
+                        if _maStatusLbl then _maStatusLbl.Text = msg end
+                    end)
+                    -- "interrupted" = sinyal raid masuk, bukan error
+                    if cont == "interrupted" then
+                        WaitRaidDone()
+                    elseif not cont or not MA.running then
+                        break
+                    end
+                    if _raidInterrupt then WaitRaidDone() end
+                    task.wait(MR.nextMapDelay)
+                else
+                    for _, m in ipairs(mapsToUse) do
+                        if not MA.running then break end
+                        if _raidInterrupt then WaitRaidDone() end
+                        TpMap(m)
+                        task.wait(MR.teleportDelay)
+                        if not MA.running then break end
+                        local cont = AttackLoop_Mass(function(msg)
+                            if _maStatusLbl then _maStatusLbl.Text = msg end
+                        end)
+                        if cont == "interrupted" then
+                            WaitRaidDone()
+                        elseif not cont or not MA.running then
+                            break
+                        end
+                        if _raidInterrupt then WaitRaidDone() end
+                        task.wait(MR.nextMapDelay)
+                    end
+                end
+            end
+            _mOn = false
+            MA.running = false
+            if _maStatusLbl then _maStatusLbl.Text = "Selesai" end
+        end)
     else
         _mOn = false; MA.running = false
         if MA.thread then pcall(function() task.cancel(MA.thread) end); MA.thread = nil end
@@ -1460,20 +1563,20 @@ function _ASH_ORN.DoRoll(mi, on)
 end
 
 
-local MAX_PER_SLOT   = 3
-local W_MAX_PER_SLOT = 3
-local _spyLog        = {}
-local _layer0Active  = false
-local _watcherConns  = {}
+MAX_PER_SLOT   = 3
+W_MAX_PER_SLOT = 3
+_spyLog        = {}
+_layer0Active  = false
+_watcherConns  = {}
 
 -- ============================================================
 -- DD LAYER
 -- ============================================================
-local DDLayer = Frame(ScreenGui, C.BLACK, UDim2.new(1,0,1,0))
+DDLayer = Frame(ScreenGui, C.BLACK, UDim2.new(1,0,1,0))
 DDLayer.BackgroundTransparency = 1; DDLayer.ZIndex = 9998; DDLayer.Visible = false
 DDLayer.Name = "ASH_DD"
 
-local _activeDDClose = nil
+_activeDDClose = nil
 local function CloseActiveDD()
     if _activeDDClose then _activeDDClose(); _activeDDClose = nil end
 end
@@ -1528,10 +1631,10 @@ end
 -- ============================================================
 -- FORWARD DECLARATIONS
 -- ============================================================
-local StartSlotLoop
-local StartWeaponSlotLoop
-local SetHeroGuid
-local SetWeaponGuid
+StartSlotLoop = nil
+StartWeaponSlotLoop = nil
+SetHeroGuid = nil
+SetWeaponGuid = nil
 
 -- ============================================================
 -- SLOT ROLL FUNCTIONS
@@ -3245,13 +3348,11 @@ end)()
         local st=Label(sb,"OFF",8,C.TXT3,Enum.Font.Gotham,Enum.TextXAlignment.Center)
         st.Size=UDim2.new(1,0,0,11); st.Position=UDim2.new(0,0,0,19)
         st.TextYAlignment=Enum.TextYAlignment.Center
-        local dn,dc=d.n,d.c
+        -- Simpan referensi ke SKL_UI supaya SkSetUI bisa update tampilan
+        SKL_UI[d.n] = {btn=sb, lbl=st}
+        local dn=d.n
         sb.MouseButton1Click:Connect(function()
-            if SKL[dn].on then
-                SkOff(dn); sb.BackgroundColor3=C.BG3; st.Text="OFF"; st.TextColor3=C.TXT3
-            else
-                SkOn(dn); sb.BackgroundColor3=Color3.fromRGB(20,10,42); st.Text="ON"; st.TextColor3=dc
-            end
+            if SKL[dn].on then SkOff(dn) else SkOn(dn) end
         end)
     end
 
@@ -3369,7 +3470,7 @@ end)()
 
     ToggleRow(p,"Anti AFK","Mencegah kick sistem idle 15 menit",4,function(on)
         STATE.antiAfk=on
-        if _antiAfkThread then task.cancel(_antiAfkThread); _antiAfkThread=nil end
+        if _antiAfkThread then pcall(function() task.cancel(_antiAfkThread) end); _antiAfkThread=nil end
         if on then
             _antiAfkStart=os.time()
             _antiAfkThread=task.spawn(function()
@@ -4260,43 +4361,71 @@ end)()
 
 
 -- ============================================================
--- AUTO RAID : LOGIC (SimpleSpy verified)
+-- AUTO RAID : LOGIC (Data dari RaidSniffer v2)
+-- Format confirmed:
+--   UpdateRaidInfo → arg[1] = {
+--     action   = "RemoveRaidEnters" | "AddRaidEnters"
+--     raidInfos = {
+--       [raidId(number)] = {
+--         spawnName = "RE1001"/"RE1002"
+--         endTime   = number
+--         mapId     = number (50011, 50007, dst)
+--         raidId    = number
+--       }
+--     }
+--   }
 -- ============================================================
--- ============================================================
--- RAID LIVE LIST — listen UpdateRaidInfo dari server
--- RE1001 = rank rendah, RE1002 = rank tinggi (dari data SimpleSpy)
--- ============================================================
-RAID_LIVE   = {}   -- semua raid aktif: [raidId] = {raidId, mapId, spawnName, rank, endTime, label}
-RAID_ID_LIST = {}  -- list terurut untuk UI
+
+-- RAID_LIVE: [raidId] = {raidId, mapId, spawnName, rank, label}
+RAID_LIVE    = {}
+RAID_ID_LIST = {}  -- sorted list untuk UI
 _raidIdRefreshCb = nil
 
--- Mapping spawnName → rank number (untuk sorting Easy/Medium/Hard)
 SPAWN_RANK = {
-    RE1001 = 1,
-    RE1002 = 2,
-    RE1003 = 3,
-    RE1004 = 4,
-    RE1005 = 5,
+    RE1001 = 1, RE1002 = 2, RE1003 = 3, RE1004 = 4, RE1005 = 5,
 }
-
 RANK_LABEL = {
-    [1] = "★ Rank 1",
-    [2] = "★★ Rank 2",
-    [3] = "★★★ Rank 3",
-    [4] = "★★★★ Rank 4",
-    [5] = "★★★★★ Rank 5",
+    [1]="★ Easy", [2]="★★ Normal", [3]="★★★ Hard",
+    [4]="★★★★ Expert", [5]="★★★★★ Legend",
 }
 
-function RebuildRaidList()
-    -- Sort berdasarkan rank (spawnName)
-    local sorted = {}
-    for _, entry in pairs(RAID_LIVE) do
-        table.insert(sorted, entry)
-    end
-    table.sort(sorted, function(a, b)
-        return (a.rank or 99) < (b.rank or 99)
-    end)
+-- Pilih raidEntry dari RAID_ID_LIST sesuai difficulty
+local function PickRaidByDifficulty()
+    if #RAID_ID_LIST == 0 then return nil end
+    local diff = RAID.difficulty
 
+    if diff == "easy" then
+        -- Map paling kecil (index pertama, sudah sorted ascending)
+        return RAID_ID_LIST[1]
+
+    elseif diff == "hard" then
+        -- Map paling besar (index terakhir)
+        return RAID_ID_LIST[#RAID_ID_LIST]
+
+    elseif diff == "medium" then
+        -- Map di tengah-tengah index
+        local mid = math.ceil(#RAID_ID_LIST / 2)
+        return RAID_ID_LIST[mid]
+
+    elseif diff == "preferred" then
+        -- Cari map yang ada di preferMaps player
+        for _, r in ipairs(RAID_ID_LIST) do
+            local mapNum = r.mapId - 50000
+            if RAID.preferMaps[mapNum] then
+                return r
+            end
+        end
+        return nil  -- tidak ada yang cocok
+
+    end
+    return RAID_ID_LIST[1]
+end
+
+local function RebuildRaidList()
+    local sorted = {}
+    for _, e in pairs(RAID_LIVE) do table.insert(sorted, e) end
+    -- Sort by mapId ascending (map 1 → map 18)
+    table.sort(sorted, function(a, b) return (a.mapId or 0) < (b.mapId or 0) end)
     RAID_ID_LIST = {}
     for _, e in ipairs(sorted) do
         table.insert(RAID_ID_LIST, {
@@ -4307,112 +4436,176 @@ function RebuildRaidList()
             spawnName = e.spawnName,
         })
     end
-
     if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
 end
 
--- Listen UpdateRaidInfo dari server
-function StartRaidNotifListener()
-    if not RE_UpdateRaidInfo then
-        warn("[ ASH RAID ] UpdateRaidInfo remote tidak ditemukan!")
-        return
-    end
-
-    RE_UpdateRaidInfo.OnClientEvent:Connect(function(data)
-        if type(data) ~= "table" then return end
-        local action    = data.action
-        local raidInfos = data.raidInfos
-
-        if type(raidInfos) ~= "table" then return end
-
-        if action == "AddRaidEnters" or action == nil then
-            -- Tambah raid baru ke list
-            for raidId, info in pairs(raidInfos) do
-                if type(info) == "table" then
-                    local spawnName = info.spawnName or "RE1001"
-                    local rank      = SPAWN_RANK[spawnName] or 1
-                    RAID_LIVE[raidId] = {
-                        raidId    = tonumber(raidId) or raidId,
-                        mapId     = info.mapId,
-                        spawnName = spawnName,
-                        rank      = rank,
-                        endTime   = info.endTime,
-                        label     = (RANK_LABEL[rank] or spawnName).." Map "..(info.mapId and (info.mapId-50000) or "?"),
-                    }
-                end
-            end
-
-        elseif action == "RemoveRaidEnters" then
-            -- Hapus raid yang sudah selesai/expired
-            for raidId in pairs(raidInfos) do
-                RAID_LIVE[raidId] = nil
-            end
-        end
-
-        RebuildRaidList()
-    end)
-
-    warn("[ ASH RAID ] ✅ Listening UpdateRaidInfo — menunggu notifikasi raid...")
+-- Parse satu entry raidInfos
+local function ParseRaidEntry(k, info)
+    if type(info) ~= "table" then return end
+    local raidId    = info.raidId or (type(k)=="number" and k) or tonumber(k)
+    local mapId     = info.mapId
+    local spawnName = info.spawnName or "RE1001"
+    if not raidId or not mapId then return end
+    local rank = SPAWN_RANK[spawnName] or 1
+    RAID_LIVE[raidId] = {
+        raidId    = raidId,
+        mapId     = mapId,
+        spawnName = spawnName,
+        rank      = rank,
+        endTime   = info.endTime,
+        label     = (RANK_LABEL[rank] or spawnName).." Map "..(mapId-50000),
+    }
 end
 
--- Panggil saat init
-StartRaidNotifListener()
+-- ============================================================
+-- RAID LISTENER — Self-healing, reconnect otomatis setelah
+-- rejoin / relog / teleport. Tidak bergantung pada instance
+-- remote yang sudah di-destroy.
+-- ============================================================
 
--- FetchRaidIds: ambil raid yang ada di map sekarang via GetRaidTeamInfos
-function FetchRaidIds()
-    if not RE_GetRaidTeamInfos then
-        warn("[ ASH RAID ] GetRaidTeamInfos remote tidak ada!")
-        return RAID_ID_LIST
+-- Koneksi aktif disimpan agar bisa di-disconnect sebelum reconnect
+local _raidConns = {}
+
+local function DisconnectRaidConns()
+    for _, conn in ipairs(_raidConns) do
+        pcall(function() conn:Disconnect() end)
     end
-    local ok, result = pcall(function()
-        return RE_GetRaidTeamInfos:InvokeServer()
-    end)
-    -- Debug: print raw result
-    warn("[ ASH RAID ] FetchRaidIds ok="..tostring(ok).." type="..type(result))
-    if ok and type(result) == "table" then
-        -- Print semua key untuk lihat struktur
-        for k, v in pairs(result) do
-            warn("[ ASH RAID ] result["..tostring(k).."] = "..tostring(v).." (type:"..type(v)..")")
-            if type(v) == "table" then
-                for k2, v2 in pairs(v) do
-                    warn("[ ASH RAID ]   ."..tostring(k2).." = "..tostring(v2))
-                end
-            end
-        end
-
-        -- Parse fleksibel: coba semua kemungkinan struktur
-        for k, info in pairs(result) do
-            if type(info) == "table" then
-                -- Format 1: {raidId=..., mapId=..., spawnName=...}
-                local raidId    = info.raidId or info.id or info.RaidId
-                local mapId     = info.mapId or info.MapId or info.map_id
-                local spawnName = info.spawnName or info.SpawnName or info.spawn or "RE1001"
-                -- Format 2: key adalah raidId itu sendiri
-                if not raidId and type(k) == "number" then raidId = k end
-                if not raidId and type(k) == "string" then raidId = tonumber(k) end
-
-                if raidId and mapId then
-                    local rank = SPAWN_RANK[spawnName] or 1
-                    RAID_LIVE[raidId] = {
-                        raidId    = raidId,
-                        mapId     = mapId,
-                        spawnName = spawnName,
-                        rank      = rank,
-                        label     = (RANK_LABEL[rank] or spawnName).." Map "..(mapId-50000),
-                    }
-                    warn("[ ASH RAID ] Parsed raid: id="..tostring(raidId).." mapId="..tostring(mapId))
-                end
-            end
-        end
-        RebuildRaidList()
-        if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
-    end
-    return RAID_ID_LIST
+    _raidConns = {}
 end
 
+-- Fungsi utama: connect ke semua remote raid
+-- Dipanggil saat pertama load DAN setiap kali Remotes berubah
+local function ConnectRaidListeners()
+    DisconnectRaidConns()
 
+    -- Selalu re-fetch referensi remote terbaru dari Remotes folder
+    local _RE_Update  = Remotes:FindFirstChild("UpdateRaidInfo")
+    local _RE_Team    = Remotes:FindFirstChild("UpdateRaidTeamInfo")
+    local _RE_Enter   = Remotes:FindFirstChild("EnterRaidsUpdateInfo")
+    local _RE_Success = Remotes:FindFirstChild("ChallengeRaidsSuccess")
+    local _RE_Fail    = Remotes:FindFirstChild("ChallengeRaidsFail")
 
+    -- ── UpdateRaidInfo: notif raid muncul/hilang (KUNCI UTAMA) ──
+    if _RE_Update then
+        local conn = _RE_Update.OnClientEvent:Connect(function(data)
+            if type(data) ~= "table" then return end
+            local action    = data.action
+            local raidInfos = data.raidInfos
+            if type(raidInfos) ~= "table" then return end
+            if action == "RemoveRaidEnters" then
+                for k in pairs(raidInfos) do
+                    local raidId = type(k)=="number" and k or tonumber(k)
+                    if raidId then RAID_LIVE[raidId] = nil end
+                end
+            else
+                for k, info in pairs(raidInfos) do
+                    ParseRaidEntry(k, info)
+                end
+            end
+            RebuildRaidList()
+        end)
+        table.insert(_raidConns, conn)
+    end
+
+    -- ── UpdateRaidTeamInfo: player lain join raid ──
+    if _RE_Team then
+        local conn = _RE_Team.OnClientEvent:Connect(function(data)
+            if type(data) ~= "table" then return end
+            local raidId = data.raidId
+            local mapId  = data.mapId
+            if raidId and mapId and not RAID_LIVE[raidId] then
+                ParseRaidEntry(raidId, {raidId=raidId, mapId=mapId, spawnName="RE1001"})
+                RebuildRaidList()
+            end
+        end)
+        table.insert(_raidConns, conn)
+    end
+
+    -- ── EnterRaidsUpdateInfo: dapat slotIndex ──
+    if _RE_Enter then
+        local conn = _RE_Enter.OnClientEvent:Connect(function(data)
+            if type(data) ~= "table" then return end
+            if data.slotIndex then
+                RAID.slotIndex = data.slotIndex
+            end
+        end)
+        table.insert(_raidConns, conn)
+    end
+
+    -- ── ChallengeRaidsSuccess: raid berhasil ──
+    if _RE_Success then
+        local conn = _RE_Success.OnClientEvent:Connect(function()
+            if RAID.running then
+                RAID.killed = RAID.killed + 1
+                RaidCounterUpdate()
+            end
+        end)
+        table.insert(_raidConns, conn)
+    end
+
+    -- ── ChallengeRaidsFail: raid gagal ──
+    if _RE_Fail then
+        local conn = _RE_Fail.OnClientEvent:Connect(function()
+            -- handled di StartRaidLoop via local connF
+            -- ini hanya fallback counter
+        end)
+        table.insert(_raidConns, conn)
+    end
+
+    warn("[ ASH RAID ] ✅ Listener reconnected ("..#_raidConns.." koneksi aktif)")
+end
+
+-- Pertama kali: tunggu Remotes siap
+task.spawn(function()
+    -- Tunggu UpdateRaidInfo siap (bisa butuh waktu setelah teleport)
+    local _RE = Remotes:WaitForChild("UpdateRaidInfo", 15)
+    if _RE then
+        ConnectRaidListeners()
+    else
+        warn("[ ASH RAID ] UpdateRaidInfo tidak ditemukan setelah 15s")
+    end
+end)
+
+-- ── WATCHER: Auto-reconnect kalau Remotes folder refresh ──
+-- Ini yang fix bug setelah rejoin/relog/teleport
+task.spawn(function()
+    -- Monitor Remotes folder: kalau ada child baru bernama UpdateRaidInfo
+    -- artinya server baru assign remote → reconnect semua listener
+    local lastRemoteRef = nil
+    while ScreenGui.Parent do
+        task.wait(2)
+        local current = Remotes:FindFirstChild("UpdateRaidInfo")
+        if current ~= lastRemoteRef then
+            lastRemoteRef = current
+            if current then
+                -- Remote berganti instance → reconnect
+                ConnectRaidListeners()
+                -- Sekaligus fetch ulang raid list yang mungkin sudah bersih
+                task.spawn(function()
+                    task.wait(0.5)
+                    FetchRaidIds()
+                end)
+            end
+        end
+    end
+end)
+
+-- Fetch manual via GetRaidTeamInfos (dipanggil saat start)
+local function FetchRaidIds()
+    local RE = Remotes:FindFirstChild("GetRaidTeamInfos")
+    if not RE then return end
+    local ok, res = pcall(function() return RE:InvokeServer() end)
+    if ok and type(res) == "table" then
+        for k, info in pairs(res) do
+            ParseRaidEntry(k, info)
+        end
+        RebuildRaidList()
+    end
+end
+
+-- ── Helpers ──
 function StopRaid()
+    _raidInterrupt = false
     RAID.running = false
     if RAID.thread then
         pcall(function() task.cancel(RAID.thread) end)
@@ -4435,44 +4628,33 @@ function RaidCounterUpdate()
     if RAID.loopLbl then RAID.loopLbl.Text = "Loop: "..RAID.loopCount end
 end
 
--- Collect semua item di workspace
 function RaidCollectAll()
-    local golds = workspace:FindFirstChild("Golds")
-    if golds then
-        for _, obj in ipairs(golds:GetChildren()) do
-            local guid = obj:GetAttribute("GUID")
-            if guid then
-                RAID.collected = RAID.collected + 1
-                pcall(function() RE_CollectItem:InvokeServer(guid) end)
-                task.wait(0.05)
+    for _, folderName in ipairs({"Golds","Items","Drops","Rewards"}) do
+        local folder = workspace:FindFirstChild(folderName)
+        if folder then
+            for _, obj in ipairs(folder:GetChildren()) do
+                local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid")
+                if guid then
+                    RAID.collected = RAID.collected + 1
+                    pcall(function() RE_CollectItem:InvokeServer(guid) end)
+                    pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end)
+                    task.wait(0.05)
+                end
             end
         end
     end
 end
 
--- Scan workspace secara menyeluruh untuk enemy/boss raid
--- Boss raid bisa ada di folder berbeda (Enemys, Bosses, RaidEnemys, dll)
-RAID_ENEMY_FOLDERS = {
-    "Enemys","Enemy","Enemies",
-    "Bosses","Boss","RaidBoss","RaidBosses",
-    "RaidEnemy","RaidEnemys","RaidEnemies",
-    "Monsters","Monster",
-}
-
+-- Scan enemy/boss di workspace
 function GetRaidEnemies()
     local list = {}
-
-    -- Cara 1: Cari di folder-folder yang diketahui
-    for _, fname in ipairs(RAID_ENEMY_FOLDERS) do
+    for _, fname in ipairs({"Enemys","Enemy","Enemies","Bosses","Boss","RaidBoss","RaidEnemys"}) do
         local folder = workspace:FindFirstChild(fname)
         if folder then
             for _, e in ipairs(folder:GetChildren()) do
                 if e:IsA("Model") then
-                    local g   = e:GetAttribute("EnemyGuid")
-                              or e:GetAttribute("BossGuid")
-                              or e:GetAttribute("Guid")
-                              or e:GetAttribute("guid")
-                              or e:GetAttribute("GUID")
+                    local g   = e:GetAttribute("EnemyGuid") or e:GetAttribute("BossGuid")
+                              or e:GetAttribute("Guid") or e:GetAttribute("GUID")
                     local hrp = e:FindFirstChild("HumanoidRootPart")
                     local hum = e:FindFirstChildOfClass("Humanoid")
                     if g and hrp and hum and hum.Health > 0 then
@@ -4482,349 +4664,108 @@ function GetRaidEnemies()
             end
         end
     end
-
-    -- Cara 2: Kalau masih kosong, deep-scan seluruh workspace (lebih lambat tapi pasti ketemu)
-    if #list == 0 then
-        local function DeepScan(parent, depth)
-            if depth > 4 then return end
-            for _, child in ipairs(parent:GetChildren()) do
-                if child:IsA("Model") then
-                    local g   = child:GetAttribute("EnemyGuid")
-                              or child:GetAttribute("BossGuid")
-                              or child:GetAttribute("Guid")
-                              or child:GetAttribute("guid")
-                              or child:GetAttribute("GUID")
-                    local hrp = child:FindFirstChild("HumanoidRootPart")
-                    local hum = child:FindFirstChildOfClass("Humanoid")
-                    if g and hrp and hum and hum.Health > 0 then
-                        table.insert(list, {guid=g, hrp=hrp, model=child})
-                    end
-                end
-                DeepScan(child, depth + 1)
-            end
-        end
-        pcall(function() DeepScan(workspace, 0) end)
-    end
-
-    -- Cara 3: Kalau masih kosong, coba pakai Guid dari nama model
-    -- (beberapa game simpan guid sebagai nama model)
-    if #list == 0 then
-        for _, desc in ipairs(workspace:GetDescendants()) do
-            if desc:IsA("Model") then
-                local hum = desc:FindFirstChildOfClass("Humanoid")
-                local hrp = desc:FindFirstChild("HumanoidRootPart")
-                if hum and hum.Health > 0 and hrp then
-                    -- Cek apakah nama model format UUID
-                    if desc.Name:match("^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") then
-                        table.insert(list, {guid=desc.Name, hrp=hrp, model=desc})
-                    end
-                end
-            end
-        end
-    end
-
     return list
 end
 
--- Serang semua enemy/boss raid
-function RaidAttackAll()
-    local enemies = GetRaidEnemies()
-    local count   = #enemies
-    for _, e in ipairs(enemies) do
-        local g = e.guid
-        local p = e.hrp.Position
-        -- ClickEnemy
-        if RE_Click then
+-- Serang semua enemy raid
+local function RaidFireDamage(g, p)
+    if RE_Click then
+        task.spawn(function()
             pcall(function() RE_Click:InvokeServer({enemyGuid=g, enemyPos=p}) end)
-        end
-        -- PlayerClickAttackSkill
-        if RE_Atk then
-            pcall(function() RE_Atk:FireServer({attackEnemyGUID=g}) end)
-            pcall(function() RE_Atk:FireServer(g) end)
-        end
-        -- Hero skills
-        for _, hGuid in ipairs(HERO_GUIDS) do
-            if RE_HeroSkill then
-                for sk = 1, 3 do
-                    pcall(function()
-                        RE_HeroSkill:FireServer({
-                            heroGuid  = hGuid,
-                            enemyGuid = g,
-                            skillType = sk,
-                            masterId  = MY_USER_ID,
-                        })
-                    end)
-                end
-            end
-            if RE_HeroMove then
-                pcall(function()
-                    RE_HeroMove:FireServer({
-                        attackTarget      = g,
-                        userId            = MY_USER_ID,
-                        heroTagetPosInfos = {[hGuid]=p+Vector3.new(2,0,2)},
-                    })
-                end)
-            end
-            if RE_HeroStand then
-                pcall(function()
-                    RE_HeroStand:FireServer({
-                        masterId = MY_USER_ID,
-                        cframe   = CFrame.new(p + Vector3.new(2,0,2)),
-                        guid     = hGuid,
-                    })
-                end)
-            end
-        end
-        -- Teleport karakter ke dekat boss
-        local char = LP.Character
-        if char then
-            local hrp2 = char:FindFirstChild("HumanoidRootPart")
-            if hrp2 then
-                pcall(function() hrp2.CFrame = CFrame.new(p + Vector3.new(0,2,3)) end)
-            end
+        end)
+    end
+    if RE_Atk then
+        pcall(function() RE_Atk:FireServer({attackEnemyGUID=g}) end)
+    end
+    for _, hGuid in ipairs(HERO_GUIDS) do
+        if RE_HeroUseSkill then
+            pcall(function() RE_HeroUseSkill:FireServer({
+                heroGuid=hGuid, attackType=1,
+                userId=MY_USER_ID, enemyGuid=g,
+            }) end)
+        elseif RE_HeroSkill then
+            pcall(function() RE_HeroSkill:FireServer({
+                heroGuid=hGuid, enemyGuid=g, skillType=1, masterId=MY_USER_ID
+            }) end)
         end
     end
-    return count
 end
 
--- Hitung enemy/boss raid yang masih hidup
-function CountAliveEnemies()
-    local enemies = GetRaidEnemies()
-    return #enemies
-end
-
--- Main loop raid
+-- Main loop
 function StartRaidLoop()
     StopRaid()
     RAID.running   = true
     RAID.killed    = 0
     RAID.collected = 0
     RAID.loopCount = 0
-    RaidStatusUpdate("⚡ Memulai Auto Raid...", Color3.fromRGB(255,200,60))
 
     RAID.thread = task.spawn(function()
         while RAID.running do
 
-            -- ── PRE-CHECK : Pastikan raidId valid ──
-            -- Coba resolve dari RAID_ID_LIST sesuai difficulty yang dipilih
-            if #RAID_ID_LIST > 0 then
-                -- raidId & raidMapId sudah diset oleh UpdateSelLabel(), tidak perlu override
-                -- Tapi validasi ulang untuk jaga-jaga
-                local currentRaid = nil
-                for _, r in ipairs(RAID_ID_LIST) do
-                    if r.id == RAID.raidId then currentRaid = r; break end
-                end
-                if not currentRaid then
-                    -- fallback ke entry pertama
-                    currentRaid = RAID_ID_LIST[1]
-                    RAID.raidId    = currentRaid.id
-                    RAID.raidMapId = currentRaid.mapId or 50302
-                end
-                if currentRaid.mapId then
-                    RAID.raidMapId = currentRaid.mapId
-                end
-            elseif RAID.raidId == 0 or RAID.raidId == nil then
-                RaidStatusUpdate("⚠ Belum ada Raid aktif — menunggu 5 detik...", Color3.fromRGB(255,150,50))
-                task.wait(5)
-                if not RAID.running then break end
-                -- Coba fetch ulang
-                pcall(function() FetchRaidIds() end)
-                task.wait(1)
-                if not RAID.running then break end
-                if #RAID_ID_LIST == 0 then
-                    RaidStatusUpdate("❌ Tidak ada raid — Auto Raid berhenti", Color3.fromRGB(215,50,60))
-                    break
-                end
-            end
-
-
-            RaidStatusUpdate("🔍 Mengecek info team raid...", Color3.fromRGB(100,200,255))
-            if RE_GetRaidTeamInfos then
-                pcall(function() RE_GetRaidTeamInfos:InvokeServer() end)
-            end
+            -- ── STEP 1: Resolve raidId berdasarkan difficulty ──
+            -- Saat menunggu raid, Mass Attack bebas jalan (_raidInterrupt=false)
+            _raidInterrupt = false
+            RaidStatusUpdate("🔍 Cek raid aktif...", Color3.fromRGB(255,200,60))
+            FetchRaidIds()
             task.wait(0.5)
-            if not RAID.running then break end
 
-            -- ── STEP 2 : Buat Team Raid ──
-            RaidStatusUpdate("👥 Membuat team raid (ID: "..RAID.raidId..")...", Color3.fromRGB(100,200,255))
-            if RE_CreateRaidTeam then
-                pcall(function() RE_CreateRaidTeam:InvokeServer({raidId = RAID.raidId}) end)
-            end
-            task.wait(1)
-            if not RAID.running then break end
-
-            -- ── STEP 3 : Start Challenge Raid Map ──
-            RaidStatusUpdate("🗺 Memulai challenge raid map...", Color3.fromRGB(255,180,60))
-            if RE_StartChallengeRaidMap then
-                pcall(function() RE_StartChallengeRaidMap:FireServer({raidId = RAID.raidId}) end)
-            end
-            task.wait(0.5)
-            if not RAID.running then break end
-
-            -- ── STEP 4 : Teleport ke Map Raid ──
-            RaidStatusUpdate("🌀 Teleport ke map raid (mapId: "..RAID.raidMapId..")...", Color3.fromRGB(180,100,255))
-            if RE_RaidStartTp then
-                pcall(function()
-                    RE_RaidStartTp:FireServer({
-                        hostId = MY_USER_ID,
-                        mapId  = RAID.raidMapId,
-                    })
-                end)
-            end
-            -- Tunggu sesuai joinDelay
-            local d = 0
-            while d < RAID.joinDelay and RAID.running do
-                task.wait(0.2); d = d + 0.2
-            end
-            if not RAID.running then break end
-
-            -- ── STEP 5 : Equip Hero + Konfirmasi Teleport ──
-            if RE_EquipHeroWithData then
-                pcall(function() RE_EquipHeroWithData:FireServer() end)
-            end
-            if RE_LocalTpSuccess then
-                pcall(function() RE_LocalTpSuccess:InvokeServer() end)
-            end
-            task.wait(0.5)
-            if not RAID.running then break end
-
-            -- ── STEP 6 : Auto Attack Loop ──
-            if RAID.autoAttack then
-
-                -- Tunggu boss spawn dulu (max 15 detik)
-                RaidStatusUpdate("⏳ Menunggu boss spawn...", Color3.fromRGB(255,200,60))
-                local spawnWait = 0
-                while RAID.running and spawnWait < 15 do
-                    if CountAliveEnemies() > 0 then break end
-                    task.wait(0.3); spawnWait = spawnWait + 0.3
-                end
-
-                if CountAliveEnemies() == 0 then
-                    RaidStatusUpdate("⚠ Boss tidak ditemukan di workspace, lanjut...", Color3.fromRGB(255,150,50))
-                    task.wait(1)
-                else
-                    -- Boss ketemu, mulai serang
-                    local atkT   = 0
-                    local emptyT = 0
-                    local lastAlive = CountAliveEnemies()
-
-                    while RAID.running do
-                        local enemies = GetRaidEnemies()
-                        local alive   = #enemies
-
-                        if alive == 0 then
-                            emptyT = emptyT + 0.15
-                            if emptyT >= 2.5 then
-                                RAID.killed = RAID.killed + 1
-                                RaidCounterUpdate()
-                                RaidStatusUpdate("💀 Boss mati! Kill: "..RAID.killed, Color3.fromRGB(100,255,150))
-                                task.wait(0.5)
-                                break
-                            end
-                        else
-                            emptyT = 0
-                            -- Serang setiap enemy yang ketemu
-                            for _, e in ipairs(enemies) do
-                                local g = e.guid
-                                local p = e.hrp.Position
-                                -- ClickEnemy
-                                if RE_Click then
-                                    pcall(function() RE_Click:InvokeServer({enemyGuid=g, enemyPos=p}) end)
-                                end
-                                -- RE_Atk
-                                if RE_Atk then
-                                    pcall(function() RE_Atk:FireServer({attackEnemyGUID=g}) end)
-                                    pcall(function() RE_Atk:FireServer(g) end)
-                                end
-                                -- Hero skills + move
-                                for _, hGuid in ipairs(HERO_GUIDS) do
-                                    if RE_HeroSkill then
-                                        for sk = 1, 3 do
-                                            pcall(function()
-                                                RE_HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=sk,masterId=MY_USER_ID})
-                                            end)
-                                        end
-                                    end
-                                    if RE_HeroMove then
-                                        pcall(function()
-                                            RE_HeroMove:FireServer({
-                                                attackTarget=g, userId=MY_USER_ID,
-                                                heroTagetPosInfos={[hGuid]=p+Vector3.new(2,0,2)},
-                                            })
-                                        end)
-                                    end
-                                    if RE_HeroStand then
-                                        pcall(function()
-                                            RE_HeroStand:FireServer({masterId=MY_USER_ID,cframe=CFrame.new(p+Vector3.new(2,0,2)),guid=hGuid})
-                                        end)
-                                    end
-                                end
-                                -- Snap player ke boss
-                                local char = LP.Character
-                                if char then
-                                    local hrpChar = char:FindFirstChild("HumanoidRootPart")
-                                    if hrpChar then
-                                        pcall(function() hrpChar.CFrame = CFrame.new(p + Vector3.new(0,2,3)) end)
-                                    end
-                                end
-                            end
-                            RaidStatusUpdate("⚔ Boss: "..alive.." HP  |  Kill: "..RAID.killed, Color3.fromRGB(255,100,30))
-                        end
-
-                        task.wait(0.08)
-                        atkT = atkT + 0.08
-                        if atkT > 180 then
-                            RaidStatusUpdate("⏰ Timeout 3 menit, lanjut collect...", Color3.fromRGB(255,200,60))
-                            break
-                        end
+            -- Tunggu sampai ada raid yang cocok dengan difficulty
+            local raidEntry = nil
+            while RAID.running and not raidEntry do
+                raidEntry = PickRaidByDifficulty()
+                if not raidEntry then
+                    local diff = RAID.difficulty
+                    if diff == "preferred" then
+                        RaidStatusUpdate("⏳ Preferred: menunggu raid di map pilihan...", Color3.fromRGB(255,160,40))
+                    else
+                        RaidStatusUpdate("⏳ Menunggu notif raid ("..diff..")...", Color3.fromRGB(255,150,50))
                     end
+                    task.wait(1)
                 end
             end
             if not RAID.running then break end
 
-            -- ── STEP 7 : GetDrawHeroId (drop loot dari boss) ──
-            -- Dipanggil otomatis oleh server, tidak perlu manual invoke
-            task.wait(0.5)
+            -- Raid ditemukan → pause Mass Attack sekarang
+            _raidInterrupt = true
 
-            -- ── STEP 8 : Auto Collect Item ──
-            if RAID.autoCollect then
-                RaidStatusUpdate("💰 Mengambil item...", Color3.fromRGB(100,255,150))
-                RaidCollectAll()
-                task.wait(0.3)
+            RAID.raidId    = raidEntry.id
+            RAID.raidMapId = raidEntry.mapId
+            if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
+
+            local diffLabel = RAID.difficulty:upper()
+            RaidStatusUpdate("🎯 ["..diffLabel.."] "..raidEntry.label, Color3.fromRGB(100,200,255))
+            task.wait(0.3)
+            if not RAID.running then break end
+
+            -- ── STEP 2: Buat team ──
+            RaidStatusUpdate("👥 Membuat team (ID:"..RAID.raidId..")...", Color3.fromRGB(100,200,255))
+            if RE_CreateRaidTeam then
+                pcall(function() RE_CreateRaidTeam:InvokeServer(RAID.raidId) end)
             end
+            task.wait(0.5)
+            if not RAID.running then break end
 
-            -- ── STEP 9 : Ambil Reward Raid ──
-            RaidStatusUpdate("🎁 Mengambil reward raid...", Color3.fromRGB(255,220,80))
-            if RE_GainRaidsRewards then
-                -- Loop slot reward 1–3
-                for slot = 1, 3 do
-                    pcall(function() RE_GainRaidsRewards:InvokeServer(slot) end)
-                    task.wait(0.2)
-                end
+            -- ── STEP 3: Konfirmasi map ──
+            if RE_StartChallengeRaidMap then
+                pcall(function() RE_StartChallengeRaidMap:FireServer() end)
             end
             task.wait(0.3)
             if not RAID.running then break end
 
-            -- ── STEP 10 : Quit Raid Map ──
-            RaidStatusUpdate("🚪 Keluar dari map raid...", Color3.fromRGB(200,100,100))
-            if RE_QuitRaidsMap then
-                pcall(function()
-                    RE_QuitRaidsMap:InvokeServer({
-                        currentSlotIndex = 2,
-                        toMapId          = 50001,
-                    })
-                end)
+            -- ── STEP 4: Teleport ke map raid ──
+            local tpMapId = RAID.raidMapId + 100
+            RaidStatusUpdate("🌀 TP ke Map "..tpMapId.."...", Color3.fromRGB(180,100,255))
+            if RE_RaidStartTp then
+                pcall(function() RE_RaidStartTp:FireServer({
+                    hostId = MY_USER_ID,
+                    mapId  = tpMapId,
+                }) end)
             end
-            task.wait(0.5)
+
+            -- ── STEP 5: Tunggu 2 detik lalu equip ──
+            task.wait(2)
             if not RAID.running then break end
 
-            -- ── STEP 11 : Teleport Balik ke Map Normal ──
-            RaidStatusUpdate("🌀 Kembali ke map normal...", Color3.fromRGB(180,100,255))
-            if RE_RaidStartTp then
-                pcall(function()
-                    RE_RaidStartTp:FireServer({mapId = 50001})
-                end)
-            end
             if RE_EquipHeroWithData then
                 pcall(function() RE_EquipHeroWithData:FireServer() end)
             end
@@ -4832,18 +4773,136 @@ function StartRaidLoop()
                 pcall(function() RE_LocalTpSuccess:InvokeServer() end)
             end
 
-            -- ── SELESAI 1 LOOP ──
+            -- ── STEP 6: Auto attack di dalam raid ──
+            -- Scan & bunuh semua musuh pakai RaidFireDamage
+            -- Sistem akan kirim ChallengeRaidsSuccess saat musuh terakhir mati
+            RAID._raidDone = false
+            local _raidSuccess = false
+
+            -- Setup listener sukses/gagal dulu sebelum mulai attack
+            local connS, connF
+            local RE_S = Remotes:FindFirstChild("ChallengeRaidsSuccess")
+            local RE_F = Remotes:FindFirstChild("ChallengeRaidsFail")
+
+            if RE_S then
+                connS = RE_S.OnClientEvent:Connect(function()
+                    RAID._raidDone = true
+                    _raidSuccess   = true
+                    RAID.killed    = RAID.killed + 1
+                    RaidCounterUpdate()
+                    RaidStatusUpdate("🏆 Raid sukses! Kill:"..RAID.killed, Color3.fromRGB(100,255,150))
+                end)
+            end
+            if RE_F then
+                connF = RE_F.OnClientEvent:Connect(function()
+                    RAID._raidDone = true
+                    RaidStatusUpdate("💀 Raid gagal, skip...", Color3.fromRGB(255,100,60))
+                end)
+            end
+
+            -- Loop attack: scan musuh → tembak semua → tunggu mati → repeat
+            -- Berhenti kalau ChallengeRaidsSuccess/Fail masuk atau timeout 5 menit
+            RaidStatusUpdate("⚔ Auto attack di dalam raid...", Color3.fromRGB(255,180,40))
+            local elapsed = 0
+            local lastAlive = -1
+
+            while RAID.running and not RAID._raidDone and elapsed < 5 do
+                local enemies = GetRaidEnemies()
+                local alive = #enemies
+
+                if alive == 0 then
+                    -- Tidak ada musuh terdeteksi, tunggu sebentar (mungkin loading)
+                    if elapsed % 5 == 0 then
+                        RaidStatusUpdate("🔍 Scan musuh... ("..elapsed.."s)", Color3.fromRGB(200,200,60))
+                    end
+                    task.wait(0.5)
+                    elapsed = elapsed + 0.5
+                else
+                    -- Ada musuh → serang semua
+                    if alive ~= lastAlive then
+                        lastAlive = alive
+                        RaidStatusUpdate("⚔ Menyerang "..alive.." musuh...", Color3.fromRGB(255,140,40))
+                    end
+                    for _, e in ipairs(enemies) do
+                        if not RAID._raidDone then
+                            local g = e.guid
+                            local p = e.hrp and e.hrp.Position or Vector3.new(0,0,0)
+                            RaidFireDamage(g, p)
+                        end
+                    end
+                    task.wait(0.08)
+                    elapsed = elapsed + 0.08
+                end
+            end
+
+            -- Bersihkan listener
+            if connS then pcall(function() connS:Disconnect() end) end
+            if connF then pcall(function() connF:Disconnect() end) end
+
+            if elapsed >= 5 then
+                RaidStatusUpdate("⏰ Timeout — paksa keluar", Color3.fromRGB(255,150,50))
+            end
+            if not RAID.running then break end
+
+            -- ── STEP 6.5: Ambil drop & reward jika sukses ──
+            if _raidSuccess then
+                RaidStatusUpdate("🎁 Ambil drop & reward...", Color3.fromRGB(255,220,80))
+                task.wait(0.3)
+                RaidCollectAll()
+                task.wait(0.3)
+                if RE_GainRaidsRewards then
+                    pcall(function() RE_GainRaidsRewards:InvokeServer(1) end)
+                end
+                task.wait(0.5)
+            end
+            if not RAID.running then break end
+
+            -- ── STEP 7: Keluar raid ──
+            RaidStatusUpdate("🚪 Keluar raid...", Color3.fromRGB(200,100,100))
+            if RE_QuitRaidsMap then
+                pcall(function() RE_QuitRaidsMap:InvokeServer({
+                    currentSlotIndex = RAID.slotIndex or 1,
+                    toMapId          = RAID.raidMapId,
+                }) end)
+            end
+            task.wait(0.5)
+            if RE_RaidStartTp then
+                pcall(function() RE_RaidStartTp:FireServer({mapId=RAID.raidMapId}) end)
+            end
+            if RE_EquipHeroWithData then
+                pcall(function() RE_EquipHeroWithData:FireServer() end)
+            end
+            if RE_LocalTpSuccess then
+                pcall(function() RE_LocalTpSuccess:InvokeServer() end)
+            end
+            task.wait(1)
+
+            -- ── Hapus raid yang sudah selesai dari live list ──
+            RAID_LIVE[RAID.raidId] = nil
+            RebuildRaidList()
+
+            -- ── Selesai 1 loop: lepas interrupt → Mass Attack lanjut dulu ──
+            _raidInterrupt = false
             RAID.loopCount = RAID.loopCount + 1
             RaidCounterUpdate()
-            RaidStatusUpdate("✅ Loop "..RAID.loopCount.." selesai! Delay "..RAID.nextDelay.."s...", Color3.fromRGB(100,255,150))
-            if RAID.dot then RAID.dot.BackgroundColor3 = Color3.fromRGB(100,255,150) end
 
-            local d2 = 0
-            while d2 < RAID.nextDelay and RAID.running do
-                task.wait(0.2); d2 = d2 + 0.2
+            -- ── COOLDOWN 30 detik sebelum boleh masuk raid lagi ──
+            -- Selama cooldown, Mass Attack bebas jalan
+            local COOLDOWN = 30
+            for cd = COOLDOWN, 1, -1 do
+                if not RAID.running then break end
+                RaidStatusUpdate("⏳ Cooldown: "..cd.."s lagi... (Mass Attack lanjut)", Color3.fromRGB(160,148,135))
+                if RAID.dot then RAID.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
+                task.wait(1)
+            end
+
+            if RAID.running then
+                RaidStatusUpdate("🔍 Cooldown selesai — cari raid berikutnya...", Color3.fromRGB(100,255,150))
+                if RAID.dot then RAID.dot.BackgroundColor3 = Color3.fromRGB(100,100,100) end
             end
         end
 
+        _raidInterrupt = false  -- pastikan Mass Attack tidak stuck kalau Auto Raid berhenti
         RAID.running = false
         _raidOn = false
         RaidStatusUpdate("⏹ Idle — Auto Raid berhenti", Color3.fromRGB(160,148,135))
@@ -4852,17 +4911,19 @@ function StartRaidLoop()
 end
 
 -- ============================================================
--- PANEL : AUTO RAID (dipecah jadi sub-fungsi — fix local limit)
+-- PANEL : AUTO RAID (rebuilt — difficulty selector + preferred)
 -- ============================================================
+;(function()
+    local p = NewPanel("autoraid")
+    SectionHeader(p,"AUTO RAID",0)
 
--- Sub-fungsi 1: Status card
-function BuildRaidStatusCard(p)
-    local card = Frame(p, Color3.fromRGB(30,14,3), UDim2.new(1,0,0,0))
-    card.LayoutOrder=1; card.AutomaticSize=Enum.AutomaticSize.Y
-    Corner(card,10); Stroke(card,C.ACC,1,0.3); Padding(card,10,10,12,12)
-    New("UIListLayout",{Parent=card,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
+    -- ── STATUS CARD ──
+    local statusCard = Frame(p, Color3.fromRGB(30,14,3), UDim2.new(1,0,0,0))
+    statusCard.LayoutOrder=1; statusCard.AutomaticSize=Enum.AutomaticSize.Y
+    Corner(statusCard,10); Stroke(statusCard,C.ACC,1,0.3); Padding(statusCard,10,10,12,12)
+    New("UIListLayout",{Parent=statusCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
 
-    local dotRow = Frame(card,Color3.fromRGB(0,0,0),UDim2.new(1,0,0,26))
+    local dotRow = Frame(statusCard,Color3.fromRGB(0,0,0),UDim2.new(1,0,0,26))
     dotRow.BackgroundTransparency=1; dotRow.LayoutOrder=0
     local dot = Frame(dotRow,Color3.fromRGB(100,100,100),UDim2.new(0,10,0,10))
     dot.Position=UDim2.new(0,0,0.5,-5); Corner(dot,5)
@@ -4872,7 +4933,7 @@ function BuildRaidStatusCard(p)
     stLbl.TextTruncate=Enum.TextTruncate.AtEnd
     RAID.statusLbl = stLbl
 
-    local cRow = Frame(card,Color3.fromRGB(22,10,2),UDim2.new(1,0,0,24))
+    local cRow = Frame(statusCard,Color3.fromRGB(22,10,2),UDim2.new(1,0,0,24))
     cRow.LayoutOrder=1; Corner(cRow,6); Stroke(cRow,C.BORD,1,0.5)
     local kLbl = Label(cRow,"Kill: 0",10.5,C.ACC2,Enum.Font.GothamBold)
     kLbl.Size=UDim2.new(0.5,0,1,0); kLbl.Position=UDim2.new(0,8,0,0)
@@ -4880,121 +4941,248 @@ function BuildRaidStatusCard(p)
     local lLbl = Label(cRow,"Loop: 0",10.5,C.TXT3,Enum.Font.GothamBold)
     lLbl.Size=UDim2.new(0.5,0,1,0); lLbl.Position=UDim2.new(0.5,0,0,0)
     RAID.loopLbl = lLbl
-end
 
+    -- ── SECTION: DIFFICULTY ──
+    SectionHeader(p,"DIFFICULTY",2)
 
--- Sub-fungsi 2: Difficulty selector + live raid list
-function BuildRaidIdSelector(p)
+    -- Difficulty dropdown
+    local diffCard = Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
+    diffCard.LayoutOrder=3; Corner(diffCard,8); Stroke(diffCard,C.BORD,1,0.4); Padding(diffCard,6,6,12,8)
+    local diffTitle = Label(diffCard,"Mode",12,C.TXT,Enum.Font.GothamBold)
+    diffTitle.Size=UDim2.new(0.38,0,1,0)
 
-    -- ── SECTION HEADER ──
-    SectionHeader(p,"PILIH DIFFICULTY",2)
+    local DIFF_OPTS   = {"Easy","Medium","Hard","Preferred"}
+    local DIFF_KEYS   = {"easy","medium","hard","preferred"}
+    local DIFF_COLORS = {
+        Color3.fromRGB(80,220,80),
+        Color3.fromRGB(255,200,60),
+        Color3.fromRGB(255,80,80),
+        Color3.fromRGB(100,180,255),
+    }
+    local DIFF_DESC = {
+        "Easy = map angka terkecil",
+        "Medium = map angka tengah",
+        "Hard = map angka terbesar",
+        "Preferred = map pilihan kamu",
+    }
 
-    -- State
-    local DIFF_MODE    = "easy"
-    local PREF_RAIDID  = nil  -- untuk mode preferred
+    local curDiff = 1  -- index ke DIFF_OPTS
 
-    -- Info raid yang dipilih saat ini
-    local selCard = Frame(p,Color3.fromRGB(28,12,2),UDim2.new(1,0,0,32))
-    selCard.LayoutOrder=3; Corner(selCard,8); Stroke(selCard,C.ACC,1,0.3)
-    local selLbl = Label(selCard,"⏳ Menunggu notifikasi Raid...",11,C.TXT3,Enum.Font.Gotham)
+    local diffDDBtn = Btn(diffCard,C.BG3,UDim2.new(0.62,-4,1,-4))
+    diffDDBtn.Position=UDim2.new(0.38,0,0,2); Corner(diffDDBtn,6); Stroke(diffDDBtn,C.BORD,1,0.2)
+    local diffDDLbl = Label(diffDDBtn,"  "..DIFF_OPTS[curDiff],11,DIFF_COLORS[curDiff],Enum.Font.GothamBold)
+    diffDDLbl.Size=UDim2.new(1,-18,1,0)
+    local diffArr = Label(diffDDBtn,"▾",11,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    diffArr.Size=UDim2.new(0,16,1,0); diffArr.Position=UDim2.new(1,-18,0,0)
+    RAID.diffLbl = diffDDLbl
+
+    -- Desc label
+    local diffDesc = Label(p,DIFF_DESC[curDiff],10,C.TXT3,Enum.Font.Gotham)
+    diffDesc.LayoutOrder=4; diffDesc.Size=UDim2.new(1,0,0,14)
+
+    -- Preferred map panel (hidden by default)
+    local prefCard = Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
+    prefCard.LayoutOrder=5; Corner(prefCard,8); Stroke(prefCard,Color3.fromRGB(100,180,255),1,0.3); Padding(prefCard,6,6,12,8)
+    prefCard.Visible = false
+    local prefTitle = Label(prefCard,"🗺 Pilih Map Preferred",11,Color3.fromRGB(100,180,255),Enum.Font.GothamBold)
+    prefTitle.Size=UDim2.new(0.55,0,0,16); prefTitle.Position=UDim2.new(0,0,0,4)
+    local prefCountLbl = Label(prefCard,"0 map",10,C.TXT3,Enum.Font.Gotham,Enum.TextXAlignment.Right)
+    prefCountLbl.Size=UDim2.new(0.45,0,0,16); prefCountLbl.Position=UDim2.new(0.55,0,0,4)
+
+    -- Preferred map DD button
+    local prefDDBtn = Btn(prefCard,C.DD_BG,UDim2.new(1,0,0,20))
+    prefDDBtn.Position=UDim2.new(0,0,0,22); Corner(prefDDBtn,5); Stroke(prefDDBtn,Color3.fromRGB(100,180,255),1,0.3)
+    local prefDDLbl = Label(prefDDBtn,"  Klik untuk pilih map...",10,C.TXT3,Enum.Font.Gotham)
+    prefDDLbl.Size=UDim2.new(1,-18,1,0); prefDDLbl.Position=UDim2.new(0,4,0,0)
+    local prefArr = Label(prefDDBtn,"▾",10,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    prefArr.Size=UDim2.new(0,14,1,0); prefArr.Position=UDim2.new(1,-16,0,0)
+
+    local function UpdatePrefLabel()
+        local n = 0; for _ in pairs(RAID.preferMaps) do n=n+1 end
+        prefCountLbl.Text = n.." map"
+        if n == 0 then
+            prefDDLbl.Text = "  Klik untuk pilih map..."
+            prefDDLbl.TextColor3 = C.TXT3
+        else
+            local names = {}
+            for mn in pairs(RAID.preferMaps) do table.insert(names, "Map "..mn) end
+            table.sort(names)
+            prefDDLbl.Text = "  "..table.concat(names, ", ")
+            prefDDLbl.TextColor3 = Color3.fromRGB(100,180,255)
+        end
+    end
+
+    -- Preferred map dropdown popup
+    prefDDBtn.MouseButton1Click:Connect(function()
+        CloseActiveDD()
+        local absPos  = prefDDBtn.AbsolutePosition
+        local absSize = prefDDBtn.AbsoluteSize
+        local ITEM_H  = 26
+        local nMaps   = 18
+        local contentH = nMaps * (ITEM_H + 2) + 42
+        local scrollH  = math.min(contentH, _isSmallScreen and 180 or 210)
+        local HEADER_H = 32
+
+        local popup = Instance.new("Frame")
+        popup.Parent=DDLayer; popup.BackgroundColor3=C.DD_BG; popup.BorderSizePixel=0
+        popup.Size=UDim2.new(0,absSize.X+20,0,HEADER_H+scrollH)
+        popup.Position=UDim2.new(0,absPos.X,0,absPos.Y+absSize.Y+3)
+        popup.ZIndex=9999; popup.ClipsDescendants=true
+        Corner(popup,8); Stroke(popup,Color3.fromRGB(100,180,255),1,0.2)
+
+        local hdr=Frame(popup,Color3.fromRGB(20,40,80),UDim2.new(1,0,0,HEADER_H)); hdr.ZIndex=9999
+        local cntLbl=Label(hdr,"0/18 dipilih",10.5,Color3.fromRGB(100,180,255),Enum.Font.GothamBold)
+        cntLbl.Size=UDim2.new(0.6,0,1,0); cntLbl.Position=UDim2.new(0,8,0,0); cntLbl.ZIndex=9999
+        local clrBtn=Btn(hdr,Color3.fromRGB(120,30,30),UDim2.new(0,48,0,20))
+        clrBtn.Position=UDim2.new(1,-54,0.5,-10); Corner(clrBtn,5); clrBtn.ZIndex=9999
+        local cL=Label(clrBtn,"Clear",10,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+        cL.Size=UDim2.new(1,0,1,0); cL.ZIndex=9999
+
+        local sf=Instance.new("ScrollingFrame")
+        sf.Parent=popup; sf.BackgroundTransparency=1; sf.BorderSizePixel=0
+        sf.Position=UDim2.new(0,0,0,HEADER_H); sf.Size=UDim2.new(1,0,0,scrollH)
+        sf.CanvasSize=UDim2.new(0,0,0,contentH)
+        sf.ScrollBarThickness=5; sf.ScrollBarImageColor3=Color3.fromRGB(100,180,255)
+        sf.ScrollingDirection=Enum.ScrollingDirection.Y; sf.ZIndex=9999
+        Instance.new("UIListLayout",sf).SortOrder=Enum.SortOrder.LayoutOrder
+        local sfp=Instance.new("UIPadding",sf)
+        sfp.PaddingTop=UDim.new(0,4); sfp.PaddingLeft=UDim.new(0,4); sfp.PaddingRight=UDim.new(0,6)
+
+        local rowRefs = {}
+        local function UpdateCnt()
+            local n=0; for _ in pairs(RAID.preferMaps) do n=n+1 end
+            cntLbl.Text=n.."/18 dipilih"
+        end
+
+        for mn=1,18 do
+            local item=Instance.new("TextButton",sf)
+            item.Size=UDim2.new(1,-4,0,ITEM_H); item.LayoutOrder=mn
+            item.BackgroundColor3=RAID.preferMaps[mn] and Color3.fromRGB(20,50,100) or Color3.fromRGB(28,20,12)
+            item.BackgroundTransparency=0.3; item.BorderSizePixel=0
+            item.Text=""; item.AutoButtonColor=false; item.ZIndex=9999
+            Instance.new("UICorner",item).CornerRadius=UDim.new(0,5)
+            local tick=Instance.new("TextLabel",item)
+            tick.Size=UDim2.new(0,18,1,0); tick.BackgroundTransparency=1
+            tick.Text=RAID.preferMaps[mn] and "✓" or ""; tick.TextSize=11
+            tick.Font=Enum.Font.GothamBold; tick.TextColor3=Color3.fromRGB(100,180,255)
+            tick.ZIndex=9999
+            local iLbl=Instance.new("TextLabel",item)
+            iLbl.Size=UDim2.new(1,-24,1,0); iLbl.Position=UDim2.new(0,20,0,0)
+            iLbl.BackgroundTransparency=1; iLbl.Text="Map "..mn; iLbl.TextSize=11
+            iLbl.Font=Enum.Font.GothamBold
+            iLbl.TextColor3=RAID.preferMaps[mn] and Color3.fromRGB(100,180,255) or C.TXT
+            iLbl.TextXAlignment=Enum.TextXAlignment.Left; iLbl.ZIndex=9999
+            rowRefs[mn]={btn=item,tick=tick,lbl=iLbl}
+            local mn_l=mn
+            item.MouseButton1Click:Connect(function()
+                RAID.preferMaps[mn_l]=not RAID.preferMaps[mn_l] or nil
+                rowRefs[mn_l].tick.Text = RAID.preferMaps[mn_l] and "✓" or ""
+                rowRefs[mn_l].btn.BackgroundColor3 = RAID.preferMaps[mn_l] and Color3.fromRGB(20,50,100) or Color3.fromRGB(28,20,12)
+                rowRefs[mn_l].lbl.TextColor3 = RAID.preferMaps[mn_l] and Color3.fromRGB(100,180,255) or C.TXT
+                UpdateCnt(); UpdatePrefLabel()
+            end)
+        end
+        UpdateCnt()
+        clrBtn.MouseButton1Click:Connect(function()
+            for mn=1,18 do
+                RAID.preferMaps[mn]=nil
+                rowRefs[mn].tick.Text=""; rowRefs[mn].btn.BackgroundColor3=Color3.fromRGB(28,20,12)
+                rowRefs[mn].lbl.TextColor3=C.TXT
+            end
+            UpdateCnt(); UpdatePrefLabel()
+        end)
+        DDLayer.Visible=true
+        _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
+    end)
+
+    -- Difficulty dropdown popup
+    diffDDBtn.MouseButton1Click:Connect(function()
+        CloseActiveDD()
+        local absPos  = diffDDBtn.AbsolutePosition
+        local absSize = diffDDBtn.AbsoluteSize
+        local ITEM_H  = 28
+
+        local popup = Instance.new("Frame")
+        popup.Parent=DDLayer; popup.BackgroundColor3=C.DD_BG; popup.BorderSizePixel=0
+        popup.Size=UDim2.new(0,absSize.X+10,0,#DIFF_OPTS*(ITEM_H+2)+12)
+        popup.Position=UDim2.new(0,absPos.X,0,absPos.Y+absSize.Y+3)
+        popup.ZIndex=9999
+        Corner(popup,8); Stroke(popup,C.BORD2,1,0.2)
+
+        local ll=Instance.new("UIListLayout",popup); ll.Padding=UDim.new(0,2); ll.SortOrder=Enum.SortOrder.LayoutOrder
+        Instance.new("UIPadding",popup).PaddingTop=UDim.new(0,4)
+
+        local irefs = {}
+        for i,opt in ipairs(DIFF_OPTS) do
+            local item=Instance.new("TextButton",popup)
+            item.Size=UDim2.new(1,-8,0,ITEM_H); item.LayoutOrder=i
+            item.BackgroundColor3=i==curDiff and Color3.fromRGB(60,30,5) or Color3.fromRGB(28,20,12)
+            item.BackgroundTransparency=i==curDiff and 0 or 0.4
+            item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=9999
+            Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
+            local iL=Instance.new("TextLabel",item)
+            iL.Size=UDim2.new(1,-8,1,0); iL.Position=UDim2.new(0,8,0,0)
+            iL.BackgroundTransparency=1; iL.Text=opt; iL.TextSize=11
+            iL.Font=Enum.Font.GothamBold; iL.TextColor3=DIFF_COLORS[i]
+            iL.TextXAlignment=Enum.TextXAlignment.Left; iL.ZIndex=9999
+            irefs[i]={btn=item,lbl=iL}
+            local ii=i
+            item.MouseButton1Click:Connect(function()
+                curDiff=ii
+                RAID.difficulty=DIFF_KEYS[ii]
+                diffDDLbl.Text="  "..DIFF_OPTS[ii]
+                diffDDLbl.TextColor3=DIFF_COLORS[ii]
+                diffDesc.Text=DIFF_DESC[ii]
+                prefCard.Visible = (DIFF_KEYS[ii]=="preferred")
+                for j,r in ipairs(irefs) do
+                    r.btn.BackgroundColor3=j==ii and Color3.fromRGB(60,30,5) or Color3.fromRGB(28,20,12)
+                    r.btn.BackgroundTransparency=j==ii and 0 or 0.4
+                end
+                CloseActiveDD()
+            end)
+        end
+        DDLayer.Visible=true
+        _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
+    end)
+
+    -- ── SECTION: RAID AKTIF ──
+    SectionHeader(p,"RAID AKTIF",6)
+
+    local selCard = Frame(p,Color3.fromRGB(28,12,2),UDim2.new(1,0,0,36))
+    selCard.LayoutOrder=7; Corner(selCard,8); Stroke(selCard,C.ACC,1,0.3)
+    local selLbl = Label(selCard,"⏳ Menunggu notif raid...",11,C.TXT3,Enum.Font.Gotham)
     selLbl.Size=UDim2.new(1,-8,1,0); selLbl.Position=UDim2.new(0,8,0,0)
     selLbl.TextTruncate=Enum.TextTruncate.AtEnd
 
-    -- ── 4 TOMBOL DIFFICULTY ──
-    local diffRow = Frame(p,Color3.fromRGB(0,0,0),UDim2.new(1,0,0,34))
-    diffRow.BackgroundTransparency=1; diffRow.LayoutOrder=4
-
-    local DIFFS = {
-        {key="easy",      ico="⬇",  label="Easy",      color=Color3.fromRGB(60,200,80)},
-        {key="medium",    ico="➡",  label="Medium",    color=Color3.fromRGB(220,190,40)},
-        {key="hard",      ico="⬆",  label="Hard",      color=Color3.fromRGB(220,70,60)},
-        {key="preferred", ico="⚙",  label="Preferred", color=Color3.fromRGB(100,160,255)},
-    }
-    local dBtns = {}
-
-    -- Fungsi resolve raid berdasarkan difficulty
-    local function GetRaidByDiff(mode)
-        if #RAID_ID_LIST == 0 then return nil end
-        if mode == "easy" then
-            return RAID_ID_LIST[1]
-        elseif mode == "medium" then
-            return RAID_ID_LIST[math.ceil(#RAID_ID_LIST/2)]
-        elseif mode == "hard" then
-            return RAID_ID_LIST[#RAID_ID_LIST]
-        elseif mode == "preferred" then
-            for _, r in ipairs(RAID_ID_LIST) do
-                if r.id == PREF_RAIDID then return r end
-            end
-            return RAID_ID_LIST[1]
-        end
-        return RAID_ID_LIST[1]
-    end
-
     local function UpdateSelLabel()
-        local r = GetRaidByDiff(DIFF_MODE)
-        if r then
-            RAID.raidId  = r.id
-            RAID.raidMapId = r.mapId
-            selLbl.Text  = "🎯 "..r.label
-            selLbl.TextColor3 = C.ACC2
-        else
-            selLbl.Text  = "⏳ Menunggu notifikasi Raid..."
+        if #RAID_ID_LIST == 0 then
+            selLbl.Text = "⏳ Menunggu notif raid..."
             selLbl.TextColor3 = C.TXT3
+        else
+            local picked = PickRaidByDifficulty()
+            if picked then
+                selLbl.Text = "🎯 ["..RAID.difficulty:upper().."] "..picked.label.." | Total: "..#RAID_ID_LIST
+                selLbl.TextColor3 = C.ACC2
+            else
+                selLbl.Text = "⏳ Preferred: belum ada raid di map pilihan ("..#RAID_ID_LIST.." raid aktif)"
+                selLbl.TextColor3 = Color3.fromRGB(100,180,255)
+            end
         end
     end
 
-    local function SelectDiff(key)
-        DIFF_MODE = key
-        for _, ref in ipairs(dBtns) do
-            local sel = ref.key == key
-            ref.btn.BackgroundColor3 = sel and ref.color or Color3.fromRGB(40,18,3)
-            ref.lbl.TextColor3 = sel and Color3.fromRGB(255,255,255) or C.TXT2
-            local st = ref.btn:FindFirstChildWhichIsA("UIStroke")
-            if st then st.Transparency = sel and 0.1 or 0.7 end
-        end
-        UpdateSelLabel()
-    end
-
-    for i, d in ipairs(DIFFS) do
-        local btn = Btn(diffRow,Color3.fromRGB(40,18,3),UDim2.new(0.25,-3,1,0))
-        btn.Position=UDim2.new((i-1)*0.25,2,0,0)
-        Corner(btn,6); Stroke(btn,d.color,1,0.7)
-        local bl = Label(btn,d.ico.." "..d.label,9.5,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-        bl.Size=UDim2.new(1,0,1,0)
-        table.insert(dBtns,{key=d.key,btn=btn,lbl=bl,color=d.color})
-        btn.MouseButton1Click:Connect(function() SelectDiff(d.key) end)
-    end
-    SelectDiff("easy")
-
-    -- ── AUTO SCAN BACKGROUND ──
-    -- Daftar raid di-scan otomatis tiap 10 detik, tidak ada tombol Refresh di GUI.
-    -- Setiap kali RAID_ID_LIST berubah (listener UpdateRaidInfo atau FetchRaidIds),
-    -- selLabel di atas otomatis diperbarui sesuai difficulty yang dipilih.
     _raidIdRefreshCb = function() UpdateSelLabel() end
+    UpdateSelLabel()
 
-    task.spawn(function()
-        -- Scan pertama langsung setelah GUI siap
-        task.wait(1)
-        pcall(function() FetchRaidIds() end)
-        -- Scan ulang tiap 10 detik selama game berjalan
-        while true do
-            task.wait(10)
-            pcall(function() FetchRaidIds() end)
-        end
-    end)
-end
+    -- ── KONTROL ──
+    SectionHeader(p,"KONTROL",8)
 
-
--- Sub-fungsi 3: Main toggle
-function BuildRaidMainToggle(p)
-    SectionHeader(p,"KONTROL",5)
-    local row = Frame(p,Color3.fromRGB(35,15,2),UDim2.new(1,0,0,50))
-    row.LayoutOrder=6; Corner(row,10); Stroke(row,C.ACC,1.5,0.2)
-    local mL = Label(row,"⚡  Auto Raid",13,C.TXT,Enum.Font.GothamBold)
+    local ctrlRow = Frame(p,Color3.fromRGB(35,15,2),UDim2.new(1,0,0,50))
+    ctrlRow.LayoutOrder=9; Corner(ctrlRow,10); Stroke(ctrlRow,C.ACC,1.5,0.2)
+    local mL = Label(ctrlRow,"⚡  Auto Raid",13,C.TXT,Enum.Font.GothamBold)
     mL.Size=UDim2.new(0.65,0,0,20); mL.Position=UDim2.new(0,12,0,8)
-    local mS = Label(row,"Jalankan loop raid otomatis",10,C.TXT3,Enum.Font.Gotham)
+    local mS = Label(ctrlRow,"Jalankan loop raid otomatis",10,C.TXT3,Enum.Font.Gotham)
     mS.Size=UDim2.new(0.65,0,0,14); mS.Position=UDim2.new(0,12,0,28)
-    local pill = Btn(row,Color3.fromRGB(120,40,0),UDim2.new(0,50,0,26))
+    local pill = Btn(ctrlRow,Color3.fromRGB(120,40,0),UDim2.new(0,50,0,26))
     pill.AnchorPoint=Vector2.new(1,0.5); pill.Position=UDim2.new(1,-12,0.5,0); Corner(pill,13)
     local knob = Frame(pill,Color3.fromRGB(190,130,70),UDim2.new(0,20,0,20))
     knob.AnchorPoint=Vector2.new(0,0.5); knob.Position=UDim2.new(0,3,0.5,0); Corner(knob,10)
@@ -5005,107 +5193,15 @@ function BuildRaidMainToggle(p)
             Position=_raidOn and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
             BackgroundColor3=_raidOn and Color3.fromRGB(255,255,255) or Color3.fromRGB(190,130,70),
         }):Play()
-        row.BackgroundColor3=_raidOn and Color3.fromRGB(50,25,3) or Color3.fromRGB(35,15,2)
+        ctrlRow.BackgroundColor3=_raidOn and Color3.fromRGB(50,25,3) or Color3.fromRGB(35,15,2)
         if _raidOn then
-            RaidStatusUpdate("🔍 Mengambil data raid...", Color3.fromRGB(255,200,60))
-            task.spawn(function()
-                -- Debug: print isi RAID_LIVE dan RAID_ID_LIST
-                local liveCount = 0
-                for _ in pairs(RAID_LIVE) do liveCount = liveCount + 1 end
-                warn("[ ASH RAID ] RAID_LIVE count: "..liveCount)
-                warn("[ ASH RAID ] RAID_ID_LIST count: "..#RAID_ID_LIST)
-                for i, r in ipairs(RAID_ID_LIST) do
-                    warn("[ ASH RAID ] ["..i.."] id="..tostring(r.id).." mapId="..tostring(r.mapId).." label="..tostring(r.label))
-                end
-                warn("[ ASH RAID ] RAID.raidId="..tostring(RAID.raidId).." RAID.raidMapId="..tostring(RAID.raidMapId))
-
-                -- Coba rebuild dari RAID_LIVE yang sudah ada
-                RebuildRaidList()
-                if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
-
-                warn("[ ASH RAID ] Setelah rebuild — RAID_ID_LIST: "..#RAID_ID_LIST)
-                warn("[ ASH RAID ] RAID.raidId="..tostring(RAID.raidId).." RAID.raidMapId="..tostring(RAID.raidMapId))
-
-                StartRaidLoop()
-            end)
-        else StopRaid(); RaidStatusUpdate("⏹ Idle — Auto Raid dimatikan",Color3.fromRGB(160,148,135)) end
+            StartRaidLoop()
+        else
+            StopRaid()
+            RaidStatusUpdate("⏹ Idle — Auto Raid dimatikan",Color3.fromRGB(160,148,135))
+        end
     end)
-end
-
--- Sub-fungsi 4: Opsi toggles
-function BuildRaidOpsiToggles(p)
-    SectionHeader(p,"OPSI",7)
-    local _,sA=ToggleRow(p,"⚔  Auto Attack","Serang boss/musuh secara otomatis",8,function(on) RAID.autoAttack=on end)
-    sA(true)
-    local _,sC=ToggleRow(p,"💰  Auto Collect","Ambil semua item & reward setelah raid",9,function(on) RAID.autoCollect=on end)
-    sC(true)
-end
-
--- Sub-fungsi 5: Delay rows
-function BuildRaidDelayRows(p)
-    SectionHeader(p,"PENGATURAN DELAY",10)
-    local function MakeDelayRow(order,icon,title,desc,getV,setV,mn,mx)
-        local row=Frame(p,C.SURFACE,UDim2.new(1,0,0,50))
-        row.LayoutOrder=order; Corner(row,8); Stroke(row,C.BORD,1,0.4)
-        local lb=Label(row,icon.."  "..title,12,C.TXT,Enum.Font.GothamBold)
-        lb.Size=UDim2.new(0.55,0,0,18); lb.Position=UDim2.new(0,12,0,8)
-        local sb=Label(row,desc,10,C.TXT2,Enum.Font.Gotham)
-        sb.Size=UDim2.new(0.7,0,0,14); sb.Position=UDim2.new(0,12,0,28)
-        local vL=Label(row,getV().."s",12,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-        vL.Size=UDim2.new(0,28,0,20); vL.Position=UDim2.new(1,-88,0.5,-10)
-        local bm=Btn(row,Color3.fromRGB(120,40,0),UDim2.new(0,24,0,24))
-        bm.Position=UDim2.new(1,-66,0.5,-12); Corner(bm,6)
-        local bmL=Label(bm,"−",14,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center); bmL.Size=UDim2.new(1,0,1,0)
-        local bp=Btn(row,Color3.fromRGB(120,40,0),UDim2.new(0,24,0,24))
-        bp.Position=UDim2.new(1,-38,0.5,-12); Corner(bp,6)
-        local bpL=Label(bp,"+",14,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center); bpL.Size=UDim2.new(1,0,1,0)
-        bm.MouseButton1Click:Connect(function() setV(math.max(mn,getV()-1)); vL.Text=getV().."s" end)
-        bp.MouseButton1Click:Connect(function() setV(math.min(mx,getV()+1)); vL.Text=getV().."s" end)
-    end
-    MakeDelayRow(11,"⏱","Join Delay","Jeda sebelum mulai serang boss",
-        function() return RAID.joinDelay end,function(v) RAID.joinDelay=v end,1,30)
-    MakeDelayRow(12,"🔁","Delay Antar Raid","Jeda sebelum memulai raid berikutnya",
-        function() return RAID.nextDelay end,function(v) RAID.nextDelay=v end,1,60)
-end
-
--- Sub-fungsi 6: Flow info card
-function BuildRaidFlowCard(p)
-    local fc=Frame(p,Color3.fromRGB(20,10,2),UDim2.new(1,0,0,0))
-    fc.LayoutOrder=13; fc.AutomaticSize=Enum.AutomaticSize.Y
-    Corner(fc,8); Stroke(fc,C.ACC,1,0.5); Padding(fc,10,10,12,12)
-    New("UIListLayout",{Parent=fc,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
-    local function FL(order,txt,col)
-        local l=Label(fc,txt,10,col or Color3.fromRGB(220,200,170),Enum.Font.Gotham)
-        l.Size=UDim2.new(1,0,0,0); l.AutomaticSize=Enum.AutomaticSize.Y
-        l.TextWrapped=true; l.LayoutOrder=order
-    end
-    local ft=Label(fc,"📡  Alur Remote Raid",11,Color3.fromRGB(255,200,60),Enum.Font.GothamBold)
-    ft.Size=UDim2.new(1,0,0,0); ft.AutomaticSize=Enum.AutomaticSize.Y; ft.LayoutOrder=0
-    FL(1,"1. GetRaidTeamInfos    → Cek info team")
-    FL(2,"2. CreateRaidTeam      → Buat team (Raid ID)")
-    FL(3,"3. StartChallengeRaidMap → Konfirmasi map")
-    FL(4,"4. StartLocalPlayerTeleport → TP ke raid")
-    FL(5,"5. EquipHeroWithData + TeleportSuccess")
-    FL(6,"6. ClickEnemy (loop)   → Serang boss")
-    FL(7,"7. CollectItem (loop)  → Ambil item")
-    FL(8,"8. GainRaidsRewards    → Ambil reward slot")
-    FL(9,"9. QuitRaidsMap        → Keluar raid")
-    FL(10,"10. StartLocalPlayerTeleport → TP balik")
-    FL(11,"⚠ Jika raid gagal, coba ganti Raid ID.",Color3.fromRGB(255,130,100))
-end
-
--- Rakit semua sub-fungsi ke panel
-;(function()
-    local p = NewPanel("autoraid")
-    SectionHeader(p,"AUTO RAID",0)
-    BuildRaidStatusCard(p)
-    BuildRaidIdSelector(p)
-    BuildRaidMainToggle(p)
-    BuildRaidOpsiToggles(p)
-    BuildRaidDelayRows(p)
-    BuildRaidFlowCard(p)
 end)()
-
 
 -- ============================================================
 -- PANEL : SETTINGS
