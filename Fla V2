@@ -50,6 +50,7 @@ local RE_EquipWeapon          = Remotes:WaitForChild("EquipWeapon", 10)
 local RE_RandomWeaponQuirk    = Remotes:WaitForChild("RandomWeaponQuirk", 10)
 local RE_RandomHeroEquipGrade = Remotes:WaitForChild("RandomHeroEquipGrade", 10)
 local RE_RerollHalo           = Remotes:FindFirstChild("RerollHalo")
+local RE_RerollOrnament       = Remotes:WaitForChild("RerollOrnament", 15)
 local RE_StartTp              = Remotes:FindFirstChild("StartLocalPlayerTeleport")
 local RE_LocalTp              = Remotes:FindFirstChild("LocalPlayerTeleport")
 
@@ -1154,6 +1155,237 @@ local HALO = {
     enOnFlags  = {false, false, false},
 }
 
+-- ============================================================
+-- ORNAMENT DATA  (di-wrap dalam 1 tabel untuk hemat local slot)
+-- ============================================================
+local _ASH_ORN = {}
+
+_ASH_ORN.MACHINES = {
+    {name="Headdress",            machineId=400001},
+    {name="Ornament Machine",     machineId=400002},
+    {name="Wealth Blessing",      machineId=400003},
+    {name="Shadowhunter Blessing",machineId=400004},
+    {name="Primordial Blessing",  machineId=400005},
+    {name="Monarch Power",        machineId=400006},
+}
+
+_ASH_ORN.QUIRK_LIST    = {}
+_ASH_ORN.QUIRK_MAP     = {}
+_ASH_ORN.emptyHintRefs = {}   -- ref ke emptyHint label per mesin
+for i = 1, #_ASH_ORN.MACHINES do
+    _ASH_ORN.QUIRK_LIST[i] = {}
+end
+
+
+_ASH_ORN.STATE = {
+    running     = {false,false,false,false,false,false},
+    targets     = {{},{},{},{},{},{}},
+    statLbls    = {nil,nil,nil,nil,nil,nil},
+    dotRefs     = {nil,nil,nil,nil,nil,nil},
+    attemptLbls = {nil,nil,nil,nil,nil,nil},
+    lastLbls    = {nil,nil,nil,nil,nil,nil},
+    sumLbls     = {nil,nil,nil,nil,nil,nil},
+    toggleBtns  = {nil,nil,nil,nil,nil,nil},
+    toggleKnobs = {nil,nil,nil,nil,nil,nil},
+    enOnFlags   = {false,false,false,false,false,false},
+}
+local ORN = _ASH_ORN.STATE
+
+function _ASH_ORN.AddQuirk(machineIdx, quirkId, quirkName)
+    if not machineIdx or not quirkId then return end
+    local list = _ASH_ORN.QUIRK_LIST[machineIdx]
+    if not list then return end
+    for _, q in ipairs(list) do
+        if q.id == quirkId then
+            if quirkName and not quirkName:find("^ID:") then q.name = quirkName end
+            return
+        end
+    end
+    table.insert(list, {id=quirkId, name=quirkName or ("ID:"..quirkId)})
+    if not _ASH_ORN.QUIRK_MAP[quirkId] then _ASH_ORN.QUIRK_MAP[quirkId] = quirkName or ("ID:"..quirkId) end
+end
+
+function _ASH_ORN.GetSummary(mi)
+    local names = {}
+    for id in pairs(ORN.targets[mi]) do
+        table.insert(names, _ASH_ORN.QUIRK_MAP[id] or ("ID:"..tostring(id)))
+    end
+    table.sort(names)
+    if #names == 0 then return "--" end
+    if #names == 1 then return names[1] end
+    if #names <= 2 then return table.concat(names, ", ") end
+    return names[1]..", "..names[2].." +"..(#names-2).." lagi"
+end
+
+function _ASH_ORN.SetToggleOff(mi)
+    ORN.enOnFlags[mi] = false
+    if ORN.toggleBtns[mi]  then ORN.toggleBtns[mi].BackgroundColor3  = Color3.fromRGB(60,60,60) end
+    if ORN.toggleKnobs[mi] then ORN.toggleKnobs[mi].Position = UDim2.new(0,2,0.5,-9) end
+end
+
+function _ASH_ORN.DoRoll(mi, on)
+    local key = "ornroll"..mi
+    ORN.running[mi] = false
+    StopLoop(key)
+
+    local function setStatus(dot, txt, col)
+        if ORN.dotRefs[mi]  then ORN.dotRefs[mi].BackgroundColor3 = dot end
+        if ORN.statLbls[mi] then ORN.statLbls[mi].Text = txt; ORN.statLbls[mi].TextColor3 = col end
+    end
+
+    if not on then
+        setStatus(Color3.fromRGB(100,100,100), "⏹ Idle", C.TXT2)
+        if ORN.attemptLbls[mi] then ORN.attemptLbls[mi].Text = "Attempt: —" end
+        if ORN.lastLbls[mi]    then ORN.lastLbls[mi].Text    = "Last: —" end
+        return
+    end
+
+    if next(ORN.targets[mi]) == nil then
+        setStatus(Color3.fromRGB(255,100,80), "⚠ Pilih target quirk dulu!", Color3.fromRGB(255,100,80))
+        _ASH_ORN.SetToggleOff(mi)
+        return
+    end
+
+    ORN.running[mi] = true
+
+    LOOPS[key] = task.spawn(function()
+        local attempt = 0
+        setStatus(Color3.fromRGB(255,200,60), "⟳ Memulai roll...", Color3.fromRGB(255,200,60))
+        local mInfo = _ASH_ORN.MACHINES[mi]
+
+        while ORN.running[mi] do
+            if not RE_RerollOrnament then
+                RE_RerollOrnament = Remotes:FindFirstChild("RerollOrnament")
+            end
+            if not RE_RerollOrnament then
+                setStatus(Color3.fromRGB(255,80,80), "⚠ Remote RerollOrnament tidak ditemukan!", Color3.fromRGB(255,80,80))
+                task.wait(2); continue
+            end
+            if next(ORN.targets[mi]) == nil then
+                setStatus(Color3.fromRGB(255,80,80), "⚠ Target kosong! Pilih dulu.", Color3.fromRGB(255,80,80))
+                task.wait(1); continue
+            end
+
+            attempt = attempt + 1
+            local targetStr = _ASH_ORN.GetSummary(mi)
+            setStatus(Color3.fromRGB(255,160,30), "🔄 Roll #"..attempt.."  |  Target: "..targetStr, C.ACC2)
+            if ORN.attemptLbls[mi] then
+                ORN.attemptLbls[mi].Text = "Attempt: #"..attempt
+                ORN.attemptLbls[mi].TextColor3 = C.TXT2
+            end
+
+            local ok, res = pcall(function()
+                return RE_RerollOrnament:InvokeServer({machineId=mInfo.machineId, isAuto=false})
+            end)
+            if not ok then
+                setStatus(Color3.fromRGB(255,80,80), "⚠ Error remote (#"..attempt..")", Color3.fromRGB(255,80,80))
+                task.wait(0.5); continue
+            end
+
+            local gotId   = nil
+            local gotName = "?"
+            if type(res) == "table" then
+                -- ── PRIORITY 1: Format baru ornament { ornamentIds={[1]=410003}, count=1 } ──
+                if type(res.ornamentIds) == "table" then
+                    local oid = res.ornamentIds[1]
+                    if type(oid) == "number" and oid > 0 then
+                        gotId   = oid
+                        gotName = _ASH_ORN.QUIRK_MAP[oid] or ("ID:"..tostring(oid))
+                        _ASH_ORN.AddQuirk(mi, oid, gotName)
+                    end
+                end
+                -- ── PRIORITY 2: Scan nested ornamentIds di sub-table ──
+                if not gotId then
+                    local function ScanOrnamentIds(tbl, depth)
+                        if depth > 4 or type(tbl) ~= "table" or gotId then return end
+                        if type(tbl.ornamentIds) == "table" then
+                            local oid = tbl.ornamentIds[1]
+                            if type(oid) == "number" and oid > 0 then
+                                gotId   = oid
+                                gotName = _ASH_ORN.QUIRK_MAP[oid] or ("ID:"..tostring(oid))
+                                _ASH_ORN.AddQuirk(mi, oid, gotName)
+                                return
+                            end
+                        end
+                        for _, v in pairs(tbl) do
+                            if type(v) == "table" then ScanOrnamentIds(v, depth+1) end
+                        end
+                    end
+                    ScanOrnamentIds(res, 0)
+                end
+                -- ── PRIORITY 3: Fallback scan generic quirkId/resultId/id ──
+                if not gotId then
+                    local function ScanAndLearn(tbl, depth)
+                        if depth > 5 or type(tbl) ~= "table" or gotId then return end
+                        local id   = tbl.quirkId or tbl.finalResultId or tbl.resultId or tbl.ornamentId
+                        local name = tbl.quirkName or tbl.name or tbl.Name or tbl.title or tbl.displayName
+                        if type(id) == "number" and id > 0 then
+                            if type(name) == "string" and #name > 0 and not name:find("^ID:") then
+                                _ASH_ORN.AddQuirk(mi, id, name)
+                                if not gotId then gotId = id; gotName = name end
+                            elseif not gotId then
+                                gotId   = id
+                                gotName = _ASH_ORN.QUIRK_MAP[id] or ("ID:"..tostring(id))
+                            end
+                        end
+                        for _, v in pairs(tbl) do
+                            if type(v) == "table" then ScanAndLearn(v, depth+1) end
+                        end
+                    end
+                    ScanAndLearn(res, 0)
+                end
+                -- ── PRIORITY 4: Last resort — ambil angka pertama yang masuk akal (4xxxxx) ──
+                if not gotId then
+                    local function ScanNum(tbl, depth)
+                        if depth > 4 or gotId then return end
+                        for _, v in pairs(tbl) do
+                            if type(v) == "number" and v >= 400000 and v < 500000 and not gotId then
+                                gotId   = v
+                                gotName = _ASH_ORN.QUIRK_MAP[v] or ("ID:"..tostring(v))
+                                _ASH_ORN.AddQuirk(mi, v, gotName)
+                            elseif type(v) == "table" then ScanNum(v, depth+1) end
+                        end
+                    end
+                    ScanNum(res, 0)
+                end
+            elseif res == false or res == nil then
+                task.wait(0.5); continue
+            end
+
+            if ORN.lastLbls[mi] then
+                local isTarget = gotId and ORN.targets[mi][gotId]
+                ORN.lastLbls[mi].Text = "Last: "..gotName
+                ORN.lastLbls[mi].TextColor3 = isTarget and Color3.fromRGB(80,220,80) or Color3.fromRGB(180,180,180)
+            end
+            if ORN.sumLbls[mi] then ORN.sumLbls[mi].Text = targetStr end
+
+            local hit = gotId ~= nil and ORN.targets[mi][gotId]
+            if hit then
+                ORN.running[mi] = false
+                StopLoop(key)
+                setStatus(Color3.fromRGB(80,220,80), "✅ DAPAT "..gotName.."! ("..attempt.."x roll)", Color3.fromRGB(80,220,80))
+                if ORN.attemptLbls[mi] then
+                    ORN.attemptLbls[mi].Text  = "✅ Selesai dalam "..attempt.." roll"
+                    ORN.attemptLbls[mi].TextColor3 = Color3.fromRGB(80,220,80)
+                end
+                if ORN.lastLbls[mi] then
+                    ORN.lastLbls[mi].Text = "✅ "..gotName
+                    ORN.lastLbls[mi].TextColor3 = Color3.fromRGB(80,220,80)
+                end
+                _ASH_ORN.SetToggleOff(mi)
+                return
+            end
+            task.wait(0.1)
+        end
+        setStatus(Color3.fromRGB(100,100,100), "⏹ Dihentikan ("..attempt.."x roll)", C.TXT2)
+        if ORN.attemptLbls[mi] then
+            ORN.attemptLbls[mi].Text = "Attempt: "..attempt.."x"
+            ORN.attemptLbls[mi].TextColor3 = C.TXT2
+        end
+    end)
+end
+
+
 local MAX_PER_SLOT   = 3
 local W_MAX_PER_SLOT = 3
 local _spyLog        = {}
@@ -1910,31 +2142,108 @@ local function SetupUniversalSpy()
     end
 
     local function HandleResponse(self, sentArgs, res)
-        if self ~= RE_RandomHeroQuirk and self ~= RE_AutoHeroQuirk then return end
-        if type(res) ~= "table" then return end
-        local slotIdx = nil
-        local a = sentArgs[1]
-        if type(a) == "table" then
-            local d = a.drawId or a.DrawId
-            if type(d) == "number" then
-                for si, did in ipairs(HR.slotDrawId) do
-                    if did == d then slotIdx = si; break end
+        -- ── Hero Quirk ──
+        if self == RE_RandomHeroQuirk or self == RE_AutoHeroQuirk then
+            if type(res) ~= "table" then return end
+            local slotIdx = nil
+            local a = sentArgs[1]
+            if type(a) == "table" then
+                local d = a.drawId or a.DrawId
+                if type(d) == "number" then
+                    for si, did in ipairs(HR.slotDrawId) do
+                        if did == d then slotIdx = si; break end
+                    end
                 end
             end
-        end
-        local function ScanQuirks(tbl, depth)
-            if depth > 5 or type(tbl) ~= "table" then return end
-            local id   = tbl.quirkId or tbl.finalResultId or tbl.resultId or tbl.id or tbl.Id
-            local name = tbl.quirkName or tbl.name or tbl.Name or tbl.title or tbl.displayName
-            if type(id) == "number" and id >= 90000 and id <= 99999
-            and type(name) == "string" and #name > 0 and not name:find("^ID:") then
-                AddQuirkToSlot(slotIdx or 1, id, name)
+            local function ScanQuirks(tbl, depth)
+                if depth > 5 or type(tbl) ~= "table" then return end
+                local id   = tbl.quirkId or tbl.finalResultId or tbl.resultId or tbl.id or tbl.Id
+                local name = tbl.quirkName or tbl.name or tbl.Name or tbl.title or tbl.displayName
+                if type(id) == "number" and id >= 90000 and id <= 99999
+                and type(name) == "string" and #name > 0 and not name:find("^ID:") then
+                    AddQuirkToSlot(slotIdx or 1, id, name)
+                end
+                for _, v in pairs(tbl) do
+                    if type(v) == "table" then ScanQuirks(v, depth+1) end
+                end
             end
-            for _, v in pairs(tbl) do
-                if type(v) == "table" then ScanQuirks(v, depth+1) end
-            end
+            ScanQuirks(res, 0)
         end
-        ScanQuirks(res, 0)
+
+        -- ── Ornament Quirk: tangkap otomatis dari response RerollOrnament ──
+        if RE_RerollOrnament and self == RE_RerollOrnament then
+            if type(res) ~= "table" then return end
+            -- Cari machineId dari args untuk tahu mesin mana
+            local machineIdx = nil
+            local a = sentArgs[1]
+            if type(a) == "table" then
+                local mid = a.machineId
+                if type(mid) == "number" then
+                    for i, m in ipairs(_ASH_ORN.MACHINES) do
+                        if m.machineId == mid then machineIdx = i; break end
+                    end
+                end
+            end
+            if not machineIdx then machineIdx = 1 end
+            -- ── PRIORITY 1: Format { ornamentIds={[1]=410003}, count=1 } ──
+            if type(res.ornamentIds) == "table" then
+                local oid = res.ornamentIds[1]
+                if type(oid) == "number" and oid > 0 then
+                    _ASH_ORN.AddQuirk(machineIdx, oid, nil)
+                end
+            end
+            -- ── PRIORITY 2: Scan nested ornamentIds ──
+            local function ScanOrnQuirks(tbl, depth)
+                if depth > 6 or type(tbl) ~= "table" then return end
+                -- Cek ornamentIds array
+                if type(tbl.ornamentIds) == "table" then
+                    for _, oid in ipairs(tbl.ornamentIds) do
+                        if type(oid) == "number" and oid > 0 then
+                            _ASH_ORN.AddQuirk(machineIdx, oid, nil)
+                        end
+                    end
+                end
+                -- Fallback: scan key lama
+                local id   = tbl.quirkId or tbl.finalResultId or tbl.resultId or tbl.ornamentId
+                local name = tbl.quirkName or tbl.name or tbl.Name or tbl.title or tbl.displayName
+                if type(id) == "number" and id > 0 then
+                    _ASH_ORN.AddQuirk(machineIdx, id, type(name)=="string" and #name>0 and name or nil)
+                end
+                for _, v in pairs(tbl) do
+                    if type(v) == "table" then ScanOrnQuirks(v, depth+1) end
+                end
+            end
+            ScanOrnQuirks(res, 0)
+            -- Refresh UI setelah quirk ter-capture
+            pcall(function()
+                local mi = machineIdx
+                local list = _ASH_ORN.QUIRK_LIST[mi]
+                local hasQuirks = #list > 0
+
+                -- Update dropdown placeholder
+                if ORN.sumLbls[mi] then
+                    local selCount = 0
+                    for _ in pairs(ORN.targets[mi]) do selCount = selCount + 1 end
+                    if selCount == 0 and hasQuirks then
+                        ORN.sumLbls[mi].Text = "✅ "..#list.." quirk — klik untuk pilih"
+                        ORN.sumLbls[mi].TextColor3 = Color3.fromRGB(80,220,80)
+                    end
+                end
+
+                -- Update status label jika idle
+                if ORN.statLbls[mi] and not ORN.running[mi] then
+                    if hasQuirks then
+                        ORN.statLbls[mi].Text = "💡 "..#list.." quirk tersimpan — pilih target lalu ON"
+                        ORN.statLbls[mi].TextColor3 = Color3.fromRGB(80,220,80)
+                    end
+                end
+
+                -- Refresh emptyHint via stored reference
+                if _ASH_ORN.emptyHintRefs and _ASH_ORN.emptyHintRefs[mi] then
+                    _ASH_ORN.emptyHintRefs[mi].Visible = not hasQuirks
+                end
+            end)
+        end
     end
 
     local hooked = false
@@ -1946,7 +2255,8 @@ local function SetupUniversalSpy()
                 local method = getnamecallmethod()
                 HandleRequest(self, method, ...)
                 if method == "InvokeServer"
-                and (self == RE_RandomHeroQuirk or self == RE_AutoHeroQuirk) then
+                and (self == RE_RandomHeroQuirk or self == RE_AutoHeroQuirk
+                     or self == RE_RerollOrnament) then
                     local sentArgs = {...}
                     local res = oldNC(self, ...)
                     HandleResponse(self, sentArgs, res)
@@ -1968,7 +2278,8 @@ local function SetupUniversalSpy()
                 local method = getnamecallmethod()
                 HandleRequest(self, method, ...)
                 if method == "InvokeServer"
-                and (self == RE_RandomHeroQuirk or self == RE_AutoHeroQuirk) then
+                and (self == RE_RandomHeroQuirk or self == RE_AutoHeroQuirk
+                     or self == RE_RerollOrnament) then
                     local sentArgs = {...}
                     local ok2, res = pcall(oldNC, self, ...)
                     if ok2 then HandleResponse(self, sentArgs, res) end
@@ -3301,8 +3612,301 @@ end)()
 end)()
 
 -- ============================================================
--- PANEL : CATATAN AUTO REROLL
+-- PANEL : AUTO ROLL — ORNAMENT
 -- ============================================================
+;(function()
+    local p = Panels["autoroll"]
+    local ornOpen = false
+
+    local ornHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,38))
+    ornHeader.LayoutOrder = 35; Corner(ornHeader,8); Stroke(ornHeader,C.BORD,1,0.4)
+    local ornIcon  = Label(ornHeader,"▶",12,C.ACC2,Enum.Font.GothamBold)
+    ornIcon.Size   = UDim2.new(0,20,1,0); ornIcon.Position = UDim2.new(0,10,0,0)
+    local ornLabel = Label(ornHeader,"💍  Auto Roll Ornament",13,C.TXT,Enum.Font.GothamBold)
+    ornLabel.Size  = UDim2.new(1,-40,1,0); ornLabel.Position = UDim2.new(0,30,0,0)
+
+    local ornBody  = Frame(p, C.BG2, UDim2.new(1,0,0,0))
+    ornBody.LayoutOrder = 36; ornBody.ClipsDescendants = true
+    Corner(ornBody,8); Stroke(ornBody,C.BORD,1,0.3); ornBody.Visible = false
+
+    -- ScrollingFrame untuk scroll panel ornament
+    local ornScroll = New("ScrollingFrame", {
+        Parent = ornBody,
+        Size = UDim2.new(1,0,1,0),
+        CanvasSize = UDim2.new(0,0,0,0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ScrollBarThickness = 4,
+        ScrollBarImageColor3 = Color3.fromRGB(180,80,255),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollingDirection = Enum.ScrollingDirection.Y,
+    })
+
+    local ornInner = Frame(ornScroll, C.BLACK, UDim2.new(1,-16,0,0))
+    ornInner.BackgroundTransparency = 1; ornInner.Position = UDim2.new(0,8,0,8)
+    local ornLayout = New("UIListLayout",{Parent=ornInner,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,8)})
+    Instance.new("UIPadding", ornInner).PaddingBottom = UDim.new(0, 12)
+
+    local function ResizeOrnBody()
+        ornLayout:ApplyLayout()
+        local h = ornLayout.AbsoluteContentSize.Y + 28
+        ornInner.Size = UDim2.new(1,0,0,h)
+        -- Cap height untuk scroll
+        local maxH = 480
+        ornBody.Size = UDim2.new(1,0,0,math.min(h+16, maxH))
+        ornScroll.Size = UDim2.new(1,0,1,0)
+    end
+
+    local ORN_COLORS = {
+        Color3.fromRGB(200,160,255),
+        Color3.fromRGB(255,180,100),
+        Color3.fromRGB(100,220,180),
+        Color3.fromRGB(255,120,120),
+        Color3.fromRGB(120,200,255),
+        Color3.fromRGB(200,255,120),
+    }
+    local ORN_ICONS = {"👑","💎","💰","🌑","🌿","⚡"}
+
+    -- Info cara pakai
+    local infoCard = Frame(ornInner, Color3.fromRGB(30,15,5), UDim2.new(1,0,0,0))
+    infoCard.LayoutOrder = 0; infoCard.AutomaticSize = Enum.AutomaticSize.Y
+    Corner(infoCard,7); Stroke(infoCard,C.ACC,1,0.5)
+    local infoPad = Instance.new("UIPadding",infoCard)
+    infoPad.PaddingLeft=UDim.new(0,10); infoPad.PaddingRight=UDim.new(0,10)
+    infoPad.PaddingTop=UDim.new(0,7);   infoPad.PaddingBottom=UDim.new(0,7)
+    local infoLbl = Label(infoCard,
+        "💡 Cara pakai: Pilih target quirk di setiap mesin, lalu aktifkan toggle.\n"..
+        "Quirk baru otomatis terdeteksi saat pertama kali roll di game.",
+        9.5, Color3.fromRGB(230,210,170), Enum.Font.Gotham)
+    infoLbl.Size = UDim2.new(1,0,0,0); infoLbl.AutomaticSize = Enum.AutomaticSize.Y
+    infoLbl.TextWrapped = true; infoLbl.LayoutOrder = 0
+
+    for mi = 1, #_ASH_ORN.MACHINES do
+        local mi_l = mi
+        local mInfo = _ASH_ORN.MACHINES[mi]
+
+        local mCard = Frame(ornInner, C.SURFACE, UDim2.new(1,0,0,0))
+        mCard.LayoutOrder = mi; Corner(mCard,8); Stroke(mCard,C.BORD,1,0.5)
+        mCard.AutomaticSize = Enum.AutomaticSize.Y
+        local mPad = Instance.new("UIPadding", mCard)
+        mPad.PaddingLeft=UDim.new(0,12); mPad.PaddingRight=UDim.new(0,12)
+        mPad.PaddingTop=UDim.new(0,10);  mPad.PaddingBottom=UDim.new(0,10)
+        New("UIListLayout",{Parent=mCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
+
+        -- Title
+        local mTitle = Label(mCard, ORN_ICONS[mi].." "..mInfo.name, 12, ORN_COLORS[mi], Enum.Font.GothamBold)
+        mTitle.Size = UDim2.new(1,0,0,18); mTitle.LayoutOrder = 0
+
+        -- Status row
+        local statRow = Frame(mCard, Color3.fromRGB(35,35,35), UDim2.new(1,0,0,26))
+        statRow.LayoutOrder = 1; Corner(statRow,6); Stroke(statRow,C.BORD2,1,0.5)
+        local mDot = Frame(statRow, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
+        mDot.Position = UDim2.new(0,7,0.5,-4); Corner(mDot,4)
+        ORN.dotRefs[mi] = mDot
+        local mStLbl = Label(statRow,"⏹ Idle — Pilih target & aktifkan Roll",10,C.TXT2,Enum.Font.Gotham)
+        mStLbl.Size = UDim2.new(1,-22,1,0); mStLbl.Position = UDim2.new(0,21,0,0)
+        mStLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        ORN.statLbls[mi] = mStLbl
+
+        -- Info attempt & last
+        local infoRow = Frame(mCard, Color3.fromRGB(28,28,28), UDim2.new(1,0,0,22))
+        infoRow.LayoutOrder = 2; Corner(infoRow,5)
+        local attLbl = Label(infoRow,"Attempt: —",9.5,C.TXT3,Enum.Font.Gotham)
+        attLbl.Size = UDim2.new(0.5,0,1,0); attLbl.Position = UDim2.new(0,8,0,0)
+        ORN.attemptLbls[mi] = attLbl
+        local lastLbl = Label(infoRow,"Last: —",9.5,Color3.fromRGB(180,180,180),Enum.Font.Gotham,Enum.TextXAlignment.Right)
+        lastLbl.Size = UDim2.new(0.5,-10,1,0); lastLbl.Position = UDim2.new(0.5,0,0,0)
+        ORN.lastLbls[mi] = lastLbl
+
+        local divLine = Frame(mCard, Color3.fromRGB(60,60,60), UDim2.new(1,0,0,1))
+        divLine.LayoutOrder = 3; divLine.BackgroundTransparency = 0.5
+
+        -- Target dropdown
+        local tRow = Frame(mCard, C.BG2, UDim2.new(1,0,0,32))
+        tRow.LayoutOrder = 4; Corner(tRow,6)
+        local tLbl = Label(tRow,"🎯 Target:",11,C.TXT,Enum.Font.GothamBold)
+        tLbl.Size = UDim2.new(0,72,1,0); tLbl.Position = UDim2.new(0,8,0,0)
+
+        local tDdBtn = Btn(tRow, C.DD_BG, UDim2.new(1,-88,0,24))
+        tDdBtn.Position = UDim2.new(0,80,0.5,-12); Corner(tDdBtn,5); Stroke(tDdBtn,C.BORD2,1,0.3)
+        local tDdLbl = Label(tDdBtn,"-- pilih quirk --",10,C.TXT2,Enum.Font.Gotham,Enum.TextXAlignment.Left)
+        tDdLbl.Size = UDim2.new(1,-20,1,0); tDdLbl.Position = UDim2.new(0,7,0,0)
+        tDdLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        ORN.sumLbls[mi] = tDdLbl
+        local tArrow = Label(tDdBtn,"▼",9,C.ACC,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+        tArrow.Size = UDim2.new(0,14,1,0); tArrow.Position = UDim2.new(1,-16,0,0)
+
+        -- Pesan jika list kosong
+        local emptyHint = Label(mCard,
+            "⚠ Belum ada quirk terdeteksi.\n\n📌 Cara scan quirk:\n1. Pergi ke mesin " .. mInfo.name .. " di game\n2. Klik Reroll / Roll 1x secara manual\n3. Quirk otomatis muncul di dropdown sini\n\n💡 Script sudah aktif memantau — tidak perlu reload.",
+            9, Color3.fromRGB(255,180,80), Enum.Font.Gotham)
+        emptyHint.Size = UDim2.new(1,0,0,0); emptyHint.AutomaticSize = Enum.AutomaticSize.Y
+        emptyHint.TextWrapped = true; emptyHint.LayoutOrder = 5
+        emptyHint.TextXAlignment = Enum.TextXAlignment.Left
+        -- Simpan ref untuk refresh dari HandleResponse
+        _ASH_ORN.emptyHintRefs[mi] = emptyHint
+
+        local function onTargetChange()
+            local names = {}
+            for id in pairs(ORN.targets[mi_l]) do
+                table.insert(names, _ASH_ORN.QUIRK_MAP[id] or ("ID:"..tostring(id)))
+            end
+            table.sort(names)
+            tDdLbl.Text = #names > 0 and table.concat(names," / ") or "-- pilih quirk --"
+            tDdLbl.TextColor3 = #names > 0 and C.ACC2 or C.TXT2
+
+            -- Update emptyHint visibility
+            local hasQuirks = #_ASH_ORN.QUIRK_LIST[mi_l] > 0
+            emptyHint.Visible = not hasQuirks
+
+            if ORN.running[mi_l] and ORN.statLbls[mi_l] then
+                if #names == 0 then
+                    ORN.statLbls[mi_l].Text = "⚠ Target dikosongkan!"
+                    ORN.statLbls[mi_l].TextColor3 = Color3.fromRGB(255,100,80)
+                end
+            end
+        end
+
+        -- Dropdown dengan refresh list dinamis
+        tDdBtn.MouseButton1Click:Connect(function()
+            CloseActiveDD()
+            -- Update emptyHint sebelum buka DD
+            emptyHint.Visible = #_ASH_ORN.QUIRK_LIST[mi_l] == 0
+            if #_ASH_ORN.QUIRK_LIST[mi_l] == 0 then
+                -- Tampilkan info saja
+                return
+            end
+            local list = _ASH_ORN.QUIRK_LIST[mi_l]
+            local maxSel = 3
+            local absPos  = tDdBtn.AbsolutePosition
+            local absSize = tDdBtn.AbsoluteSize
+            local ITEM_H  = 28
+            local contentH = #list * (ITEM_H + 2) + 42
+            local scrollH  = math.min(contentH, 200)
+            local HEADER_H = 32
+
+            local popup = Instance.new("Frame")
+            popup.Parent = DDLayer; popup.BackgroundColor3 = C.DD_BG; popup.BorderSizePixel = 0
+            popup.Size = UDim2.new(0, absSize.X+30, 0, HEADER_H+scrollH)
+            popup.Position = UDim2.new(0, absPos.X, 0, absPos.Y+absSize.Y+3)
+            popup.ZIndex = 9999; popup.ClipsDescendants = true
+            Corner(popup,8); Stroke(popup,C.BORD2,1,0.2)
+
+            local hdr = Frame(popup,Color3.fromRGB(90,30,0),UDim2.new(1,0,0,HEADER_H)); hdr.ZIndex=9999
+            local countLbl = Label(hdr,"0/"..maxSel.." dipilih",10.5,C.ACC2,Enum.Font.GothamBold)
+            countLbl.Size=UDim2.new(0.6,0,1,0); countLbl.Position=UDim2.new(0,8,0,0); countLbl.ZIndex=9999
+            local clrBtn = Btn(hdr,Color3.fromRGB(180,50,50),UDim2.new(0,50,0,20))
+            clrBtn.Position=UDim2.new(1,-56,0.5,-10); Corner(clrBtn,5); clrBtn.ZIndex=9999
+            local cL = Label(clrBtn,"Clear",10,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+            cL.Size=UDim2.new(1,0,1,0); cL.ZIndex=9999
+
+            local sf = Instance.new("ScrollingFrame")
+            sf.Parent=popup; sf.BackgroundTransparency=1; sf.BorderSizePixel=0
+            sf.Position=UDim2.new(0,0,0,HEADER_H); sf.Size=UDim2.new(1,0,0,scrollH)
+            sf.CanvasSize=UDim2.new(0,0,0,contentH)
+            sf.ScrollBarThickness=6; sf.ScrollBarImageColor3=C.ACC
+            sf.ScrollingDirection=Enum.ScrollingDirection.Y; sf.ZIndex=9999
+            Instance.new("UIListLayout",sf).SortOrder=Enum.SortOrder.LayoutOrder
+            local sfp=Instance.new("UIPadding",sf)
+            sfp.PaddingTop=UDim.new(0,4); sfp.PaddingBottom=UDim.new(0,4)
+            sfp.PaddingLeft=UDim.new(0,4); sfp.PaddingRight=UDim.new(0,8)
+
+            local rowRefs = {}
+            local selTable = ORN.targets[mi_l]
+
+            local function UpdateCount()
+                local n=0; for _ in pairs(selTable) do n=n+1 end
+                countLbl.Text=n.."/"..maxSel.." dipilih"
+                countLbl.TextColor3=n>=maxSel and Color3.fromRGB(255,100,80) or C.ACC2
+            end
+
+            for _, q in ipairs(list) do
+                local qRow=Btn(sf,C.DD_BG,UDim2.new(1,-8,0,ITEM_H)); qRow.ZIndex=9999; Corner(qRow,5)
+                local tBox=Frame(qRow,C.SEL_BG,UDim2.new(0,16,0,16))
+                tBox.Position=UDim2.new(0,6,0.5,-8); Corner(tBox,3); tBox.ZIndex=9999; Stroke(tBox,C.BORD2,1,0.4)
+                local tMark=Label(tBox,"✓",11,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+                tMark.Size=UDim2.new(1,0,1,0); tMark.ZIndex=9999
+                local isSel=(selTable[q.id]==true)
+                tMark.Visible=isSel
+                local qLbl=Label(qRow,"  "..(q.name or "?"),11,isSel and C.ACC2 or C.TXT,Enum.Font.Gotham)
+                qLbl.Size=UDim2.new(1,-30,1,0); qLbl.Position=UDim2.new(0,28,0,0); qLbl.ZIndex=9999
+                if isSel then qRow.BackgroundColor3=Color3.fromRGB(140,52,0) end
+                rowRefs[q.id]={bg=qRow,tick=tMark,lbl=qLbl}
+
+                local qid=q.id
+                qRow.MouseButton1Click:Connect(function()
+                    if selTable[qid] then
+                        selTable[qid]=nil
+                    else
+                        local n=0; for _ in pairs(selTable) do n=n+1 end
+                        if n>=maxSel then
+                            local old=countLbl.Text
+                            countLbl.Text="MAX "..maxSel.." tercapai!"; countLbl.TextColor3=Color3.fromRGB(255,60,60)
+                            task.delay(1.2,function() UpdateCount() end); return
+                        end
+                        selTable[qid]=true
+                    end
+                    for k2,ref in pairs(rowRefs) do
+                        local s2=(selTable[k2]==true)
+                        ref.bg.BackgroundColor3=s2 and Color3.fromRGB(140,52,0) or C.DD_BG
+                        ref.tick.Visible=s2; ref.lbl.TextColor3=s2 and C.ACC2 or C.TXT
+                    end
+                    UpdateCount(); onTargetChange()
+                end)
+            end
+            UpdateCount()
+            clrBtn.MouseButton1Click:Connect(function()
+                for k2 in pairs(selTable) do selTable[k2]=nil end
+                for _,ref in pairs(rowRefs) do
+                    ref.bg.BackgroundColor3=C.DD_BG; ref.tick.Visible=false; ref.lbl.TextColor3=C.TXT
+                end
+                UpdateCount(); onTargetChange()
+            end)
+            DDLayer.Visible=true
+            _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
+        end)
+
+        -- Enable toggle
+        local enRow = Frame(mCard, Color3.fromRGB(40,25,10), UDim2.new(1,0,0,34))
+        enRow.LayoutOrder = 6; Corner(enRow,8); Stroke(enRow,ORN_COLORS[mi],1,0.7)
+
+        local enLbl = Label(enRow,"⚡ Fastroll",12,C.TXT,Enum.Font.GothamBold)
+        enLbl.Size = UDim2.new(0.55,0,1,0); enLbl.Position = UDim2.new(0,10,0,0)
+        local enSub = Label(enRow,"ON = mulai roll otomatis",9,C.TXT3,Enum.Font.Gotham)
+        enSub.Size = UDim2.new(0.55,0,0,12); enSub.Position = UDim2.new(0,10,1,-14)
+
+        local enToggle = Btn(enRow, Color3.fromRGB(60,60,60), UDim2.new(0,40,0,22))
+        enToggle.Position = UDim2.new(1,-50,0.5,-11); Corner(enToggle,11)
+        local enKnob = Frame(enToggle, C.TXT, UDim2.new(0,18,0,18))
+        enKnob.Position = UDim2.new(0,2,0.5,-9); Corner(enKnob,9)
+
+        ORN.toggleBtns[mi]  = enToggle
+        ORN.toggleKnobs[mi] = enKnob
+
+        enToggle.MouseButton1Click:Connect(function()
+            ORN.enOnFlags[mi_l] = not ORN.enOnFlags[mi_l]
+            local enOn = ORN.enOnFlags[mi_l]
+            enToggle.BackgroundColor3 = enOn and ORN_COLORS[mi_l] or Color3.fromRGB(60,60,60)
+            enKnob.Position = enOn and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
+            enRow.BackgroundColor3 = enOn and Color3.fromRGB(60,30,0) or Color3.fromRGB(40,25,10)
+            Stroke(enRow, ORN_COLORS[mi_l], 1, enOn and 0.3 or 0.7)
+            _ASH_ORN.DoRoll(mi_l, enOn)
+        end)
+
+        -- Init emptyHint visibility
+        emptyHint.Visible = #_ASH_ORN.QUIRK_LIST[mi] == 0
+        task.defer(ResizeOrnBody)
+    end
+
+    ornHeader.MouseButton1Click:Connect(function()
+        ornOpen = not ornOpen
+        ornBody.Visible = ornOpen
+        ornIcon.Text = ornOpen and "▼" or "▶"
+        if ornOpen then task.defer(ResizeOrnBody) end
+    end)
+end)()
+
+
 ;(function()
     local p = Panels["autoroll"]
     local noteOpen   = false
@@ -3372,9 +3976,24 @@ end)()
         "       lakukan langkah 1–5 di tiap mesin,",
         "       lalu aktifkan semua toggle.",
     })
+    NoteBlock(4,"💍","Auto Roll Ornament",Color3.fromRGB(200,160,255),{
+        "1.  Buka panel 💍 Auto Roll Ornament.",
+        "2.  Roll 1x manual di mesin yang ingin di-reroll.",
+        "    → Quirk akan otomatis terdeteksi di dropdown.",
+        "3.  Pilih target quirk (maks 3) di dropdown.",
+        "4.  Aktifkan toggle Fastroll → script jalan otomatis.",
+        "5.  Script berhenti otomatis jika target tercapai.",
+        "Mesin yang tersedia:",
+        "  400001 = Headdress",
+        "  400002 = Ornament Machine",
+        "  400003 = Wealth Blessing",
+        "  400004 = Shadowhunter Blessing",
+        "  400005 = Primordial Blessing",
+        "  400006 = Monarch Power",
+    })
 
     local noteBlock = Frame(noteInner, Color3.fromRGB(60,10,10), UDim2.new(1,0,0,0))
-    noteBlock.LayoutOrder = 4; noteBlock.AutomaticSize = Enum.AutomaticSize.Y
+    noteBlock.LayoutOrder = 5; noteBlock.AutomaticSize = Enum.AutomaticSize.Y
     Corner(noteBlock,8); Stroke(noteBlock,Color3.fromRGB(255,60,60),1,0.4)
     local nbPad = Instance.new("UIPadding",noteBlock)
     nbPad.PaddingLeft=UDim.new(0,10); nbPad.PaddingRight=UDim.new(0,10)
@@ -3407,12 +4026,12 @@ end)()
 -- RAID LIVE LIST — listen UpdateRaidInfo dari server
 -- RE1001 = rank rendah, RE1002 = rank tinggi (dari data SimpleSpy)
 -- ============================================================
-local RAID_LIVE   = {}   -- semua raid aktif: [raidId] = {raidId, mapId, spawnName, rank, endTime, label}
-local RAID_ID_LIST = {}  -- list terurut untuk UI
-local _raidIdRefreshCb = nil
+RAID_LIVE   = {}   -- semua raid aktif: [raidId] = {raidId, mapId, spawnName, rank, endTime, label}
+RAID_ID_LIST = {}  -- list terurut untuk UI
+_raidIdRefreshCb = nil
 
 -- Mapping spawnName → rank number (untuk sorting Easy/Medium/Hard)
-local SPAWN_RANK = {
+SPAWN_RANK = {
     RE1001 = 1,
     RE1002 = 2,
     RE1003 = 3,
@@ -3420,7 +4039,7 @@ local SPAWN_RANK = {
     RE1005 = 5,
 }
 
-local RANK_LABEL = {
+RANK_LABEL = {
     [1] = "★ Rank 1",
     [2] = "★★ Rank 2",
     [3] = "★★★ Rank 3",
@@ -3428,7 +4047,7 @@ local RANK_LABEL = {
     [5] = "★★★★★ Rank 5",
 }
 
-local function RebuildRaidList()
+function RebuildRaidList()
     -- Sort berdasarkan rank (spawnName)
     local sorted = {}
     for _, entry in pairs(RAID_LIVE) do
@@ -3453,7 +4072,7 @@ local function RebuildRaidList()
 end
 
 -- Listen UpdateRaidInfo dari server
-local function StartRaidNotifListener()
+function StartRaidNotifListener()
     if not RE_UpdateRaidInfo then
         warn("[ ASH RAID ] UpdateRaidInfo remote tidak ditemukan!")
         return
@@ -3500,7 +4119,7 @@ end
 StartRaidNotifListener()
 
 -- FetchRaidIds: ambil raid yang ada di map sekarang via GetRaidTeamInfos
-local function FetchRaidIds()
+function FetchRaidIds()
     if not RE_GetRaidTeamInfos then return RAID_ID_LIST end
     local ok, result = pcall(function()
         return RE_GetRaidTeamInfos:InvokeServer()
@@ -3527,7 +4146,7 @@ end
 
 
 
-local function StopRaid()
+function StopRaid()
     RAID.running = false
     if RAID.thread then
         pcall(function() task.cancel(RAID.thread) end)
@@ -3535,7 +4154,7 @@ local function StopRaid()
     end
 end
 
-local function RaidStatusUpdate(msg, color)
+function RaidStatusUpdate(msg, color)
     if RAID.statusLbl then
         RAID.statusLbl.Text = msg
         RAID.statusLbl.TextColor3 = color or Color3.fromRGB(255,210,160)
@@ -3545,13 +4164,13 @@ local function RaidStatusUpdate(msg, color)
     end
 end
 
-local function RaidCounterUpdate()
+function RaidCounterUpdate()
     if RAID.killLbl then RAID.killLbl.Text = "Kill: "..RAID.killed end
     if RAID.loopLbl then RAID.loopLbl.Text = "Loop: "..RAID.loopCount end
 end
 
 -- Collect semua item di workspace
-local function RaidCollectAll()
+function RaidCollectAll()
     local golds = workspace:FindFirstChild("Golds")
     if golds then
         for _, obj in ipairs(golds:GetChildren()) do
@@ -3567,14 +4186,14 @@ end
 
 -- Scan workspace secara menyeluruh untuk enemy/boss raid
 -- Boss raid bisa ada di folder berbeda (Enemys, Bosses, RaidEnemys, dll)
-local RAID_ENEMY_FOLDERS = {
+RAID_ENEMY_FOLDERS = {
     "Enemys","Enemy","Enemies",
     "Bosses","Boss","RaidBoss","RaidBosses",
     "RaidEnemy","RaidEnemys","RaidEnemies",
     "Monsters","Monster",
 }
 
-local function GetRaidEnemies()
+function GetRaidEnemies()
     local list = {}
 
     -- Cara 1: Cari di folder-folder yang diketahui
@@ -3642,7 +4261,7 @@ local function GetRaidEnemies()
 end
 
 -- Serang semua enemy/boss raid
-local function RaidAttackAll()
+function RaidAttackAll()
     local enemies = GetRaidEnemies()
     local count   = #enemies
     for _, e in ipairs(enemies) do
@@ -3703,13 +4322,13 @@ local function RaidAttackAll()
 end
 
 -- Hitung enemy/boss raid yang masih hidup
-local function CountAliveEnemies()
+function CountAliveEnemies()
     local enemies = GetRaidEnemies()
     return #enemies
 end
 
 -- Main loop raid
-local function StartRaidLoop()
+function StartRaidLoop()
     StopRaid()
     RAID.running   = true
     RAID.killed    = 0
@@ -3971,7 +4590,7 @@ end
 -- ============================================================
 
 -- Sub-fungsi 1: Status card
-local function BuildRaidStatusCard(p)
+function BuildRaidStatusCard(p)
     local card = Frame(p, Color3.fromRGB(30,14,3), UDim2.new(1,0,0,0))
     card.LayoutOrder=1; card.AutomaticSize=Enum.AutomaticSize.Y
     Corner(card,10); Stroke(card,C.ACC,1,0.3); Padding(card,10,10,12,12)
@@ -3999,7 +4618,7 @@ end
 
 
 -- Sub-fungsi 2: Difficulty selector + live raid list
-local function BuildRaidIdSelector(p)
+function BuildRaidIdSelector(p)
 
     -- ── SECTION HEADER ──
     SectionHeader(p,"PILIH DIFFICULTY",2)
@@ -4101,7 +4720,7 @@ end
 
 
 -- Sub-fungsi 3: Main toggle
-local function BuildRaidMainToggle(p)
+function BuildRaidMainToggle(p)
     SectionHeader(p,"KONTROL",5)
     local row = Frame(p,Color3.fromRGB(35,15,2),UDim2.new(1,0,0,50))
     row.LayoutOrder=6; Corner(row,10); Stroke(row,C.ACC,1.5,0.2)
@@ -4127,7 +4746,7 @@ local function BuildRaidMainToggle(p)
 end
 
 -- Sub-fungsi 4: Opsi toggles
-local function BuildRaidOpsiToggles(p)
+function BuildRaidOpsiToggles(p)
     SectionHeader(p,"OPSI",7)
     local _,sA=ToggleRow(p,"⚔  Auto Attack","Serang boss/musuh secara otomatis",8,function(on) RAID.autoAttack=on end)
     sA(true)
@@ -4136,7 +4755,7 @@ local function BuildRaidOpsiToggles(p)
 end
 
 -- Sub-fungsi 5: Delay rows
-local function BuildRaidDelayRows(p)
+function BuildRaidDelayRows(p)
     SectionHeader(p,"PENGATURAN DELAY",10)
     local function MakeDelayRow(order,icon,title,desc,getV,setV,mn,mx)
         local row=Frame(p,C.SURFACE,UDim2.new(1,0,0,50))
@@ -4163,7 +4782,7 @@ local function BuildRaidDelayRows(p)
 end
 
 -- Sub-fungsi 6: Flow info card
-local function BuildRaidFlowCard(p)
+function BuildRaidFlowCard(p)
     local fc=Frame(p,Color3.fromRGB(20,10,2),UDim2.new(1,0,0,0))
     fc.LayoutOrder=13; fc.AutomaticSize=Enum.AutomaticSize.Y
     Corner(fc,8); Stroke(fc,C.ACC,1,0.5); Padding(fc,10,10,12,12)
@@ -4215,6 +4834,96 @@ end)()
 -- ============================================================
 -- INIT
 -- ============================================================
+-- Pre-populate semua Ornament Quirk dengan nama lengkap
+-- Urutan: common (atas) → rare (bawah)
+-- Format: {machineIdx, quirkId, "nama"}
+do
+    local ORN_KNOWN = {
+        -- ══════════════════════════════════════════
+        -- [1] HEADDRESS — machineId=400001
+        -- ══════════════════════════════════════════
+        {1, 410001, "Glowing Blue Eyes"},
+        {1, 410002, "Fox Ears"},
+        {1, 410003, "Blossom Crown of the Abyss"},
+        {1, 410004, "Demon Horns"},
+        {1, 410005, "Wizard Hat"},
+        {1, 410006, "Sharktooth Hood"},
+        {1, 410007, "Bunny Boom Helmet"},
+        {1, 410008, "Cursed Harvest Helmet"},
+        {1, 410009, "Bloodforged Casque"},
+        {1, 410010, "Jester's Madness Cap"},        -- ⭐ RAREST
+
+        -- ══════════════════════════════════════════
+        -- [2] ORNAMENT MACHINE — machineId=400002
+        -- ══════════════════════════════════════════
+        {2, 410011, "Fox Brush"},
+        {2, 410012, "Whale's Tail"},
+        {2, 410013, "Dragon's Tail"},
+        {2, 410014, "Dinosaur Swimming Circle"},
+        {2, 410015, "Ghastroot Parasite"},
+        {2, 410016, "Wishy Star Bunny"},
+        {2, 410017, "Mechanical Wing"},
+        {2, 410018, "Demon Wing"},
+        {2, 410019, "Prism Wings"},
+        {2, 410020, "Omenwing of the Void"},         -- ⭐ RAREST
+
+        -- ══════════════════════════════════════════
+        -- [3] WEALTH BLESSING — machineId=400003
+        -- ══════════════════════════════════════════
+        {3, 410021, "Single Glow Bless"},
+        {3, 410022, "Double Stack Bless"},
+        {3, 410023, "Slant Bless"},
+        {3, 410024, "Misstack Bless"},
+        {3, 410025, "High Stack Bless"},
+        {3, 410026, "Initial Bag Bless"},
+        {3, 410027, "Full Bag Bless"},
+        {3, 410028, "Bag Scatter Bless"},
+        {3, 410029, "Supreme Crown Gold"},
+        {3, 410030, "Imperial Crown Full Bag"},       -- ⭐ RAREST
+
+        -- ══════════════════════════════════════════
+        -- [4] SHADOWHUNTER BLESSING — machineId=400004
+        -- ══════════════════════════════════════════
+        {4, 410031, "Shadowfelin Gaze"},
+        {4, 410032, "Techowl Capture"},
+        {4, 410033, "Beastglow Frame"},
+        {4, 410034, "Croucharmor Beam"},
+        {4, 410035, "Silveraura Agile"},
+        {4, 410036, "Demonwing Aura"},
+        {4, 410037, "Spikedial Gothic"},
+        {4, 410038, "Galaxyvortex Lightning"},
+        {4, 410039, "Demonhand Lightning"},           -- ⭐ RAREST
+
+        -- ══════════════════════════════════════════
+        -- [5] PRIMORDIAL BLESSING — machineId=400005
+        -- ══════════════════════════════════════════
+        {5, 410040, "Dawn's Spark"},
+        {5, 410041, "Blade's Guide"},
+        {5, 410042, "Edge's Glow"},
+        {5, 410043, "Power's Nudge"},
+        {5, 410044, "Resurgent Edge"},
+        {5, 410045, "Sixth Dawn's Gift"},
+        {5, 410046, "Flame's Fuel"},
+        {5, 410047, "Gold Star's Whisper"},
+        {5, 410048, "Stardust's Fury"},               -- ⭐ RAREST
+
+        -- ══════════════════════════════════════════
+        -- [6] MONARCH POWER — machineId=400006
+        -- ══════════════════════════════════════════
+        {6, 410049, "Flames Power"},
+        {6, 410050, "Giant Power"},
+        {6, 410051, "Beast Power"},
+        {6, 410052, "Plague Power"},
+        {6, 410053, "Frosh Power"},
+        {6, 410054, "Unbreakable Power"},
+        {6, 410055, "Transfiguration Power"},
+        {6, 410056, "Destruction Power"},
+        {6, 410057, "Shadow Power"},                  -- ⭐ RAREST
+    }
+    for _, e in ipairs(ORN_KNOWN) do
+        _ASH_ORN.AddQuirk(e[1], e[2], e[3])
+    end
+end
 SwitchTab("main")
 RefreshStatus()
 InitAllCaptureLayers()
