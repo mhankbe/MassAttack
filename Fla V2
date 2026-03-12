@@ -506,15 +506,17 @@ local function ToggleRow(panel, title, desc, order, onToggle)
         sub.Size = UDim2.new(1,-60,0,14); sub.Position = UDim2.new(0,12,0,26)
     end
     local pill = Btn(row, Color3.fromRGB(120,40,0), UDim2.new(0,44,0,24))
-    pill.Position = UDim2.new(1,-54,0.5,-12); Corner(pill, 12)
+    pill.AnchorPoint = Vector2.new(1, 0.5)
+    pill.Position = UDim2.new(1,-10,0.5,0); Corner(pill, 12)
     local knob = Frame(pill, Color3.fromRGB(190,130,70), UDim2.new(0,18,0,18))
-    knob.Position = UDim2.new(0,3,0.5,-9); Corner(knob, 9)
+    knob.AnchorPoint = Vector2.new(0, 0.5)
+    knob.Position = UDim2.new(0,3,0.5,0); Corner(knob, 9)
     local state = false
     local function SetState(v)
         state = v
         TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = v and C.ACC2 or Color3.fromRGB(120,40,0)}):Play()
         TweenService:Create(knob, TweenInfo.new(0.16), {
-            Position = v and UDim2.new(1,-21,0.5,-9) or UDim2.new(0,3,0.5,-9),
+            Position = v and UDim2.new(1,-21,0.5,0) or UDim2.new(0,3,0.5,0),
             BackgroundColor3 = v and Color3.fromRGB(255,255,255) or Color3.fromRGB(190,130,70),
         }):Play()
         if onToggle then onToggle(v) end
@@ -2188,15 +2190,17 @@ do
     local acSub = Label(acCard,"Destroyer: Aktif",9,C.GRN,Enum.Font.Gotham)
     acSub.Size = UDim2.new(0.7,0,0,13); acSub.Position = UDim2.new(0,0,0,20)
     local acToggle = Btn(acCard,C.NSEL,UDim2.new(0,36,0,20))
-    acToggle.Position = UDim2.new(1,-42,0.5,-10); Corner(acToggle,10)
+    acToggle.AnchorPoint = Vector2.new(1, 0.5)
+    acToggle.Position = UDim2.new(1,-10,0.5,0); Corner(acToggle,10)
     local acKnob = Frame(acToggle,C.YEL,UDim2.new(0,14,0,14))
-    acKnob.Position = UDim2.new(1,-16,0.5,-7); Corner(acKnob,7)
+    acKnob.AnchorPoint = Vector2.new(0, 0.5)
+    acKnob.Position = UDim2.new(0,3,0.5,0); Corner(acKnob,7)
     local acOn = true
     acToggle.MouseButton1Click:Connect(function()
         acOn = not acOn; AG.autoCollect = acOn
         TweenService:Create(acToggle,TweenInfo.new(0.14),{BackgroundColor3=acOn and C.NSEL or Color3.fromRGB(22,20,18)}):Play()
         TweenService:Create(acKnob,TweenInfo.new(0.14),{
-            Position=acOn and UDim2.new(1,-16,0.5,-7) or UDim2.new(0,2,0.5,-7),
+            Position=acOn and UDim2.new(1,-16,0.5,0) or UDim2.new(0,2,0.5,0),
             BackgroundColor3=acOn and C.YEL or C.DK}):Play()
         acSub.Text = acOn and "Destroyer: Aktif" or "Destroyer: Nonaktif"
         acSub.TextColor3 = acOn and C.GRN or C.RED
@@ -2589,20 +2593,22 @@ do
         {"1 detik","3 detik","5 detik","7 detik","10 detik"},{1,3,5,7,10},2,
         function(v) MR.nextMapDelay=v end, 4)
 
-    local skillCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,52))
-    skillCard.LayoutOrder=5; Corner(skillCard,8); Stroke(skillCard,C.BORD,1,0.4); Padding(skillCard,6,6,12,8)
+    local skillCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,64))
+    skillCard.LayoutOrder=5; Corner(skillCard,8); Stroke(skillCard,C.BORD,1,0.4); Padding(skillCard,8,8,12,8)
     local skillTitle=Label(skillCard,"Auto Skill",12,C.TXT,Enum.Font.GothamBold)
-    skillTitle.Size=UDim2.new(1,0,0,16); skillTitle.Position=UDim2.new(0,0,0,2)
-    local skillRow=Frame(skillCard,C.BLACK,UDim2.new(1,0,0,26))
-    skillRow.BackgroundTransparency=1; skillRow.Position=UDim2.new(0,0,0,22)
+    skillTitle.Size=UDim2.new(1,0,0,16); skillTitle.Position=UDim2.new(0,0,0,0)
+    local skillRow=Frame(skillCard,C.BLACK,UDim2.new(1,0,0,32))
+    skillRow.BackgroundTransparency=1; skillRow.Position=UDim2.new(0,0,0,20)
     New("UIListLayout",{Parent=skillRow,FillDirection=Enum.FillDirection.Horizontal,
         SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
     for i,d in ipairs({{n="Z",c=Color3.fromRGB(255,80,80)},{n="X",c=Color3.fromRGB(255,160,40)},{n="C",c=Color3.fromRGB(80,220,120)},{n="V",c=Color3.fromRGB(80,180,255)},{n="F",c=Color3.fromRGB(200,80,255)}}) do
-        local sb=Btn(skillRow,C.BG3,UDim2.new(0,40,0,26)); sb.LayoutOrder=i; Corner(sb,6); Stroke(sb,C.BORD,1,0.3)
+        local sb=Btn(skillRow,C.BG3,UDim2.new(0,40,0,32)); sb.LayoutOrder=i; Corner(sb,6); Stroke(sb,C.BORD,1,0.3)
         local sl=Label(sb,d.n,12,d.c,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-        sl.Size=UDim2.new(1,0,0.6,0)
-        local st=Label(sb,"OFF",9,C.TXT3,Enum.Font.Gotham,Enum.TextXAlignment.Center)
-        st.Size=UDim2.new(1,0,0.4,0); st.Position=UDim2.new(0,0,0.6,0)
+        sl.Size=UDim2.new(1,0,0,18); sl.Position=UDim2.new(0,0,0,2)
+        sl.TextYAlignment=Enum.TextYAlignment.Center
+        local st=Label(sb,"OFF",8,C.TXT3,Enum.Font.Gotham,Enum.TextXAlignment.Center)
+        st.Size=UDim2.new(1,0,0,11); st.Position=UDim2.new(0,0,0,19)
+        st.TextYAlignment=Enum.TextYAlignment.Center
         local dn,dc=d.n,d.c
         sb.MouseButton1Click:Connect(function()
             if SKL[dn].on then
@@ -2791,16 +2797,26 @@ do
         ddInner.Size=UDim2.new(1,0,0,h); ddBody.Size=UDim2.new(1,0,0,h+16)
     end
 
-    local weaponCard=Frame(ddInner,C.SURFACE,UDim2.new(1,0,0,76))
-    weaponCard.LayoutOrder=0; Corner(weaponCard,8); Stroke(weaponCard,C.BORD,1,0.4); Padding(weaponCard,8,8,12,8)
+    local weaponCard=Frame(ddInner,C.SURFACE,UDim2.new(1,0,0,0))
+    weaponCard.AutomaticSize=Enum.AutomaticSize.Y
+    weaponCard.LayoutOrder=0; Corner(weaponCard,8); Stroke(weaponCard,C.BORD,1,0.4)
+    local wcPad=Instance.new("UIPadding",weaponCard)
+    wcPad.PaddingTop=UDim.new(0,8); wcPad.PaddingBottom=UDim.new(0,8)
+    wcPad.PaddingLeft=UDim.new(0,12); wcPad.PaddingRight=UDim.new(0,8)
+    local wcLayout=Instance.new("UIListLayout",weaponCard)
+    wcLayout.SortOrder=Enum.SortOrder.LayoutOrder; wcLayout.Padding=UDim.new(0,4)
     local wsTitle=Label(weaponCard,"Hero Status",12,C.TXT,Enum.Font.GothamBold)
-    wsTitle.Size=UDim2.new(1,0,0,16); wsTitle.Position=UDim2.new(0,0,0,6)
+    wsTitle.Size=UDim2.new(1,0,0,16); wsTitle.LayoutOrder=0
+    wsTitle.TextYAlignment=Enum.TextYAlignment.Center
     local wsSlot1=Label(weaponCard,"Slot 1: —",10.5,C.TXT2,Enum.Font.Gotham)
-    wsSlot1.Size=UDim2.new(1,0,0,13); wsSlot1.Position=UDim2.new(0,0,0,26)
+    wsSlot1.Size=UDim2.new(1,0,0,14); wsSlot1.LayoutOrder=1
+    wsSlot1.TextYAlignment=Enum.TextYAlignment.Center
     local wsSlot2=Label(weaponCard,"Slot 2: —",10.5,C.TXT2,Enum.Font.Gotham)
-    wsSlot2.Size=UDim2.new(1,0,0,13); wsSlot2.Position=UDim2.new(0,0,0,41)
+    wsSlot2.Size=UDim2.new(1,0,0,14); wsSlot2.LayoutOrder=2
+    wsSlot2.TextYAlignment=Enum.TextYAlignment.Center
     local wsSlot3=Label(weaponCard,"Slot 3: —",10.5,C.TXT2,Enum.Font.Gotham)
-    wsSlot3.Size=UDim2.new(1,0,0,13); wsSlot3.Position=UDim2.new(0,0,0,56)
+    wsSlot3.Size=UDim2.new(1,0,0,14); wsSlot3.LayoutOrder=3
+    wsSlot3.TextYAlignment=Enum.TextYAlignment.Center
     HR.weaponSlotLbls={wsSlot1,wsSlot2,wsSlot3}
     HR.slotStatusLbl={wsSlot1,wsSlot2,wsSlot3}
 
@@ -2891,16 +2907,26 @@ do
         wddInner.Size=UDim2.new(1,0,0,h); wddBody.Size=UDim2.new(1,0,0,h+16)
     end
 
-    local wStatusCard=Frame(wddInner,C.SURFACE,UDim2.new(1,0,0,76))
-    wStatusCard.LayoutOrder=0; Corner(wStatusCard,8); Stroke(wStatusCard,C.BORD,1,0.4); Padding(wStatusCard,8,8,12,8)
+    local wStatusCard=Frame(wddInner,C.SURFACE,UDim2.new(1,0,0,0))
+    wStatusCard.AutomaticSize=Enum.AutomaticSize.Y
+    wStatusCard.LayoutOrder=0; Corner(wStatusCard,8); Stroke(wStatusCard,C.BORD,1,0.4)
+    local wscPad=Instance.new("UIPadding",wStatusCard)
+    wscPad.PaddingTop=UDim.new(0,8); wscPad.PaddingBottom=UDim.new(0,8)
+    wscPad.PaddingLeft=UDim.new(0,12); wscPad.PaddingRight=UDim.new(0,8)
+    local wscLayout=Instance.new("UIListLayout",wStatusCard)
+    wscLayout.SortOrder=Enum.SortOrder.LayoutOrder; wscLayout.Padding=UDim.new(0,4)
     local wstTitle=Label(wStatusCard,"Weapon Status",12,C.TXT,Enum.Font.GothamBold)
-    wstTitle.Size=UDim2.new(1,0,0,16); wstTitle.Position=UDim2.new(0,0,0,6)
+    wstTitle.Size=UDim2.new(1,0,0,16); wstTitle.LayoutOrder=0
+    wstTitle.TextYAlignment=Enum.TextYAlignment.Center
     local wstSlot1=Label(wStatusCard,"Slot 1: —",10.5,C.TXT2,Enum.Font.Gotham)
-    wstSlot1.Size=UDim2.new(1,0,0,13); wstSlot1.Position=UDim2.new(0,0,0,26)
+    wstSlot1.Size=UDim2.new(1,0,0,14); wstSlot1.LayoutOrder=1
+    wstSlot1.TextYAlignment=Enum.TextYAlignment.Center
     local wstSlot2=Label(wStatusCard,"Slot 2: —",10.5,C.TXT2,Enum.Font.Gotham)
-    wstSlot2.Size=UDim2.new(1,0,0,13); wstSlot2.Position=UDim2.new(0,0,0,41)
+    wstSlot2.Size=UDim2.new(1,0,0,14); wstSlot2.LayoutOrder=2
+    wstSlot2.TextYAlignment=Enum.TextYAlignment.Center
     local wstSlot3=Label(wStatusCard,"Slot 3: —",10.5,C.TXT2,Enum.Font.Gotham)
-    wstSlot3.Size=UDim2.new(1,0,0,13); wstSlot3.Position=UDim2.new(0,0,0,56)
+    wstSlot3.Size=UDim2.new(1,0,0,14); wstSlot3.LayoutOrder=3
+    wstSlot3.TextYAlignment=Enum.TextYAlignment.Center
     WR.weaponSlotLbls={wstSlot1,wstSlot2,wstSlot3}
 
     local wArCard=Frame(wddInner,C.SURFACE,UDim2.new(1,0,0,44))
