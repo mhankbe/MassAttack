@@ -48,6 +48,7 @@ local RE_HeroSkill = Remotes:FindFirstChild("HeroPlaySkillAnim")
 local RE_EquipWeapon          = Remotes:WaitForChild("EquipWeapon", 10)
 local RE_RandomWeaponQuirk    = Remotes:WaitForChild("RandomWeaponQuirk", 10)
 local RE_RandomHeroEquipGrade = Remotes:WaitForChild("RandomHeroEquipGrade", 10)
+local RE_RerollHalo           = Remotes:FindFirstChild("RerollHalo")
 local RE_StartTp              = Remotes:FindFirstChild("StartLocalPlayerTeleport")
 local RE_LocalTp              = Remotes:FindFirstChild("LocalPlayerTeleport")
 
@@ -1056,6 +1057,19 @@ local PGR = {
     enOnFlags   = {false,false,false},
 }
 
+-- Halo Roll state
+local HALO_NAMES   = {"Bronze Halo", "Gold Halo", "Diamond Halo"}
+local HALO_DRAW_ID = {1, 2, 3}   -- arg yg dikirim ke RerollHalo:InvokeServer
+local HALO = {
+    running    = {false, false, false},
+    statLbls   = {nil, nil, nil},
+    dotRefs    = {nil, nil, nil},
+    attemptLbls= {nil, nil, nil},
+    toggleBtns = {nil, nil, nil},
+    toggleKnobs= {nil, nil, nil},
+    enOnFlags  = {false, false, false},
+}
+
 local MAX_PER_SLOT   = 3
 local W_MAX_PER_SLOT = 3
 local _spyLog        = {}
@@ -1641,6 +1655,89 @@ local function DoAutoRollPetGear(si, on)
         end
     end)
 end
+-- ============================================================
+-- AUTO ROLL HALO
+-- ============================================================
+local function HALO_SetToggleOff(hi)
+    HALO.enOnFlags[hi] = false
+    if HALO.toggleBtns[hi]  then HALO.toggleBtns[hi].BackgroundColor3  = Color3.fromRGB(60,60,60) end
+    if HALO.toggleKnobs[hi] then HALO.toggleKnobs[hi].Position = UDim2.new(0,2,0.5,-9) end
+end
+
+local function DoAutoRollHalo(hi, on)
+    local key = "haloroll"..hi
+    HALO.running[hi] = false
+    StopLoop(key)
+
+    local function setStatus(dot, txt, col)
+        if HALO.dotRefs[hi]  then HALO.dotRefs[hi].BackgroundColor3 = dot end
+        if HALO.statLbls[hi] then HALO.statLbls[hi].Text = txt; HALO.statLbls[hi].TextColor3 = col end
+    end
+
+    if not on then
+        setStatus(Color3.fromRGB(100,100,100), "⏹ Idle", C.TXT2)
+        if HALO.attemptLbls[hi] then HALO.attemptLbls[hi].Text = "Attempt: —" end
+        return
+    end
+
+    HALO.running[hi] = true
+
+    LOOPS[key] = task.spawn(function()
+        local attempt = 0
+
+        -- Cek remote tersedia
+        if not RE_RerollHalo then
+            setStatus(Color3.fromRGB(255,80,80), "⚠ Remote RerollHalo tidak ditemukan!", Color3.fromRGB(255,80,80))
+            HALO_SetToggleOff(hi)
+            HALO.running[hi] = false
+            return
+        end
+
+        -- Offset awal per mesin supaya tidak fire bersamaan saat multi-toggle aktif
+        -- Bronze=0s, Gold=0.15s, Diamond=0.30s
+        local startOffset = (hi - 1) * 0.15
+        if startOffset > 0 then
+            task.wait(startOffset)
+        end
+
+        setStatus(Color3.fromRGB(255,200,60), "⟳ Memulai gacha "..HALO_NAMES[hi].."...", Color3.fromRGB(255,200,60))
+
+        -- Interval per mesin sedikit berbeda supaya tidak pernah tabrakan
+        -- Bronze=0.30s, Gold=0.33s, Diamond=0.36s
+        local interval = 0.30 + (hi - 1) * 0.03
+
+        while HALO.running[hi] do
+            attempt = attempt + 1
+
+            if HALO.attemptLbls[hi] then
+                HALO.attemptLbls[hi].Text = "Attempt: #"..attempt
+                HALO.attemptLbls[hi].TextColor3 = C.TXT2
+            end
+            setStatus(
+                Color3.fromRGB(255,160,30),
+                "🎰 Gacha #"..attempt.."  |  "..HALO_NAMES[hi],
+                C.ACC2
+            )
+
+            -- Jalankan di thread terpisah supaya tidak blocking thread lain
+            task.spawn(function()
+                pcall(function()
+                    RE_RerollHalo:InvokeServer(HALO_DRAW_ID[hi])
+                end)
+            end)
+
+            task.wait(interval)
+        end
+
+        -- Dihentikan manual oleh player
+        setStatus(Color3.fromRGB(100,100,100), "⏹ Dihentikan ("..attempt.."x gacha)", C.TXT2)
+        if HALO.attemptLbls[hi] then
+            HALO.attemptLbls[hi].Text = "Total: "..attempt.."x gacha"
+            HALO.attemptLbls[hi].TextColor3 = C.TXT2
+        end
+    end)
+end
+
 -- ============================================================
 -- GUID CAPTURE
 -- ============================================================
@@ -3092,6 +3189,229 @@ do
         if pgOpen then task.defer(ResizePGBody) end
     end)
 end
+-- ============================================================
+-- PANEL : AUTO ROLL — HALO
+-- ============================================================
+do
+    local p = Panels["autoroll"]
+    local haloOpen = false
+
+    -- ── Header accordion ──────────────────────────────────────
+    local haloHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,38))
+    haloHeader.LayoutOrder = 30; Corner(haloHeader,8); Stroke(haloHeader,C.BORD,1,0.4)
+    local haloIcon  = Label(haloHeader,"▶",12,C.ACC2,Enum.Font.GothamBold)
+    haloIcon.Size   = UDim2.new(0,20,1,0); haloIcon.Position = UDim2.new(0,10,0,0)
+    local haloLabel = Label(haloHeader,"😇  Auto Gacha Halo",13,C.TXT,Enum.Font.GothamBold)
+    haloLabel.Size  = UDim2.new(1,-40,1,0); haloLabel.Position = UDim2.new(0,30,0,0)
+
+    local haloBody  = Frame(p, C.BG2, UDim2.new(1,0,0,0))
+    haloBody.LayoutOrder = 31; haloBody.ClipsDescendants = true
+    Corner(haloBody,8); Stroke(haloBody,C.BORD,1,0.3); haloBody.Visible = false
+
+    local haloInner = Frame(haloBody, C.BLACK, UDim2.new(1,-16,0,0))
+    haloInner.BackgroundTransparency = 1; haloInner.Position = UDim2.new(0,8,0,8)
+    local haloLayout = New("UIListLayout",{Parent=haloInner,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,8)})
+
+    local function ResizeHaloBody()
+        haloLayout:ApplyLayout()
+        local h = haloLayout.AbsoluteContentSize.Y + 20
+        haloInner.Size = UDim2.new(1,0,0,h); haloBody.Size = UDim2.new(1,0,0,h+16)
+    end
+
+    -- Warna per jenis Halo
+    local HALO_COLORS = {
+        Color3.fromRGB(180, 100, 40),   -- Bronze
+        Color3.fromRGB(220, 180, 30),   -- Gold
+        Color3.fromRGB(100, 200, 255),  -- Diamond
+    }
+    local HALO_ICONS = {"🥉", "🥇", "💠"}
+
+    -- ── Card per Halo (3 jenis) ───────────────────────────────
+    for hi = 1, 3 do
+        local hi_l = hi
+
+        local hCard = Frame(haloInner, C.SURFACE, UDim2.new(1,0,0,0))
+        hCard.LayoutOrder = hi; Corner(hCard,8); Stroke(hCard,C.BORD,1,0.5)
+        hCard.AutomaticSize = Enum.AutomaticSize.Y
+        local hPad = Instance.new("UIPadding", hCard)
+        hPad.PaddingLeft=UDim.new(0,12); hPad.PaddingRight=UDim.new(0,12)
+        hPad.PaddingTop=UDim.new(0,10);  hPad.PaddingBottom=UDim.new(0,10)
+        New("UIListLayout",{Parent=hCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
+
+        -- ── Judul ──────────────────────────────────────────────
+        local hTitle = Label(hCard, HALO_ICONS[hi].." "..HALO_NAMES[hi], 12, HALO_COLORS[hi], Enum.Font.GothamBold)
+        hTitle.Size = UDim2.new(1,0,0,18); hTitle.LayoutOrder = 0
+
+        -- ── Status bar ─────────────────────────────────────────
+        local statRow = Frame(hCard, Color3.fromRGB(35,35,35), UDim2.new(1,0,0,26))
+        statRow.LayoutOrder = 1; Corner(statRow,6); Stroke(statRow,C.BORD2,1,0.5)
+        local hDot = Frame(statRow, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
+        hDot.Position = UDim2.new(0,7,0.5,-4); Corner(hDot,4)
+        HALO.dotRefs[hi] = hDot
+        local hStLbl = Label(statRow, "⏹ Idle — Aktifkan untuk mulai gacha", 10, C.TXT2, Enum.Font.Gotham)
+        hStLbl.Size = UDim2.new(1,-22,1,0); hStLbl.Position = UDim2.new(0,21,0,0)
+        hStLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        HALO.statLbls[hi] = hStLbl
+
+        -- ── Info attempt ───────────────────────────────────────
+        local infoRow = Frame(hCard, Color3.fromRGB(28,28,28), UDim2.new(1,0,0,22))
+        infoRow.LayoutOrder = 2; Corner(infoRow,5)
+        local attLbl = Label(infoRow, "Attempt: —", 9.5, C.TXT3, Enum.Font.Gotham)
+        attLbl.Size = UDim2.new(1,-8,1,0); attLbl.Position = UDim2.new(0,8,0,0)
+        HALO.attemptLbls[hi] = attLbl
+
+        -- ── Toggle ─────────────────────────────────────────────
+        local enRow = Frame(hCard, Color3.fromRGB(30,20,5), UDim2.new(1,0,0,34))
+        enRow.LayoutOrder = 4; Corner(enRow,8)
+        Stroke(enRow, HALO_COLORS[hi], 1, 0.6)
+
+        local enLbl = Label(enRow, "⚡ Auto Gacha", 12, C.TXT, Enum.Font.GothamBold)
+        enLbl.Size = UDim2.new(0.6,0,1,0); enLbl.Position = UDim2.new(0,10,0,0)
+        local enSub = Label(enRow, "ON = mulai gacha otomatis", 9, C.TXT3, Enum.Font.Gotham)
+        enSub.Size = UDim2.new(0.6,0,0,12); enSub.Position = UDim2.new(0,10,1,-14)
+
+        local enToggle = Btn(enRow, Color3.fromRGB(60,60,60), UDim2.new(0,40,0,22))
+        enToggle.Position = UDim2.new(1,-50,0.5,-11); Corner(enToggle,11)
+        local enKnob = Frame(enToggle, C.TXT, UDim2.new(0,18,0,18))
+        enKnob.Position = UDim2.new(0,2,0.5,-9); Corner(enKnob,9)
+
+        HALO.toggleBtns[hi]  = enToggle
+        HALO.toggleKnobs[hi] = enKnob
+
+        enToggle.MouseButton1Click:Connect(function()
+            HALO.enOnFlags[hi_l] = not HALO.enOnFlags[hi_l]
+            local enOn = HALO.enOnFlags[hi_l]
+            enToggle.BackgroundColor3 = enOn and HALO_COLORS[hi_l] or Color3.fromRGB(60,60,60)
+            enKnob.Position = enOn and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
+            enRow.BackgroundColor3 = enOn and Color3.fromRGB(50,35,5) or Color3.fromRGB(30,20,5)
+            Stroke(enRow, enOn and HALO_COLORS[hi_l] or HALO_COLORS[hi_l], 1, enOn and 0.2 or 0.6)
+            DoAutoRollHalo(hi_l, enOn)
+        end)
+    end
+
+    haloHeader.MouseButton1Click:Connect(function()
+        haloOpen = not haloOpen
+        haloBody.Visible = haloOpen
+        haloIcon.Text = haloOpen and "▼" or "▶"
+        if haloOpen then task.defer(ResizeHaloBody) end
+    end)
+end
+
+-- ============================================================
+-- PANEL : CATATAN AUTO REROLL
+-- ============================================================
+do
+    local p = Panels["autoroll"]
+
+    -- ── Header accordion ──────────────────────────────────────
+    local noteOpen   = false
+    local noteHeader = Btn(p, Color3.fromRGB(50,20,5), UDim2.new(1,0,0,38))
+    noteHeader.LayoutOrder = 40; Corner(noteHeader,8); Stroke(noteHeader,C.ACC,1,0.5)
+    local noteIcon  = Label(noteHeader,"▶",12,C.ACC2,Enum.Font.GothamBold)
+    noteIcon.Size   = UDim2.new(0,20,1,0); noteIcon.Position = UDim2.new(0,10,0,0)
+    local noteLabel = Label(noteHeader,"📋  Catatan Penting — Cara Pakai AutoReroll",13,Color3.fromRGB(255,200,80),Enum.Font.GothamBold)
+    noteLabel.Size  = UDim2.new(1,-40,1,0); noteLabel.Position = UDim2.new(0,30,0,0)
+
+    local noteBody  = Frame(p, Color3.fromRGB(25,12,3), UDim2.new(1,0,0,0))
+    noteBody.LayoutOrder = 41; noteBody.ClipsDescendants = true
+    Corner(noteBody,8); Stroke(noteBody,C.ACC,1,0.4); noteBody.Visible = false
+
+    local noteInner = Frame(noteBody, C.BLACK, UDim2.new(1,-16,0,0))
+    noteInner.BackgroundTransparency = 1; noteInner.Position = UDim2.new(0,8,0,10)
+    local noteLayout = New("UIListLayout",{Parent=noteInner,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,10)})
+
+    local function ResizeNoteBody()
+        noteLayout:ApplyLayout()
+        local h = noteLayout.AbsoluteContentSize.Y + 20
+        noteInner.Size = UDim2.new(1,0,0,h); noteBody.Size = UDim2.new(1,0,0,h+20)
+    end
+
+    -- Helper buat baris catatan
+    local function NoteBlock(order, icon, title, titleColor, lines)
+        local block = Frame(noteInner, Color3.fromRGB(35,18,5), UDim2.new(1,0,0,0))
+        block.LayoutOrder = order; block.AutomaticSize = Enum.AutomaticSize.Y
+        Corner(block,8); Stroke(block,Color3.fromRGB(180,80,0),1,0.5)
+        local bPad = Instance.new("UIPadding",block)
+        bPad.PaddingLeft=UDim.new(0,10); bPad.PaddingRight=UDim.new(0,10)
+        bPad.PaddingTop=UDim.new(0,8);   bPad.PaddingBottom=UDim.new(0,8)
+        local bLayout = New("UIListLayout",{Parent=block,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,5)})
+
+        -- Judul blok
+        local titleLbl = Label(block, icon.."  "..title, 11.5, titleColor, Enum.Font.GothamBold)
+        titleLbl.Size = UDim2.new(1,0,0,0); titleLbl.AutomaticSize = Enum.AutomaticSize.Y
+        titleLbl.TextWrapped = true; titleLbl.LayoutOrder = 0
+
+        -- Setiap baris isi
+        for i, line in ipairs(lines) do
+            local lbl = Label(block, line, 10.5, Color3.fromRGB(230,210,180), Enum.Font.Gotham)
+            lbl.Size = UDim2.new(1,0,0,0); lbl.AutomaticSize = Enum.AutomaticSize.Y
+            lbl.TextWrapped = true; lbl.LayoutOrder = i
+            lbl.TextXAlignment = Enum.TextXAlignment.Left
+        end
+        return block
+    end
+
+    -- ── Blok 1: Hero ──────────────────────────────────────────
+    NoteBlock(1, "⚡", "Auto Roll Hero", Color3.fromRGB(255,200,60), {
+        "1.  Masuk ke Mesin Roll Hero.",
+        "2.  Masukkan Hero yang ingin di-reroll.",
+        "3.  Klik Reroll 1x secara manual.",
+        "4.  Tunggu status berubah HIJAU (GUID terdeteksi).",
+        "5.  Pilih target Quirk di slot yang diinginkan.",
+        "6.  Aktifkan toggle AutoReroll → script jalan otomatis.",
+    })
+
+    -- ── Blok 2: Weapon ────────────────────────────────────────
+    NoteBlock(2, "⚔️", "Auto Roll Weapon", Color3.fromRGB(180,220,255), {
+        "1.  Equip dulu senjata yang ingin di-reroll.",
+        "2.  Tunggu status berubah HIJAU (GUID terbaca).",
+        "3.  Pilih target Quirk di setiap slot.",
+        "4.  Aktifkan toggle AutoReroll → script jalan otomatis.",
+    })
+
+    -- ── Blok 3: Pet Gear ──────────────────────────────────────
+    NoteBlock(3, "🐾", "Auto Roll Pet Gear", Color3.fromRGB(180,255,180), {
+        "1.  Masuk ke Mesin Roll Pet Gear (R / Y / B).",
+        "2.  Pilih Pet Gear yang ingin di-reroll.",
+        "3.  Klik Reroll 1x secara manual.",
+        "4.  Tunggu status berubah HIJAU (GUID terdeteksi).",
+        "5.  Pilih target Grade di dropdown.",
+        "6.  Aktifkan toggle Fastroll.",
+        "⚠  Ingin jalankan 3 mesin sekaligus?",
+        "    → Datangi setiap mesin satu per satu,",
+        "       lakukan langkah 1–5 di tiap mesin,",
+        "       lalu aktifkan semua toggle.",
+    })
+
+    -- ── Blok NOTE penting ─────────────────────────────────────
+    local noteBlock = Frame(noteInner, Color3.fromRGB(60,10,10), UDim2.new(1,0,0,0))
+    noteBlock.LayoutOrder = 4; noteBlock.AutomaticSize = Enum.AutomaticSize.Y
+    Corner(noteBlock,8); Stroke(noteBlock,Color3.fromRGB(255,60,60),1,0.4)
+    local nbPad = Instance.new("UIPadding",noteBlock)
+    nbPad.PaddingLeft=UDim.new(0,10); nbPad.PaddingRight=UDim.new(0,10)
+    nbPad.PaddingTop=UDim.new(0,8);   nbPad.PaddingBottom=UDim.new(0,8)
+    New("UIListLayout",{Parent=noteBlock,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
+
+    local noteTitleLbl = Label(noteBlock,"⚠  PENTING",12,Color3.fromRGB(255,80,80),Enum.Font.GothamBold)
+    noteTitleLbl.Size = UDim2.new(1,0,0,18); noteTitleLbl.LayoutOrder = 0
+
+    local noteTextLbl = Label(noteBlock,
+        "Jika target sudah tercapai, keluar dari game\n"..
+        "lalu masuk kembali untuk melihat hasil\n"..
+        "AutoReroll yang sudah kamu dapatkan.",
+        10.5, Color3.fromRGB(255,180,180), Enum.Font.GothamBold)
+    noteTextLbl.Size = UDim2.new(1,0,0,0); noteTextLbl.AutomaticSize = Enum.AutomaticSize.Y
+    noteTextLbl.TextWrapped = true; noteTextLbl.LayoutOrder = 1
+    noteTextLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    noteHeader.MouseButton1Click:Connect(function()
+        noteOpen = not noteOpen
+        noteBody.Visible = noteOpen
+        noteIcon.Text = noteOpen and "▼" or "▶"
+        if noteOpen then task.defer(ResizeNoteBody) end
+    end)
+end
+
 -- ============================================================
 -- PANEL : SETTINGS
 -- ============================================================
