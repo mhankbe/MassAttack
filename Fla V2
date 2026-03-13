@@ -3,6 +3,8 @@
 --   By    : FLa Project  (Fixed by Assistant)
 --   Platform : Android (Delta) + PC (Xeno) — Full Support
 --   [UPDATED] Floating Bubble diganti dengan versi sc_baru (v14.5)
+--   [UPDATED] Auto Siege v3 + Siege<>Raid koordinasi (siege prioritas)
+--   [UPDATED] Main panel: Hide Reward toggle
 
 local Players          = game:GetService("Players")
 local TweenService     = game:GetService("TweenService")
@@ -32,7 +34,9 @@ task.wait(3)
 -- ============================================================
 local Remotes             = RS:WaitForChild("Remotes", 10)
 local RE_CollectItem      = Remotes:WaitForChild("CollectItem", 10)
-local RE_ExtraReward      = Remotes:WaitForChild("ExtraReward", 10)
+local RE_ExtraReward      = Remotes:FindFirstChild("ExtraReward")
+local RE_ShowReward       = Remotes:FindFirstChild("ShowReward")
+local RE_DropItems        = Remotes:FindFirstChild("DropItems")
 local RE_AutoHeroQuirk    = Remotes:FindFirstChild("AutoRandomHeroQuirk")
 local RE_RandomHeroQuirk  = Remotes:WaitForChild("RandomHeroQuirk", 10)
 
@@ -57,16 +61,14 @@ local RE_StartTp              = Remotes:FindFirstChild("StartLocalPlayerTeleport
 local RE_LocalTp              = Remotes:FindFirstChild("LocalPlayerTeleport")
 
 -- RAID REMOTES (dari SimpleSpy)
-local RE_GetRaidTeamInfos         = Remotes:FindFirstChild("GetRaidTeamInfos")
 local RE_CreateRaidTeam           = Remotes:FindFirstChild("CreateRaidTeam")
 local RE_StartChallengeRaidMap    = Remotes:FindFirstChild("StartChallengeRaidMap")
-local RE_RaidStartTp              = Remotes:FindFirstChild("StartLocalPlayerTeleport")
+-- RE_StartTp → pakai RE_StartTp (remote sama: StartLocalPlayerTeleport)
 local RE_EquipHeroWithData        = Remotes:FindFirstChild("EquipHeroWithData")
 local RE_LocalTpSuccess           = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
-local RE_GetDrawHeroId            = Remotes:FindFirstChild("GetDrawHeroId")
 local RE_GainRaidsRewards         = Remotes:FindFirstChild("GainRaidsRewards")
-local RE_QuitRaidsMap             = Remotes:FindFirstChild("QuitRaidsMap")
-local RE_UpdateRaidInfo           = Remotes:FindFirstChild("UpdateRaidInfo")
+-- RE_GetRaidTeamInfos, RE_GetDrawHeroId, RE_QuitRaidsMap, RE_UpdateRaidInfo
+-- diambil inline pakai Remotes:FindFirstChild saat dibutuhkan (hemat register)
 
 local MY_USER_ID = LP.UserId
 local HERO_GUIDS = {}   -- backward compat
@@ -468,6 +470,7 @@ local NAV_ITEMS = {
     {tag="farm",     ico="⚔",  lbl="Farm"},
     {tag="attack",   ico="💥", lbl="Attack"},
     {tag="autoraid", ico="⚡", lbl="Raid"},
+    {tag="autoseige", ico="🏰", lbl="Siege"},
     {tag="player",   ico="🧍", lbl="Player"},
     {tag="autoroll", ico="🎲", lbl="Reroll"},
     {tag="settings", ico="⚙",  lbl="Settings"},
@@ -574,7 +577,7 @@ end
 -- ============================================================
 -- STATE & LOOPS
 -- ============================================================
-local STATE = {autoCollect=false, autoDestroyer=false, autoArise=false, autoRoll=false, noClip=false, antiAfk=false}
+local STATE = {autoCollect=false, autoDestroyer=false, autoArise=false, autoRoll=false, noClip=false, antiAfk=false, hideReward=false, autoConfirm=false, autoClose=false}
 local LOOPS = {}
 local COLLECTED = {}
 
@@ -615,6 +618,108 @@ local RAID = {
 }
 local _raidOn        = false
 local _raidInterrupt = false  -- true saat raid muncul & Mass Attack harus pause
+local _siegeInterrupt = false  -- true saat siege pakai remote -> raid pause
+
+-- ============================================================
+-- AUTO POPUP SCANNER
+-- Scan PlayerGui + CoreGui tiap 0.3s, cari TextButton "Confirm" / "Close"
+-- STATE.autoConfirm = true → klik Confirm otomatis
+-- STATE.autoClose   = true → klik Close otomatis
+-- [FIX] fuzzy match (case-insensitive + contains), interval 0.3s, race condition guard
+-- ============================================================
+local _popupThread   = nil
+local _popupRunning  = false  -- guard race condition
+
+local POPUP_CONFIRM_KEYS = {"confirm", "ok", "yes", "lanjut", "proceed", "accept"}
+local POPUP_CLOSE_KEYS   = {"close", "cancel", "batal", "exit", "dismiss", "skip", "no"}
+
+local function _fuzzyMatch(text, keys)
+    local low = text:lower():gsub("%s+","")
+    for _, k in ipairs(keys) do
+        if low:find(k, 1, true) then return true end
+    end
+    return false
+end
+
+local function ScanAndClickPopup()
+    local sources = { PG, game:GetService("CoreGui") }
+    for _, src in ipairs(sources) do
+        if not src then continue end
+        local ok, descs = pcall(function() return src:GetDescendants() end)
+        if not ok then continue end
+        for _, obj in ipairs(descs) do
+            if obj:IsA("TextButton") and obj.Visible and obj.Text ~= "" then
+                local txt = obj.Text
+                if STATE.autoConfirm and _fuzzyMatch(txt, POPUP_CONFIRM_KEYS) then
+                    pcall(function() obj.MouseButton1Click:Fire() end)
+                    return
+                end
+                if STATE.autoClose and _fuzzyMatch(txt, POPUP_CLOSE_KEYS) then
+                    pcall(function() obj.MouseButton1Click:Fire() end)
+                    return
+                end
+            end
+        end
+    end
+end
+
+local function StartPopupScanner()
+    -- Stop existing thread dengan flag guard (bukan hanya task.cancel)
+    _popupRunning = false
+    if _popupThread then
+        pcall(function() task.cancel(_popupThread) end)
+        _popupThread = nil
+    end
+    if not STATE.autoConfirm and not STATE.autoClose then return end
+    _popupRunning = true
+    _popupThread = task.spawn(function()
+        while _popupRunning and (STATE.autoConfirm or STATE.autoClose) do
+            pcall(ScanAndClickPopup)
+            task.wait(0.3)
+        end
+        _popupRunning = false
+        _popupThread = nil
+    end)
+end
+
+-- ============================================================
+-- HIDE REWARD — Hook ShowReward + DropItems OnClientEvent
+-- Blokir GUI reward muncul di client saat STATE.hideReward = true
+-- [FIX] Remote sebenarnya adalah ShowReward & DropItems, bukan ExtraReward
+-- ============================================================
+local _showRewardConn = nil
+local _dropItemsConn  = nil
+
+local function SetupHideRewardHooks()
+    -- Disconnect old
+    if _showRewardConn then _showRewardConn:Disconnect(); _showRewardConn = nil end
+    if _dropItemsConn  then _dropItemsConn:Disconnect();  _dropItemsConn  = nil end
+
+    -- Hook ShowReward
+    if RE_ShowReward and RE_ShowReward:IsA("RemoteEvent") then
+        _showRewardConn = RE_ShowReward.OnClientEvent:Connect(function(data)
+            if STATE.hideReward then
+                -- Blokir: jangan lakukan apapun (popup tidak akan muncul)
+                return
+            end
+            -- Tidak di-handle disini — biarkan game normal
+        end)
+    end
+
+    -- Hook DropItems
+    if RE_DropItems and RE_DropItems:IsA("RemoteEvent") then
+        _dropItemsConn = RE_DropItems.OnClientEvent:Connect(function(data)
+            if STATE.hideReward then
+                return
+            end
+        end)
+    end
+end
+
+-- Jalankan hooks saat script load
+task.defer(SetupHideRewardHooks)
+
+RAID.autoKillBoss    = false  -- toggle: teleport ke raja + auto attack sampai mati
 
 local _maStatusLbl  = nil
 local _noClipConn   = nil
@@ -839,7 +944,7 @@ local function StartDestroyWorker(checkFn)
                     if guid and not collected[guid] then
                         collected[guid] = true
                         pcall(function() RE_CollectItem:InvokeServer(guid) end)
-                        pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end)
+                        if not (STATE and STATE.hideReward) then pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end) end
                         if AG.running then AG.collected = AG.collected + 1 end
                         if MA.running then MA.collected = (MA.collected or 0) + 1 end
                         task.wait(0.05)
@@ -1049,7 +1154,7 @@ local function DoAutoCollect(on)
                     if guid and not COLLECTED[guid] then
                         COLLECTED[guid] = true
                         pcall(function() RE_CollectItem:InvokeServer(guid) end)
-                        pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end)
+                        if not (STATE and STATE.hideReward) then pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end) end
                         task.wait(0.05)
                     end
                 end
@@ -1068,7 +1173,7 @@ local function DoAutoDestroyer(on)
         if not STATE.autoDestroyer then return end
         task.wait(0.1)
         local guid; pcall(function() guid = obj:GetAttribute("GUID") end)
-        if guid then pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end) end
+        if not (STATE and STATE.hideReward) then if guid then pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end) end end
     end)
 end
 
@@ -1081,7 +1186,7 @@ local function DoAutoArise(on)
         if not STATE.autoArise then return end
         task.wait(0.1)
         local guid; pcall(function() guid = obj:GetAttribute("GUID") end)
-        if guid then pcall(function() RE_ExtraReward:FireServer({isSell=false, isAuto=false, guid=guid}) end) end
+        if not (STATE and STATE.hideReward) then if guid then pcall(function() RE_ExtraReward:FireServer({isSell=false, isAuto=false, guid=guid}) end) end end
     end)
 end
 
@@ -2708,11 +2813,100 @@ end
         function(on)
             if STATE.autoDestroyer then STATE.autoCollect = on; DoAutoCollect(on); RefreshStatus() end
         end)
+
+    -- HIDE REWARD toggle
+    local _hrCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,54))
+    _hrCard.LayoutOrder = 1; Corner(_hrCard,9); Stroke(_hrCard,C.BORD,1,0.35)
+    Padding(_hrCard,6,6,10,8)
+    local _hrIcon = Label(_hrCard,"🎁",18,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    _hrIcon.Size = UDim2.new(0,24,0,24); _hrIcon.Position = UDim2.new(0,0,0.5,-12)
+    local _hrTitle = Label(_hrCard,"Hide Reward (ShowReward + DropItems)",11,C.TXT,Enum.Font.GothamBold)
+    _hrTitle.Size = UDim2.new(1,-60,0,16); _hrTitle.Position = UDim2.new(0,28,0,4)
+    local _hrSub = Label(_hrCard,"OFF — reward muncul normal",9,C.DIM,Enum.Font.Gotham)
+    _hrSub.Size = UDim2.new(1,-60,0,13); _hrSub.Position = UDim2.new(0,28,0,22)
+    local _hrPill = Btn(_hrCard,C.NSEL,UDim2.new(0,44,0,24))
+    _hrPill.AnchorPoint = Vector2.new(1,0.5); _hrPill.Position = UDim2.new(1,-6,0.5,0)
+    Corner(_hrPill,12)
+    local _hrKnob = Frame(_hrPill,C.DK,UDim2.new(0,18,0,18))
+    _hrKnob.AnchorPoint = Vector2.new(0,0.5); _hrKnob.Position = UDim2.new(0,3,0.5,0)
+    Corner(_hrKnob,9)
+    _hrPill.MouseButton1Click:Connect(function()
+        STATE.hideReward = not STATE.hideReward
+        local on = STATE.hideReward
+        TweenService:Create(_hrPill,TweenInfo.new(0.15),{BackgroundColor3=on and C.GRN or C.NSEL}):Play()
+        TweenService:Create(_hrKnob,TweenInfo.new(0.15),{
+            Position=on and UDim2.new(1,-20,0.5,0) or UDim2.new(0,3,0.5,0),
+            BackgroundColor3=on and Color3.fromRGB(255,255,255) or C.DK
+        }):Play()
+        _hrIcon.Text = on and "🙈" or "🎁"
+        _hrSub.Text  = on and "ON — ShowReward & DropItems diblokir" or "OFF — reward muncul normal"
+        _hrSub.TextColor3 = on and C.GRN or C.DIM
+        SetupHideRewardHooks()
+    end)
+
+    -- AUTO CONFIRM toggle
+    local _acfCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,54))
+    _acfCard.LayoutOrder = 2; Corner(_acfCard,9); Stroke(_acfCard,Color3.fromRGB(60,180,80),1,0.4)
+    Padding(_acfCard,6,6,10,8)
+    local _acfIcon = Label(_acfCard,"✅",18,C.GRN,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    _acfIcon.Size = UDim2.new(0,24,0,24); _acfIcon.Position = UDim2.new(0,0,0.5,-12)
+    local _acfTitle = Label(_acfCard,"Auto Confirm",11,C.TXT,Enum.Font.GothamBold)
+    _acfTitle.Size = UDim2.new(1,-60,0,16); _acfTitle.Position = UDim2.new(0,28,0,4)
+    local _acfSub = Label(_acfCard,"OFF — tombol Confirm tidak diklik otomatis",9,C.DIM,Enum.Font.Gotham)
+    _acfSub.Size = UDim2.new(1,-60,0,13); _acfSub.Position = UDim2.new(0,28,0,22)
+    local _acfPill = Btn(_acfCard,C.NSEL,UDim2.new(0,44,0,24))
+    _acfPill.AnchorPoint = Vector2.new(1,0.5); _acfPill.Position = UDim2.new(1,-6,0.5,0)
+    Corner(_acfPill,12)
+    local _acfKnob = Frame(_acfPill,C.DK,UDim2.new(0,18,0,18))
+    _acfKnob.AnchorPoint = Vector2.new(0,0.5); _acfKnob.Position = UDim2.new(0,3,0.5,0)
+    Corner(_acfKnob,9)
+    _acfPill.MouseButton1Click:Connect(function()
+        STATE.autoConfirm = not STATE.autoConfirm
+        local on = STATE.autoConfirm
+        TweenService:Create(_acfPill,TweenInfo.new(0.15),{BackgroundColor3=on and C.GRN or C.NSEL}):Play()
+        TweenService:Create(_acfKnob,TweenInfo.new(0.15),{
+            Position=on and UDim2.new(1,-20,0.5,0) or UDim2.new(0,3,0.5,0),
+            BackgroundColor3=on and Color3.fromRGB(255,255,255) or C.DK
+        }):Play()
+        _acfSub.Text = on and "ON — tombol Confirm diklik otomatis tiap 1s" or "OFF — tombol Confirm tidak diklik otomatis"
+        _acfSub.TextColor3 = on and C.GRN or C.DIM
+        StartPopupScanner()
+    end)
+
+    -- AUTO CLOSE toggle
+    local _aclCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,54))
+    _aclCard.LayoutOrder = 3; Corner(_aclCard,9); Stroke(_aclCard,Color3.fromRGB(200,80,30),1,0.4)
+    Padding(_aclCard,6,6,10,8)
+    local _aclIcon = Label(_aclCard,"❌",18,C.RED,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    _aclIcon.Size = UDim2.new(0,24,0,24); _aclIcon.Position = UDim2.new(0,0,0.5,-12)
+    local _aclTitle = Label(_aclCard,"Auto Close",11,C.TXT,Enum.Font.GothamBold)
+    _aclTitle.Size = UDim2.new(1,-60,0,16); _aclTitle.Position = UDim2.new(0,28,0,4)
+    local _aclSub = Label(_aclCard,"OFF — tombol Close tidak diklik otomatis",9,C.DIM,Enum.Font.Gotham)
+    _aclSub.Size = UDim2.new(1,-60,0,13); _aclSub.Position = UDim2.new(0,28,0,22)
+    local _aclPill = Btn(_aclCard,C.NSEL,UDim2.new(0,44,0,24))
+    _aclPill.AnchorPoint = Vector2.new(1,0.5); _aclPill.Position = UDim2.new(1,-6,0.5,0)
+    Corner(_aclPill,12)
+    local _aclKnob = Frame(_aclPill,C.DK,UDim2.new(0,18,0,18))
+    _aclKnob.AnchorPoint = Vector2.new(0,0.5); _aclKnob.Position = UDim2.new(0,3,0.5,0)
+    Corner(_aclKnob,9)
+    _aclPill.MouseButton1Click:Connect(function()
+        STATE.autoClose = not STATE.autoClose
+        local on = STATE.autoClose
+        TweenService:Create(_aclPill,TweenInfo.new(0.15),{BackgroundColor3=on and C.RED or C.NSEL}):Play()
+        TweenService:Create(_aclKnob,TweenInfo.new(0.15),{
+            Position=on and UDim2.new(1,-20,0.5,0) or UDim2.new(0,3,0.5,0),
+            BackgroundColor3=on and Color3.fromRGB(255,255,255) or C.DK
+        }):Play()
+        _aclSub.Text = on and "ON — tombol Close diklik otomatis tiap 1s" or "OFF — tombol Close tidak diklik otomatis"
+        _aclSub.TextColor3 = on and C.RED or C.DIM
+        StartPopupScanner()
+    end)
 end)()
 
 -- ============================================================
 -- PANEL : FARM
 -- ============================================================
+do -- [FIX] farm panel locals wrapped to free registers
 local agDot, agTxtLbl, agKLbl, agELbl
 local eEnemyRows = {}
 local eEnemyNames = {}
@@ -2986,7 +3180,7 @@ local FindLiveEnemyByName, SelectEnemyName, RefreshEnemies, RunAG_Targeted
                                             if guid and not collected[guid] then
                                                 collected[guid] = true
                                                 pcall(function() RE_CollectItem:InvokeServer(guid) end)
-                                                pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end)
+                                                if not (STATE and STATE.hideReward) then pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end) end
                                                 task.wait(0.05)
                                             end
                                         end
@@ -3150,6 +3344,7 @@ local FindLiveEnemyByName, SelectEnemyName, RefreshEnemies, RunAG_Targeted
         end
     end)
 end)()
+end -- do (farm panel locals)
 
 -- ============================================================
 -- PANEL : ATTACK
@@ -4566,6 +4761,20 @@ task.spawn(function()
     end
 end)
 
+-- Fetch manual via GetRaidTeamInfos (dipanggil saat start)
+-- [FIX] dipindah ke atas watcher agar tidak nil saat dipanggil
+local function FetchRaidIds()
+    local RE = Remotes:FindFirstChild("GetRaidTeamInfos")
+    if not RE then return end
+    local ok, res = pcall(function() return RE:InvokeServer() end)
+    if ok and type(res) == "table" then
+        for k, info in pairs(res) do
+            ParseRaidEntry(k, info)
+        end
+        RebuildRaidList()
+    end
+end
+
 -- ── WATCHER: Auto-reconnect kalau Remotes folder refresh ──
 -- Ini yang fix bug setelah rejoin/relog/teleport
 task.spawn(function()
@@ -4589,19 +4798,6 @@ task.spawn(function()
         end
     end
 end)
-
--- Fetch manual via GetRaidTeamInfos (dipanggil saat start)
-local function FetchRaidIds()
-    local RE = Remotes:FindFirstChild("GetRaidTeamInfos")
-    if not RE then return end
-    local ok, res = pcall(function() return RE:InvokeServer() end)
-    if ok and type(res) == "table" then
-        for k, info in pairs(res) do
-            ParseRaidEntry(k, info)
-        end
-        RebuildRaidList()
-    end
-end
 
 -- ── Helpers ──
 function StopRaid()
@@ -4637,7 +4833,7 @@ function RaidCollectAll()
                 if guid then
                     RAID.collected = RAID.collected + 1
                     pcall(function() RE_CollectItem:InvokeServer(guid) end)
-                    pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end)
+                    if not (STATE and STATE.hideReward) then pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end) end
                     task.wait(0.05)
                 end
             end
@@ -4702,16 +4898,35 @@ function StartRaidLoop()
     RAID.thread = task.spawn(function()
         while RAID.running do
 
+            -- ── CEK SIEGE INTERRUPT (BARU) ──
+            -- Kalau siege sedang aktif pakai remote, raid tunggu dulu
+            if _siegeInterrupt then
+                RaidStatusUpdate("⏸ Pause — Siege sedang berlangsung...", Color3.fromRGB(255,140,0))
+                while _siegeInterrupt and RAID.running do
+                    task.wait(0.5)
+                end
+                if not RAID.running then break end
+                RaidStatusUpdate("▶ Siege selesai — lanjut cari raid...", Color3.fromRGB(100,200,255))
+                task.wait(0.3)
+            end
+
             -- ── STEP 1: Resolve raidId berdasarkan difficulty ──
-            -- Saat menunggu raid, Mass Attack bebas jalan (_raidInterrupt=false)
             _raidInterrupt = false
             RaidStatusUpdate("🔍 Cek raid aktif...", Color3.fromRGB(255,200,60))
             FetchRaidIds()
             task.wait(0.5)
 
-            -- Tunggu sampai ada raid yang cocok dengan difficulty
+            -- Tunggu sampai ada raid yang cocok
             local raidEntry = nil
             while RAID.running and not raidEntry do
+                -- CEK SIEGE INTERRUPT saat menunggu raid (BARU)
+                if _siegeInterrupt then
+                    RaidStatusUpdate("⏸ Pause — Siege sedang berlangsung...", Color3.fromRGB(255,140,0))
+                    while _siegeInterrupt and RAID.running do task.wait(0.5) end
+                    if not RAID.running then break end
+                    RaidStatusUpdate("▶ Lanjut cari raid...", Color3.fromRGB(100,200,255))
+                end
+
                 raidEntry = PickRaidByDifficulty()
                 if not raidEntry then
                     local diff = RAID.difficulty
@@ -4724,6 +4939,20 @@ function StartRaidLoop()
                 end
             end
             if not RAID.running then break end
+
+            -- ── CEK SIEGE INTERRUPT sebelum masuk raid (BARU) ──
+            if _siegeInterrupt then
+                RaidStatusUpdate("⏸ Pause — Siege sedang berlangsung...", Color3.fromRGB(255,140,0))
+                while _siegeInterrupt and RAID.running do task.wait(0.5) end
+                if not RAID.running then break end
+                -- Setelah siege selesai, fetch ulang raid list karena mungkin sudah expired
+                FetchRaidIds()
+                task.wait(0.5)
+                RaidStatusUpdate("▶ Lanjut setelah siege...", Color3.fromRGB(100,200,255))
+                -- Reset raidEntry supaya tidak pakai entry yang mungkin sudah expired
+                -- Loop akan restart dari atas dan pick entry baru
+                continue
+            end
 
             -- Raid ditemukan → pause Mass Attack sekarang
             _raidInterrupt = true
@@ -4755,8 +4984,8 @@ function StartRaidLoop()
             -- ── STEP 4: Teleport ke map raid ──
             local tpMapId = RAID.raidMapId + 100
             RaidStatusUpdate("🌀 TP ke Map "..tpMapId.."...", Color3.fromRGB(180,100,255))
-            if RE_RaidStartTp then
-                pcall(function() RE_RaidStartTp:FireServer({
+            if RE_StartTp then
+                pcall(function() RE_StartTp:FireServer({
                     hostId = MY_USER_ID,
                     mapId  = tpMapId,
                 }) end)
@@ -4773,83 +5002,161 @@ function StartRaidLoop()
                 pcall(function() RE_LocalTpSuccess:InvokeServer() end)
             end
 
-            -- ── STEP 6: Auto attack di dalam raid ──
-            -- Scan & bunuh semua musuh pakai RaidFireDamage
-            -- Sistem akan kirim ChallengeRaidsSuccess saat musuh terakhir mati
-            RAID._raidDone = false
+            -- ── STEP 6: Di dalam raid ──
+            RAID._raidDone  = false
             local _raidSuccess = false
 
-            -- Setup listener sukses/gagal dulu sebelum mulai attack
-            local connS, connF
-            local RE_S = Remotes:FindFirstChild("ChallengeRaidsSuccess")
-            local RE_F = Remotes:FindFirstChild("ChallengeRaidsFail")
-
-            if RE_S then
-                connS = RE_S.OnClientEvent:Connect(function()
-                    RAID._raidDone = true
-                    _raidSuccess   = true
-                    RAID.killed    = RAID.killed + 1
-                    RaidCounterUpdate()
+            local connS2, connF2
+            local RE_S2 = Remotes:FindFirstChild("ChallengeRaidsSuccess")
+            local RE_F2 = Remotes:FindFirstChild("ChallengeRaidsFail")
+            if RE_S2 then
+                connS2 = RE_S2.OnClientEvent:Connect(function()
+                    RAID._raidDone = true; _raidSuccess = true
+                    RAID.killed = RAID.killed + 1; RaidCounterUpdate()
                     RaidStatusUpdate("🏆 Raid sukses! Kill:"..RAID.killed, Color3.fromRGB(100,255,150))
                 end)
             end
-            if RE_F then
-                connF = RE_F.OnClientEvent:Connect(function()
+            if RE_F2 then
+                connF2 = RE_F2.OnClientEvent:Connect(function()
                     RAID._raidDone = true
                     RaidStatusUpdate("💀 Raid gagal, skip...", Color3.fromRGB(255,100,60))
                 end)
             end
 
-            -- Loop attack: scan musuh → tembak semua → tunggu mati → repeat
-            -- Berhenti kalau ChallengeRaidsSuccess/Fail masuk atau timeout 5 menit
-            RaidStatusUpdate("⚔ Auto attack di dalam raid...", Color3.fromRGB(255,180,40))
-            local elapsed = 0
-            local lastAlive = -1
+            if RAID.autoKillBoss then
+                RaidStatusUpdate("⏳ Tunggu map load (10s)...", Color3.fromRGB(160,148,135))
+                for i = 10, 1, -1 do
+                    if not RAID.running then break end
+                    RaidStatusUpdate("⏳ Tunggu map load ("..i.."s)...", Color3.fromRGB(160,148,135))
+                    task.wait(1)
+                end
 
-            while RAID.running and not RAID._raidDone and elapsed < 5 do
-                local enemies = GetRaidEnemies()
-                local alive = #enemies
-
-                if alive == 0 then
-                    -- Tidak ada musuh terdeteksi, tunggu sebentar (mungkin loading)
-                    if elapsed % 5 == 0 then
-                        RaidStatusUpdate("🔍 Scan musuh... ("..elapsed.."s)", Color3.fromRGB(200,200,60))
-                    end
-                    task.wait(0.5)
-                    elapsed = elapsed + 0.5
-                else
-                    -- Ada musuh → serang semua
-                    if alive ~= lastAlive then
-                        lastAlive = alive
-                        RaidStatusUpdate("⚔ Menyerang "..alive.." musuh...", Color3.fromRGB(255,140,40))
-                    end
-                    for _, e in ipairs(enemies) do
-                        if not RAID._raidDone then
-                            local g = e.guid
-                            local p = e.hrp and e.hrp.Position or Vector3.new(0,0,0)
-                            RaidFireDamage(g, p)
+                local skipBoss = not RAID.running
+                if not skipBoss then
+                    local BOSS_NAMES = {
+                        "goblin king","giant arachnid","buryura","igris",
+                        "leader of the polar","polar bear","arch lich","kargalgan",
+                        "baran","beru","grendal","plague","frostborne",
+                        "legia","monarch beastly","beastly fangs","silas",
+                        "unbreakable monarch","yogumunt","monarch of transfiguration",
+                        "transfiguration","antares","ashborn","dominion","absolute",
+                        "monarch","fragment","king","lord","boss",
+                    }
+                    local function IsBoss(modelName)
+                        local lower = modelName:lower()
+                        for _, kw in ipairs(BOSS_NAMES) do
+                            if lower:find(kw, 1, true) then return true end
                         end
+                        return false
                     end
-                    task.wait(0.08)
-                    elapsed = elapsed + 0.08
+
+                    RaidStatusUpdate("🔍 Scan raja...", Color3.fromRGB(200,200,60))
+                    local waitBoss = 0
+                    local boss = nil
+                    while RAID.running and not boss and waitBoss < 8 do
+                        local enemies = GetRaidEnemies()
+                        if #enemies > 0 then
+                            for _, e in ipairs(enemies) do
+                                if IsBoss(e.model.Name) then
+                                    boss = e
+                                    RaidStatusUpdate("👑 Raja: ["..e.model.Name.."] (nama)", Color3.fromRGB(255,80,80))
+                                    break
+                                end
+                            end
+                            if not boss and #enemies == 1 then
+                                boss = enemies[1]
+                                RaidStatusUpdate("👑 1 musuh: ["..boss.model.Name.."]", Color3.fromRGB(255,160,40))
+                            end
+                            if not boss then
+                                local char = LP.Character
+                                local myHrp = char and char:FindFirstChild("HumanoidRootPart")
+                                if myHrp then
+                                    local myPos = myHrp.Position
+                                    local farthestDist = -1
+                                    for _, e in ipairs(enemies) do
+                                        if e.hrp and e.model and e.model.Parent then
+                                            local ok, dist = pcall(function()
+                                                return (e.hrp.Position - myPos).Magnitude
+                                            end)
+                                            if ok and dist > farthestDist then
+                                                farthestDist = dist; boss = e
+                                            end
+                                        end
+                                    end
+                                    if boss then
+                                        RaidStatusUpdate("⚠ Fallback jarak: ["..boss.model.Name.."] "..math.floor(farthestDist).."m", Color3.fromRGB(255,160,40))
+                                    end
+                                else
+                                    local topHealth = -1
+                                    for _, e in ipairs(enemies) do
+                                        local hum = e.model and e.model:FindFirstChildOfClass("Humanoid")
+                                        if hum and hum.MaxHealth > topHealth then
+                                            topHealth = hum.MaxHealth; boss = e
+                                        end
+                                    end
+                                    if boss then
+                                        RaidStatusUpdate("⚠ Fallback MaxHP: ["..boss.model.Name.."]", Color3.fromRGB(255,160,40))
+                                    end
+                                end
+                            end
+                        end
+                        if not boss then task.wait(0.3); waitBoss = waitBoss + 0.3 end
+                    end
+
+                    if boss and RAID.running then
+                        local bossPos = Vector3.new(0,0,0)
+                        pcall(function() bossPos = boss.hrp.Position end)
+                        local char = LP.Character
+                        local myHrp = char and char:FindFirstChild("HumanoidRootPart")
+                        if myHrp then
+                            pcall(function()
+                                myHrp.CFrame = CFrame.new(bossPos + Vector3.new(3, 0, 0))
+                            end)
+                        end
+                        RaidStatusUpdate("👑 TP ke raja — serang!", Color3.fromRGB(255,80,80))
+                        task.wait(0.2)
+
+                        local bossGuid = boss.guid
+                        local bossHum  = boss.model and boss.model:FindFirstChildOfClass("Humanoid")
+                        while RAID.running and not RAID._raidDone do
+                            local dead = not boss.model or not boss.model.Parent
+                                or (bossHum and bossHum.Health <= 0)
+                            if dead then break end
+                            local p = boss.hrp and boss.hrp.Position or bossPos
+                            RaidFireDamage(bossGuid, p)
+                            task.wait(0.08)
+                        end
+
+                        local waited = 0
+                        while RAID.running and not RAID._raidDone and waited < 5 do
+                            task.wait(0.2); waited = waited + 0.2
+                        end
+                    else
+                        RaidStatusUpdate("⚠ Raja tidak ditemukan — lewati", Color3.fromRGB(255,150,50))
+                    end
+
+                    if RAID.running then
+                        RaidStatusUpdate("⏸ Selesai serang raja — jeda 2s...", Color3.fromRGB(160,148,135))
+                        task.wait(2)
+                    end
+                end
+            else
+                RaidStatusUpdate("⚔ Di dalam raid — menunggu hasil...", Color3.fromRGB(255,180,40))
+                local waited = 0
+                while RAID.running and not RAID._raidDone and waited < 300 do
+                    task.wait(1); waited = waited + 1
+                    if waited % 15 == 0 then
+                        RaidStatusUpdate("⚔ Dalam raid... ("..waited.."s)", Color3.fromRGB(255,180,40))
+                    end
                 end
             end
 
-            -- Bersihkan listener
-            if connS then pcall(function() connS:Disconnect() end) end
-            if connF then pcall(function() connF:Disconnect() end) end
+            if connS2 then pcall(function() connS2:Disconnect() end) end
+            if connF2 then pcall(function() connF2:Disconnect() end) end
 
-            if elapsed >= 5 then
-                RaidStatusUpdate("⏰ Timeout — paksa keluar", Color3.fromRGB(255,150,50))
-            end
-            if not RAID.running then break end
-
-            -- ── STEP 6.5: Ambil drop & reward jika sukses ──
             if _raidSuccess then
                 RaidStatusUpdate("🎁 Ambil drop & reward...", Color3.fromRGB(255,220,80))
-                task.wait(0.3)
-                RaidCollectAll()
-                task.wait(0.3)
+                task.wait(0.3); RaidCollectAll(); task.wait(0.3)
                 if RE_GainRaidsRewards then
                     pcall(function() RE_GainRaidsRewards:InvokeServer(1) end)
                 end
@@ -4859,15 +5166,9 @@ function StartRaidLoop()
 
             -- ── STEP 7: Keluar raid ──
             RaidStatusUpdate("🚪 Keluar raid...", Color3.fromRGB(200,100,100))
-            if RE_QuitRaidsMap then
-                pcall(function() RE_QuitRaidsMap:InvokeServer({
-                    currentSlotIndex = RAID.slotIndex or 1,
-                    toMapId          = RAID.raidMapId,
-                }) end)
-            end
             task.wait(0.5)
-            if RE_RaidStartTp then
-                pcall(function() RE_RaidStartTp:FireServer({mapId=RAID.raidMapId}) end)
+            if RE_StartTp then
+                pcall(function() RE_StartTp:FireServer({mapId=RAID.raidMapId}) end)
             end
             if RE_EquipHeroWithData then
                 pcall(function() RE_EquipHeroWithData:FireServer() end)
@@ -4877,20 +5178,22 @@ function StartRaidLoop()
             end
             task.wait(1)
 
-            -- ── Hapus raid yang sudah selesai dari live list ──
             RAID_LIVE[RAID.raidId] = nil
             RebuildRaidList()
 
-            -- ── Selesai 1 loop: lepas interrupt → Mass Attack lanjut dulu ──
             _raidInterrupt = false
             RAID.loopCount = RAID.loopCount + 1
             RaidCounterUpdate()
 
-            -- ── COOLDOWN 30 detik sebelum boleh masuk raid lagi ──
-            -- Selama cooldown, Mass Attack bebas jalan
-            local COOLDOWN = 30
+            local COOLDOWN = 20
             for cd = COOLDOWN, 1, -1 do
                 if not RAID.running then break end
+                -- CEK SIEGE INTERRUPT saat cooldown juga (BARU)
+                if _siegeInterrupt then
+                    RaidStatusUpdate("⏸ Cooldown pause — Siege berlangsung...", Color3.fromRGB(255,140,0))
+                    while _siegeInterrupt and RAID.running do task.wait(0.5) end
+                    if not RAID.running then break end
+                end
                 RaidStatusUpdate("⏳ Cooldown: "..cd.."s lagi... (Mass Attack lanjut)", Color3.fromRGB(160,148,135))
                 if RAID.dot then RAID.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
                 task.wait(1)
@@ -4902,7 +5205,8 @@ function StartRaidLoop()
             end
         end
 
-        _raidInterrupt = false  -- pastikan Mass Attack tidak stuck kalau Auto Raid berhenti
+        _raidInterrupt = false
+        _siegeInterrupt = false  -- safety reset (BARU)
         RAID.running = false
         _raidOn = false
         RaidStatusUpdate("⏹ Idle — Auto Raid berhenti", Color3.fromRGB(160,148,135))
@@ -4910,6 +5214,614 @@ function StartRaidLoop()
     end)
 end
 
+
+-- ══════════════════════════════════════════════════════════════
+
+-- ============================================================
+-- AUTO SIEGE
+-- ============================================================
+
+;(function()
+    local p = NewPanel("autoseige")
+
+-- ══════════════════════════════════════════════════════════════
+-- DROPDOWN 2: AUTO SIEGE  (v3 — remote confirmed dari spy log)
+-- Map siege: 3, 7, 10  (13 menyusul)
+-- Flow per map:
+--   EnterCityRaidMap → StartLocalPlayerTeleport → EquipHeroWithData
+--   → LocalPlayerTeleportSuccess → [Auto Mass Attack] → QuitCityRaidMap
+--   → (Map 7: collect + TP balik)
+-- ══════════════════════════════════════════════════════════════
+
+local siegeOpen = false
+
+-- ── Fetch remote siege (lazy, karena mungkin belum ada saat load) ──
+local function GetSiegeRemote(name)
+    return Remotes:FindFirstChild(name)
+end
+
+-- State utama siege
+local SIEGE = {
+    running    = false,
+    thread     = nil,
+    loop       = 0,
+    killed     = 0,
+    statusLbl  = nil,
+    loopLbl    = nil,
+    killLbl    = nil,
+    dot        = nil,
+    mapActive  = {
+        [3]  = false,
+        [7]  = false,
+        [10] = false,
+        -- [13] = false,  -- menyusul
+    },
+    mapPills  = {},
+    mapKnobs  = {},
+    mapRows   = {},
+    mapStatLbls = {},
+    mapNameLbls = {},
+}
+
+local SIEGE_MAP_NUMS  = {3, 7, 10}  -- 13 menyusul
+local SIEGE_MAP_NAMES = {
+    [3]  = "Map 3  — Goblin Dungeon",
+    [7]  = "Map 7  — Forest of Giants",
+    [10] = "Map 10 — Ice Dungeon",
+    -- [13] = "Map 13 — Demon Castle",
+}
+local SIEGE_MAP_ICONS = {
+    [3]  = "⚔",
+    [7]  = "🌲",
+    [10] = "❄",
+    -- [13] = "😈",
+}
+-- cityRaidId = arg ke EnterCityRaidMap (confirmed spy)
+-- tpMapId    = mapId ke StartLocalPlayerTeleport (confirmed spy)
+-- equipHero  = apakah EquipHeroWithData dipanggil saat enter
+local SIEGE_MAP_DATA = {
+    [3]  = {cityRaidId=1000001, tpMapId=50201, equipHero=false},
+    [7]  = {cityRaidId=1000002, tpMapId=50202, equipHero=true},
+    [10] = {cityRaidId=1000003, tpMapId=50203, equipHero=true},
+    -- [13] = {cityRaidId=1000004, tpMapId=50204, equipHero=true},
+}
+
+-- Helper: list map yang aktif
+local function GetActiveSiegeMaps()
+    local active = {}
+    for _, mn in ipairs(SIEGE_MAP_NUMS) do
+        if SIEGE.mapActive[mn] then table.insert(active, mn) end
+    end
+    return active
+end
+
+-- Helper: update status label
+local function SiegeStatus(txt, col)
+    if SIEGE.statusLbl then
+        SIEGE.statusLbl.Text      = txt
+        SIEGE.statusLbl.TextColor3 = col or Color3.fromRGB(255,200,160)
+    end
+    if SIEGE.dot then
+        SIEGE.dot.BackgroundColor3 = col or Color3.fromRGB(100,100,100)
+    end
+end
+
+-- Helper: update counter
+local function SiegeCounterUpdate()
+    if SIEGE.loopLbl then SIEGE.loopLbl.Text = "Loop: "..SIEGE.loop end
+    if SIEGE.killLbl then SIEGE.killLbl.Text = "Kill: "..SIEGE.killed end
+end
+
+-- Stop siege paksa
+local function StopSiege()
+    SIEGE.running = false
+    if SIEGE.thread then
+        pcall(function() task.cancel(SIEGE.thread) end)
+        SIEGE.thread = nil
+    end
+    SiegeStatus("⏹ Idle — Aktifkan map untuk mulai siege", Color3.fromRGB(100,100,100))
+end
+
+-- ── Per-map flow functions ──
+
+-- Langkah masuk siege — argumen confirmed dari SimpleSpy
+local function SiegeEnter(mn)
+    local data = SIEGE_MAP_DATA[mn]
+    if not data then return end
+
+    -- 1. EnterCityRaidMap(cityRaidId) — langsung number, bukan table
+    local RE_Enter = GetSiegeRemote("EnterCityRaidMap")
+    if RE_Enter then
+        pcall(function() RE_Enter:FireServer(data.cityRaidId) end)
+    end
+    task.wait(0.5)
+
+    -- 2. StartLocalPlayerTeleport({mapId = tpMapId})
+    local RE_STP = GetSiegeRemote("StartLocalPlayerTeleport")
+    if RE_STP then
+        pcall(function() RE_STP:FireServer({mapId = data.tpMapId}) end)
+    end
+    task.wait(0.8)
+
+    -- 3. EquipHeroWithData — hanya map yang butuh (Map 7, 10 yes; Map 3 skip)
+    if data.equipHero then
+        local RE_EHD = GetSiegeRemote("EquipHeroWithData")
+        if RE_EHD then
+            pcall(function() RE_EHD:FireServer() end)
+        end
+        task.wait(0.3)
+    end
+
+    -- 4. LocalPlayerTeleportSuccess
+    local RE_LTS = GetSiegeRemote("LocalPlayerTeleportSuccess")
+    if RE_LTS then
+        pcall(function() RE_LTS:InvokeServer() end)
+    end
+    task.wait(2)  -- beri waktu map load
+end
+
+-- Langkah keluar siege
+local function SiegeQuit(mn, doCollect, doTpBack)
+    local data = SIEGE_MAP_DATA[mn]
+    if not data then return end
+    -- Optional: collect dulu sebelum quit (Map 7)
+    if doCollect then
+        for _, folderName in ipairs({"Golds","Items","Drops","Rewards"}) do
+            local folder = workspace:FindFirstChild(folderName)
+            if folder then
+                for _, obj in ipairs(folder:GetChildren()) do
+                    local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid")
+                    if guid then
+                        pcall(function() RE_CollectItem:InvokeServer(guid) end)
+                        if not (STATE and STATE.hideReward) then pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end) end
+                        task.wait(0.03)
+                    end
+                end
+            end
+        end
+        -- GetDrawHeroId (map 7 specific)
+        local RE_GDH = GetSiegeRemote("GetDrawHeroId")
+        if RE_GDH then
+            pcall(function() RE_GDH:InvokeServer() end)
+        end
+        task.wait(0.2)
+    end
+
+    -- QuitCityRaidMap
+    local RE_Quit = GetSiegeRemote("QuitCityRaidMap")
+    if RE_Quit then
+        pcall(function() RE_Quit:FireServer(data.cityRaidId) end)
+    end
+    task.wait(0.3)
+
+    -- TP balik ke hub (Map 7 specific)
+    if doTpBack then
+        local RE_STP = GetSiegeRemote("StartLocalPlayerTeleport")
+        if RE_STP then
+            pcall(function() RE_STP:FireServer({mapId = data.tpMapId}) end)
+        end
+        task.wait(0.3)
+        local RE_EHD = GetSiegeRemote("EquipHeroWithData")
+        if RE_EHD then pcall(function() RE_EHD:FireServer() end) end
+        task.wait(0.2)
+        local RE_LTS = GetSiegeRemote("LocalPlayerTeleportSuccess")
+        if RE_LTS then pcall(function() RE_LTS:InvokeServer() end) end
+        task.wait(1)
+    end
+end
+
+-- Auto mass attack di dalam siege map
+-- Berjalan selama masih ada musuh ATAU mapActive[mn] masih true
+-- Return: "done" (map bersih), "timeout", "stopped"
+local function SiegeAttackLoop(mn, onStatus)
+    _deadG = {}
+    local start      = SIEGE.killed
+    local emptyT     = 0
+    local lastKill   = SIEGE.killed
+    local stuckT     = 0
+    local elapsed    = 0
+    local MAX_TIME   = 180  -- 3 menit timeout per map
+
+    -- Tunggu musuh muncul dulu (max 8 detik)
+    local waitT = 0
+    while waitT < 8 do
+        if not SIEGE.running or not SIEGE.mapActive[mn] then return "stopped" end
+        if #GetEnemies() > 0 then break end
+        if onStatus then onStatus("Tunggu musuh load ("..math.floor(8-waitT).."s)") end
+        task.wait(0.5); waitT = waitT + 0.5
+    end
+
+    while SIEGE.running and SIEGE.mapActive[mn] do
+        elapsed = elapsed + 0.08
+        if elapsed > MAX_TIME then return "timeout" end
+
+        local alive = 0
+        for _, e in ipairs(GetEnemies()) do
+            if not IsDead(e) then alive = alive + 1 end
+        end
+
+        if alive == 0 then
+            emptyT = emptyT + 0.08
+            if emptyT >= 2 then return "done" end
+            task.wait(0.08); continue
+        end
+        emptyT = 0
+
+        -- Cek stuck
+        if SIEGE.killed > lastKill then
+            lastKill = SIEGE.killed; stuckT = 0
+        else
+            stuckT = stuckT + 0.08
+            if stuckT >= 5 then return "timeout" end
+        end
+
+        if onStatus then onStatus("⚔ "..SIEGE_MAP_NAMES[mn].."  Kill: "..SIEGE.killed.."  Hidup: "..alive) end
+
+        -- Serang semua musuh
+        for _, e in ipairs(GetEnemies()) do
+            if not IsDead(e) then
+                local hrp = e.model and e.model:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local g, pos = e.guid, hrp.Position
+                    task.spawn(function()
+                        FireAllDamage(g, pos)
+                        FireHeroRemotes(g, pos)
+                    end)
+                end
+            end
+        end
+
+        -- Collect item sambil menyerang
+        for _, folderName in ipairs({"Golds","Items","Drops","Rewards"}) do
+            local folder = workspace:FindFirstChild(folderName)
+            if folder then
+                for _, obj in ipairs(folder:GetChildren()) do
+                    local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid")
+                    if guid then
+                        pcall(function() RE_CollectItem:InvokeServer(guid) end)
+                        if not (STATE and STATE.hideReward) then pcall(function() RE_ExtraReward:FireServer({isSell=true, guid=guid}) end) end
+                    end
+                end
+            end
+        end
+
+        task.wait(0.08)
+    end
+    return "stopped"
+end
+
+-- Hook EnemyDeath untuk counter siege
+if RE_Death then
+    RE_Death.OnClientEvent:Connect(function(d)
+        if not d then return end
+        local g = d.enemyGuid or d.guid
+        if g and SIEGE.running then
+            SIEGE.killed = SIEGE.killed + 1
+            SiegeCounterUpdate()
+        end
+    end)
+end
+
+-- ── MAIN SIEGE LOOP ──
+local function StartSiegeLoop()
+    if SIEGE.running then return end
+    SIEGE.running = true
+    SIEGE.loop    = 0
+    SIEGE.killed  = 0
+    SiegeCounterUpdate()
+
+    SIEGE.thread = task.spawn(function()
+        while SIEGE.running do
+            local active = GetActiveSiegeMaps()
+            if #active == 0 then
+                -- Tidak ada map aktif → jangan interrupt raid
+                _siegeInterrupt = false
+                SiegeStatus("⚠ Semua map di-OFF — menunggu...", Color3.fromRGB(255,100,60))
+                task.wait(1); continue
+            end
+
+            for _, mn in ipairs(active) do
+                if not SIEGE.running then break end
+                if not SIEGE.mapActive[mn] then continue end
+
+                SIEGE.loop = SIEGE.loop + 1
+                SiegeCounterUpdate()
+
+                -- ── SET INTERRUPT: Siege mau pakai remote TP → raid pause ──
+                _siegeInterrupt = true
+
+                -- Tunggu sebentar agar raid sempat cek flag dan pause
+                -- sebelum kita fire remote TP
+                task.wait(0.3)
+
+                -- ── ENTER ──
+                SiegeStatus("🌀 Enter siege "..SIEGE_MAP_NAMES[mn].."...", Color3.fromRGB(180,120,255))
+                if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(180,120,255) end
+                SiegeEnter(mn)
+
+                if not SIEGE.running or not SIEGE.mapActive[mn] then
+                    _siegeInterrupt = false  -- safety: lepas interrupt sebelum break
+                    pcall(function()
+                        local d = SIEGE_MAP_DATA[mn]
+                        local RE_Quit = GetSiegeRemote("QuitCityRaidMap")
+                        if RE_Quit and d then RE_Quit:FireServer(d.cityRaidId) end
+                    end)
+                    break
+                end
+
+                -- ── ATTACK ──
+                -- Interrupt tetap true selama attack — raid tidak boleh TP masuk
+                SiegeStatus("⚔ Menyerang — "..SIEGE_MAP_NAMES[mn], Color3.fromRGB(255,80,80))
+                if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(255,80,80) end
+
+                local result = SiegeAttackLoop(mn, function(msg)
+                    SiegeStatus(msg, Color3.fromRGB(255,150,40))
+                end)
+
+                if result == "done" then
+                    SiegeStatus("✅ "..SIEGE_MAP_NAMES[mn].." bersih!", Color3.fromRGB(80,220,80))
+                    if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(80,220,80) end
+                elseif result == "timeout" then
+                    SiegeStatus("⏱ Timeout "..SIEGE_MAP_NAMES[mn].." — lanjut", Color3.fromRGB(255,180,40))
+                end
+
+                task.wait(0.5)
+                if not SIEGE.running then
+                    _siegeInterrupt = false
+                    break
+                end
+
+                -- ── QUIT ──
+                SiegeStatus("🚪 Keluar siege "..SIEGE_MAP_NAMES[mn].."...", Color3.fromRGB(200,100,100))
+
+                local doCollect = (mn == 7)
+                local doTpBack  = (mn == 7)
+                SiegeQuit(mn, doCollect, doTpBack)
+
+                -- ── LEPAS INTERRUPT: siege selesai 1 map → raid boleh jalan lagi ──
+                _siegeInterrupt = false
+
+                -- Cooldown antar map — di sini raid bebas jalan
+                if SIEGE.running then
+                    SiegeStatus("⏳ Jeda 3s — lanjut map berikutnya...", Color3.fromRGB(160,148,135))
+                    if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
+                    task.wait(3)
+                end
+            end
+        end
+
+        -- Siege berhenti total → lepas interrupt supaya raid tidak stuck
+        _siegeInterrupt = false
+        SIEGE.running = false
+        SiegeCounterUpdate()
+        SiegeStatus("⏹ Idle — Auto Siege berhenti", Color3.fromRGB(100,100,100))
+        if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(100,100,100) end
+    end)
+end
+
+
+-- UI
+do -- [FIX] wrapped in do...end to free local registers (avoid "out of local registers" error)
+
+-- ── HEADER ──
+local siegeHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,40))
+siegeHeader.LayoutOrder = 2; Corner(siegeHeader,10); Stroke(siegeHeader,Color3.fromRGB(255,140,0),1,0.4)
+local siegeArrow = Label(siegeHeader,"▶",12,Color3.fromRGB(255,140,0),Enum.Font.GothamBold)
+siegeArrow.Size  = UDim2.new(0,20,1,0); siegeArrow.Position = UDim2.new(0,10,0,0)
+local siegeHeaderLbl = Label(siegeHeader,"🏰  Auto Siege",14,C.TXT,Enum.Font.GothamBold)
+siegeHeaderLbl.Size  = UDim2.new(1,-40,1,0); siegeHeaderLbl.Position = UDim2.new(0,32,0,0)
+
+-- ── BODY ──
+local siegeBody = Frame(p, C.BG2, UDim2.new(1,0,0,0))
+siegeBody.LayoutOrder = 3; siegeBody.ClipsDescendants = true
+Corner(siegeBody,10); Stroke(siegeBody,Color3.fromRGB(255,140,0),1,0.25); siegeBody.Visible = false
+
+local siegeInner = Frame(siegeBody, C.BLACK, UDim2.new(1,-16,0,0))
+siegeInner.BackgroundTransparency = 1; siegeInner.Position = UDim2.new(0,8,0,8)
+local siegeLayout = New("UIListLayout",{
+    Parent = siegeInner, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0,6)
+})
+
+local function ResizeSiegeBody()
+    siegeLayout:ApplyLayout()
+    local h = siegeLayout.AbsoluteContentSize.Y + 16
+    siegeInner.Size = UDim2.new(1,0,0,h)
+    siegeBody.Size  = UDim2.new(1,0,0,h+16)
+end
+
+siegeHeader.MouseButton1Click:Connect(function()
+    siegeOpen = not siegeOpen
+    siegeBody.Visible = siegeOpen
+    siegeArrow.Text   = siegeOpen and "▼" or "▶"
+    TweenService:Create(siegeArrow, TweenInfo.new(0.15), {
+        TextColor3 = siegeOpen and Color3.fromRGB(255,140,0) or C.TXT2
+    }):Play()
+    if siegeOpen then task.defer(ResizeSiegeBody) end
+end)
+
+-- ── STATUS CARD ──
+local siegeStatusCard = Frame(siegeInner, Color3.fromRGB(25,15,5), UDim2.new(1,0,0,0))
+siegeStatusCard.LayoutOrder = 0; siegeStatusCard.AutomaticSize = Enum.AutomaticSize.Y
+Corner(siegeStatusCard,8); Stroke(siegeStatusCard,Color3.fromRGB(255,140,0),1,0.3)
+Padding(siegeStatusCard,8,8,10,10)
+New("UIListLayout",{Parent=siegeStatusCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
+
+-- Dot + status text
+local siegeDotRow = Frame(siegeStatusCard, C.BLACK, UDim2.new(1,0,0,24))
+siegeDotRow.BackgroundTransparency=1; siegeDotRow.LayoutOrder=0
+local siegeDot = Frame(siegeDotRow, Color3.fromRGB(100,100,100), UDim2.new(0,10,0,10))
+siegeDot.Position = UDim2.new(0,0,0.5,-5); Corner(siegeDot,5)
+SIEGE.dot = siegeDot
+local _siegeStatusLbl = Label(siegeDotRow,"⏹ Idle — Aktifkan map untuk mulai siege",10.5,C.TXT2,Enum.Font.Gotham)
+_siegeStatusLbl.Size = UDim2.new(1,-18,1,0); _siegeStatusLbl.Position = UDim2.new(0,18,0,0)
+_siegeStatusLbl.TextTruncate = Enum.TextTruncate.AtEnd
+SIEGE.statusLbl = _siegeStatusLbl
+
+-- Counter: loop & kill
+local siegeCountRow = Frame(siegeStatusCard, Color3.fromRGB(22,12,2), UDim2.new(1,0,0,22))
+siegeCountRow.LayoutOrder=1; Corner(siegeCountRow,6); Stroke(siegeCountRow,C.BORD,1,0.5)
+local _siegeLoopLbl = Label(siegeCountRow,"Loop: 0",10,Color3.fromRGB(255,200,80),Enum.Font.GothamBold)
+_siegeLoopLbl.Size=UDim2.new(0.5,0,1,0); _siegeLoopLbl.Position=UDim2.new(0,8,0,0)
+SIEGE.loopLbl = _siegeLoopLbl
+local _siegeKillLbl = Label(siegeCountRow,"Kill: 0",10,Color3.fromRGB(255,120,60),Enum.Font.GothamBold,Enum.TextXAlignment.Right)
+_siegeKillLbl.Size=UDim2.new(0.5,-8,1,0); _siegeKillLbl.Position=UDim2.new(0.5,0,0,0)
+SIEGE.killLbl = _siegeKillLbl
+
+-- ── HEADER SECTION ──
+local mapHdr = Label(siegeInner,"PILIH MAP SIEGE",10,C.TXT3,Enum.Font.GothamBold)
+mapHdr.LayoutOrder=1; mapHdr.Size=UDim2.new(1,0,0,18)
+
+local mapHint = Label(siegeInner,"Toggle ON = masuk antrian  •  Toggle OFF = skip  •  Bisa ganti saat berjalan",9,C.DIM,Enum.Font.Gotham)
+mapHint.LayoutOrder=2; mapHint.Size=UDim2.new(1,0,0,14)
+
+-- ── TOGGLE CARD PER MAP ──
+for idx, mn in ipairs(SIEGE_MAP_NUMS) do
+    local mn_l  = mn
+    local mapId = SIEGE_MAP_DATA[mn] and SIEGE_MAP_DATA[mn].tpMapId or 0
+
+    local mapRow = Frame(siegeInner, Color3.fromRGB(28,16,4), UDim2.new(1,0,0,52))
+    mapRow.LayoutOrder = 2 + idx; Corner(mapRow,10)
+    Stroke(mapRow, Color3.fromRGB(90,55,0), 1, 0.55)
+    SIEGE.mapRows[mn] = mapRow
+
+    -- Gradient subtle
+    local mg = Instance.new("UIGradient", mapRow)
+    mg.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(40,22,5)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(20,10,2)),
+    }); mg.Rotation = 135
+
+    -- Icon
+    local ico = Label(mapRow, SIEGE_MAP_ICONS[mn], 22, Color3.fromRGB(255,200,80), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+    ico.Size = UDim2.new(0,34,0,34); ico.Position = UDim2.new(0,10,0.5,-17)
+
+    -- Name
+    local nameLbl = Label(mapRow, SIEGE_MAP_NAMES[mn], 11, C.TXT, Enum.Font.GothamBold)
+    nameLbl.Size = UDim2.new(1,-108,0,18); nameLbl.Position = UDim2.new(0,52,0,10)
+    nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+    SIEGE.mapNameLbls[mn] = nameLbl
+
+    -- Sub-status
+    local statLbl = Label(mapRow, "OFF — tidak masuk antrian", 9, C.DIM, Enum.Font.Gotham)
+    statLbl.Size = UDim2.new(1,-108,0,13); statLbl.Position = UDim2.new(0,52,0,30)
+    SIEGE.mapStatLbls[mn] = statLbl
+
+    -- Map ID badge
+    local idBadge = Frame(mapRow, Color3.fromRGB(40,22,5), UDim2.new(0,0,0,16))
+    idBadge.AutomaticSize = Enum.AutomaticSize.X
+    idBadge.Position = UDim2.new(0,52,0,10)
+    idBadge.AnchorPoint = Vector2.new(0,0); idBadge.Visible = false  -- hidden by default
+
+    -- Toggle pill
+    local pill = Btn(mapRow, Color3.fromRGB(55,32,4), UDim2.new(0,50,0,26))
+    pill.AnchorPoint = Vector2.new(1,0.5); pill.Position = UDim2.new(1,-12,0.5,0); Corner(pill,13)
+    Stroke(pill, Color3.fromRGB(100,60,10), 1, 0.4)
+    local knob = Frame(pill, Color3.fromRGB(130,75,18), UDim2.new(0,20,0,20))
+    knob.AnchorPoint = Vector2.new(0,0.5); knob.Position = UDim2.new(0,3,0.5,0); Corner(knob,10)
+    SIEGE.mapPills[mn]  = pill
+    SIEGE.mapKnobs[mn]  = knob
+
+    pill.MouseButton1Click:Connect(function()
+        local on = not SIEGE.mapActive[mn_l]
+        SIEGE.mapActive[mn_l] = on
+
+        -- Animasi toggle
+        TweenService:Create(pill, TweenInfo.new(0.18), {
+            BackgroundColor3 = on and Color3.fromRGB(215,115,0) or Color3.fromRGB(55,32,4)
+        }):Play()
+        TweenService:Create(knob, TweenInfo.new(0.18), {
+            Position         = on and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
+            BackgroundColor3 = on and Color3.fromRGB(255,255,255) or Color3.fromRGB(130,75,18),
+        }):Play()
+
+        -- Warna baris
+        TweenService:Create(mapRow, TweenInfo.new(0.18), {
+            BackgroundColor3 = on and Color3.fromRGB(48,26,4) or Color3.fromRGB(28,16,4)
+        }):Play()
+        local stk = mapRow:FindFirstChildWhichIsA("UIStroke")
+        if stk then
+            stk.Color       = on and Color3.fromRGB(255,140,0) or Color3.fromRGB(90,55,0)
+            stk.Transparency = on and 0.25 or 0.55
+        end
+
+        -- Sub-label
+        statLbl.Text       = on and "ON — masuk antrian ✓" or "OFF — tidak masuk antrian"
+        statLbl.TextColor3  = on and Color3.fromRGB(255,200,60) or C.DIM
+        nameLbl.TextColor3  = on and Color3.fromRGB(255,230,150) or C.TXT
+
+        -- Trigger logic
+        local active = GetActiveSiegeMaps()
+        if on and not SIEGE.running and #active >= 1 then
+            StartSiegeLoop()
+        elseif not on and SIEGE.running and #active == 0 then
+            -- Semua OFF → stop (thread akan exit sendiri di iterasi berikut)
+            SIEGE.running = false
+            SiegeStatus("⏸ Semua map OFF — menunggu...", Color3.fromRGB(255,100,60))
+        end
+        -- Kalau siege sudah jalan, loop otomatis pick-up perubahan mapActive
+    end)
+end
+
+-- ── COMING SOON BADGE (Map 13) ──
+local map13Badge = Frame(siegeInner, Color3.fromRGB(30,15,5), UDim2.new(1,0,0,38))
+map13Badge.LayoutOrder = 7; Corner(map13Badge,10)
+Stroke(map13Badge, Color3.fromRGB(120,60,0), 1, 0.5)
+local badge13Left = Label(map13Badge, "😈", 20, Color3.fromRGB(180,90,20), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+badge13Left.Size = UDim2.new(0,34,1,0); badge13Left.Position = UDim2.new(0,10,0,0)
+local badge13Name = Label(map13Badge, "Map 13 — Demon Castle", 11, Color3.fromRGB(140,80,20), Enum.Font.GothamBold)
+badge13Name.Size = UDim2.new(1,-120,0,18); badge13Name.Position = UDim2.new(0,52,0,5)
+local badge13Sub = Label(map13Badge, "⏳ Remote menyusul — belum tersedia", 9, Color3.fromRGB(120,70,18), Enum.Font.Gotham)
+badge13Sub.Size = UDim2.new(1,-120,0,13); badge13Sub.Position = UDim2.new(0,52,0,22)
+local badge13Pill = Frame(map13Badge, Color3.fromRGB(45,25,5), UDim2.new(0,50,0,26))
+badge13Pill.AnchorPoint = Vector2.new(1,0.5); badge13Pill.Position = UDim2.new(1,-12,0.5,0); Corner(badge13Pill,13)
+Stroke(badge13Pill, Color3.fromRGB(80,45,5), 1, 0.5)
+local badge13Knob = Frame(badge13Pill, Color3.fromRGB(90,50,10), UDim2.new(0,20,0,20))
+badge13Knob.AnchorPoint = Vector2.new(0,0.5); badge13Knob.Position = UDim2.new(0,3,0.5,0); Corner(badge13Knob,10)
+local badge13Soon = Label(map13Badge, "SOON", 8, Color3.fromRGB(140,80,20), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+badge13Soon.Size = UDim2.new(0,50,0,16); badge13Soon.Position = UDim2.new(1,-62,0.5,-8)
+badge13Soon.AnchorPoint = Vector2.new(0,0)
+
+-- ── TOMBOL STOP MANUAL ──
+local siegeStopRow = Frame(siegeInner, Color3.fromRGB(55,10,10), UDim2.new(1,0,0,38))
+siegeStopRow.LayoutOrder = 10; Corner(siegeStopRow,10); Stroke(siegeStopRow,Color3.fromRGB(220,50,50),1,0.4)
+local siegeStopBtn = Btn(siegeStopRow, Color3.fromRGB(170,25,25), UDim2.new(0.55,0,0,26))
+siegeStopBtn.AnchorPoint = Vector2.new(0.5,0.5); siegeStopBtn.Position = UDim2.new(0.5,0,0.5,0)
+Corner(siegeStopBtn,8); Stroke(siegeStopBtn,Color3.fromRGB(255,80,80),1,0.3)
+local siegeStopLbl = Label(siegeStopBtn,"⏹  Stop Semua Siege",11,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+siegeStopLbl.Size = UDim2.new(1,0,1,0)
+
+siegeStopBtn.MouseButton1Click:Connect(function()
+    -- OFF semua map
+    for _, mn in ipairs(SIEGE_MAP_NUMS) do
+        SIEGE.mapActive[mn] = false
+        local pill = SIEGE.mapPills[mn]
+        local knob = SIEGE.mapKnobs[mn]
+        local row  = SIEGE.mapRows[mn]
+        if pill then TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3=Color3.fromRGB(55,32,4)}):Play() end
+        if knob then TweenService:Create(knob, TweenInfo.new(0.16), {
+            Position=UDim2.new(0,3,0.5,0), BackgroundColor3=Color3.fromRGB(130,75,18)
+        }):Play() end
+        if row then
+            TweenService:Create(row, TweenInfo.new(0.16), {BackgroundColor3=Color3.fromRGB(28,16,4)}):Play()
+            local stk = row:FindFirstChildWhichIsA("UIStroke")
+            if stk then stk.Color=Color3.fromRGB(90,55,0); stk.Transparency=0.55 end
+        end
+        if SIEGE.mapStatLbls[mn] then
+            SIEGE.mapStatLbls[mn].Text      = "OFF — tidak masuk antrian"
+            SIEGE.mapStatLbls[mn].TextColor3 = C.DIM
+        end
+        if SIEGE.mapNameLbls[mn] then
+            SIEGE.mapNameLbls[mn].TextColor3 = C.TXT
+        end
+    end
+    StopSiege()
+end)
+
+task.defer(ResizeSiegeBody)
+
+end -- do (siege UI locals)
+
+end)()
 -- ============================================================
 -- PANEL : AUTO RAID (rebuilt — difficulty selector + preferred)
 -- ============================================================
@@ -5201,6 +6113,28 @@ end
             RaidStatusUpdate("⏹ Idle — Auto Raid dimatikan",Color3.fromRGB(160,148,135))
         end
     end)
+
+    -- ── Toggle: Auto Kill Boss ──
+    local bossRow = Frame(p,Color3.fromRGB(35,15,2),UDim2.new(1,0,0,50))
+    bossRow.LayoutOrder=10; Corner(bossRow,10); Stroke(bossRow,Color3.fromRGB(180,60,60),1,0.3)
+    local bL = Label(bossRow,"👑  Auto Kill Boss",13,C.TXT,Enum.Font.GothamBold)
+    bL.Size=UDim2.new(0.65,0,0,20); bL.Position=UDim2.new(0,12,0,8)
+    local bS = Label(bossRow,"TP ke raja & serang sampai mati",10,C.TXT3,Enum.Font.Gotham)
+    bS.Size=UDim2.new(0.65,0,0,14); bS.Position=UDim2.new(0,12,0,28)
+    local bPill = Btn(bossRow,Color3.fromRGB(80,20,20),UDim2.new(0,50,0,26))
+    bPill.AnchorPoint=Vector2.new(1,0.5); bPill.Position=UDim2.new(1,-12,0.5,0); Corner(bPill,13)
+    local bKnob = Frame(bPill,Color3.fromRGB(160,80,80),UDim2.new(0,20,0,20))
+    bKnob.AnchorPoint=Vector2.new(0,0.5); bKnob.Position=UDim2.new(0,3,0.5,0); Corner(bKnob,10)
+    bPill.MouseButton1Click:Connect(function()
+        RAID.autoKillBoss = not RAID.autoKillBoss
+        local on = RAID.autoKillBoss
+        TweenService:Create(bPill,TweenInfo.new(0.16),{BackgroundColor3=on and Color3.fromRGB(200,50,50) or Color3.fromRGB(80,20,20)}):Play()
+        TweenService:Create(bKnob,TweenInfo.new(0.16),{
+            Position=on and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
+            BackgroundColor3=on and Color3.fromRGB(255,255,255) or Color3.fromRGB(160,80,80),
+        }):Play()
+        bossRow.BackgroundColor3=on and Color3.fromRGB(50,10,10) or Color3.fromRGB(35,15,2)
+    end)
 end)()
 
 -- ============================================================
@@ -5311,4 +6245,4 @@ SwitchTab("main")
 RefreshStatus()
 InitAllCaptureLayers()
 
-print("[ ASH GUI ] Loaded — Bubble diganti versi sc_baru (v14.5) — by FLa")
+print("[ ASH GUI ] V21 — Hide Reward fix (ShowReward+DropItems hook) + AutoConfirm/Close fix — by FLa")
