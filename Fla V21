@@ -616,6 +616,7 @@ local RAID = {
     difficulty  = "easy",  -- "easy" | "medium" | "hard" | "preferred"
     preferMaps  = {},      -- set: {[mapNumber]=true} (1..18)
     diffLbl     = nil,     -- label UI difficulty
+    lockedMapId = nil,     -- mapId yang dikunci setelah pick pertama (nil = belum terkunci)
 }
 local _raidOn        = false
 local _raidInterrupt = false  -- true saat raid muncul & Mass Attack harus pause
@@ -632,7 +633,31 @@ local _popupRunning  = false
 local POPUP_CONFIRM_KEYS = {"confirm", "ok", "yes", "lanjut", "proceed", "accept"}
 local POPUP_CLOSE_KEYS   = {"close", "cancel", "batal", "exit", "dismiss", "skip", "no"}
 
-local IGNORE_PATH = {"proximityprompt", "topbar", "tipspanel"}
+-- Popup scanner hanya akan scan ScreenGui yang muncul SETELAH game load
+-- dan bukan termasuk GUI persistent milik game.
+-- Pendekatan: cek apakah parent ScreenGui-nya "baru muncul" (bukan persistent)
+-- Persistent GUI game biasanya sudah ada sejak awal — kita skip semua yang
+-- sudah ada saat script inject. List di-build saat startup.
+local _existingGuis = {}
+task.spawn(function()
+    task.wait(2) -- tunggu game load dulu
+    for _, g in ipairs(PG:GetChildren()) do
+        _existingGuis[g] = true
+    end
+end)
+
+local function _isIgnored(obj)
+    -- Skip GUI milik script kita sendiri
+    local root = obj
+    while root.Parent and root.Parent ~= PG do
+        root = root.Parent
+    end
+    -- root sekarang adalah ScreenGui level pertama di bawah PG
+    if root == ScreenGui then return true end
+    -- Skip semua GUI yang sudah ada saat script inject (persistent game UI)
+    if _existingGuis[root] then return true end
+    return false
+end
 
 local function _fuzzyMatch(text, keys)
     local low = text:lower():gsub("%s+","")
@@ -642,13 +667,6 @@ local function _fuzzyMatch(text, keys)
     return false
 end
 
-local function _isIgnored(obj)
-    local path = obj:GetFullName():lower()
-    for _, ig in ipairs(IGNORE_PATH) do
-        if path:find(ig, 1, true) then return true end
-    end
-    return false
-end
 
 local function ScanAndClickPopup()
     for _, obj in ipairs(PG:GetDescendants()) do
@@ -707,13 +725,25 @@ local function SetupHideRewardHooks()
         return
     end
 
-    -- Hook ShowReward → saat fired, destroy semua GUI baru yang muncul
+    -- Hanya destroy GUI yang BARU muncul (tidak ada saat script inject)
+    -- GUI game persistent sudah ada di _existingGuis → aman dari destroy
+    local function _isRewardGui(gui)
+        -- Jangan destroy GUI yang sudah ada saat inject (persistent game UI)
+        if _existingGuis[gui] then return false end
+        -- Jangan destroy ScreenGui milik kita sendiri
+        if gui == ScreenGui then return false end
+        -- Semua GUI baru yang lain boleh di-destroy saat hideReward ON
+        return true
+    end
+
+    -- Hook ShowReward → saat fired, destroy hanya reward GUI yang muncul
     RE_SR.OnClientEvent:Connect(function()
         if not STATE.hideReward then return end
-        -- Destroy GUI yang muncul dalam window 0.5s setelah event ini
         local conn
         conn = PG.ChildAdded:Connect(function(gui)
-            pcall(function() gui:Destroy() end)
+            if _isRewardGui(gui) then
+                pcall(function() gui:Destroy() end)
+            end
         end)
         task.delay(0.5, function()
             pcall(function() conn:Disconnect() end)
@@ -723,10 +753,7 @@ local function SetupHideRewardHooks()
     -- Juga destroy kalau GUI sudah keburu muncul sebelum kita connect
     PG.ChildAdded:Connect(function(gui)
         if not STATE.hideReward then return end
-        -- Cek apakah ini reward GUI berdasarkan nama
-        local n = gui.Name:lower()
-        if n:find("reward") or n:find("showreward") or n:find("garrison")
-        or n:find("congratu") or n:find("drop") or n:find("prize") then
+        if _isRewardGui(gui) then
             pcall(function() gui:Destroy() end)
         end
     end)
@@ -1537,12 +1564,6 @@ function _ASH_ORN.DoRoll(mi, on)
         return
     end
 
-    if next(ORN.targets[mi]) == nil then
-        setStatus(Color3.fromRGB(255,100,80), "⚠ Pilih target quirk dulu!", Color3.fromRGB(255,100,80))
-        _ASH_ORN.SetToggleOff(mi)
-        return
-    end
-
     ORN.running[mi] = true
 
     LOOPS[key] = task.spawn(function()
@@ -1558,14 +1579,8 @@ function _ASH_ORN.DoRoll(mi, on)
                 setStatus(Color3.fromRGB(255,80,80), "⚠ Remote RerollOrnament tidak ditemukan!", Color3.fromRGB(255,80,80))
                 task.wait(2); continue
             end
-            if next(ORN.targets[mi]) == nil then
-                setStatus(Color3.fromRGB(255,80,80), "⚠ Target kosong! Pilih dulu.", Color3.fromRGB(255,80,80))
-                task.wait(1); continue
-            end
-
             attempt = attempt + 1
-            local targetStr = _ASH_ORN.GetSummary(mi)
-            setStatus(Color3.fromRGB(255,160,30), "🔄 Roll #"..attempt.."  |  Target: "..targetStr, C.ACC2)
+            setStatus(Color3.fromRGB(255,160,30), "🔄 Roll #"..attempt, C.ACC2)
             if ORN.attemptLbls[mi] then
                 ORN.attemptLbls[mi].Text = "Attempt: #"..attempt
                 ORN.attemptLbls[mi].TextColor3 = C.TXT2
@@ -1650,28 +1665,10 @@ function _ASH_ORN.DoRoll(mi, on)
             end
 
             if ORN.lastLbls[mi] then
-                local isTarget = gotId and ORN.targets[mi][gotId]
                 ORN.lastLbls[mi].Text = "Last: "..gotName
-                ORN.lastLbls[mi].TextColor3 = isTarget and Color3.fromRGB(80,220,80) or Color3.fromRGB(180,180,180)
+                ORN.lastLbls[mi].TextColor3 = Color3.fromRGB(180,180,180)
             end
-            if ORN.sumLbls[mi] then ORN.sumLbls[mi].Text = targetStr end
 
-            local hit = gotId ~= nil and ORN.targets[mi][gotId]
-            if hit then
-                ORN.running[mi] = false
-                StopLoop(key)
-                setStatus(Color3.fromRGB(80,220,80), "✅ DAPAT "..gotName.."! ("..attempt.."x roll)", Color3.fromRGB(80,220,80))
-                if ORN.attemptLbls[mi] then
-                    ORN.attemptLbls[mi].Text  = "✅ Selesai dalam "..attempt.." roll"
-                    ORN.attemptLbls[mi].TextColor3 = Color3.fromRGB(80,220,80)
-                end
-                if ORN.lastLbls[mi] then
-                    ORN.lastLbls[mi].Text = "✅ "..gotName
-                    ORN.lastLbls[mi].TextColor3 = Color3.fromRGB(80,220,80)
-                end
-                _ASH_ORN.SetToggleOff(mi)
-                return
-            end
             task.wait(0.1)
         end
         setStatus(Color3.fromRGB(100,100,100), "⏹ Dihentikan ("..attempt.."x roll)", C.TXT2)
@@ -2535,10 +2532,7 @@ local function SetupUniversalSpy()
                     end
                 end
 
-                -- Refresh emptyHint via stored reference
-                if _ASH_ORN.emptyHintRefs and _ASH_ORN.emptyHintRefs[mi] then
-                    _ASH_ORN.emptyHintRefs[mi].Visible = not hasQuirks
-                end
+
             end)
         end
     end
@@ -4226,8 +4220,7 @@ end)()
     infoPad.PaddingLeft=UDim.new(0,10); infoPad.PaddingRight=UDim.new(0,10)
     infoPad.PaddingTop=UDim.new(0,7);   infoPad.PaddingBottom=UDim.new(0,7)
     local infoLbl = Label(infoCard,
-        "💡 Cara pakai: Pilih target quirk di setiap mesin, lalu aktifkan toggle.\n"..
-        "Quirk baru otomatis terdeteksi saat pertama kali roll di game.",
+        "💡 Aktifkan toggle Fastroll untuk mulai roll otomatis tanpa berhenti.",
         9.5, Color3.fromRGB(230,210,170), Enum.Font.Gotham)
     infoLbl.Size = UDim2.new(1,0,0,0); infoLbl.AutomaticSize = Enum.AutomaticSize.Y
     infoLbl.TextWrapped = true; infoLbl.LayoutOrder = 0
@@ -4272,151 +4265,6 @@ end)()
         local divLine = Frame(mCard, Color3.fromRGB(60,60,60), UDim2.new(1,0,0,1))
         divLine.LayoutOrder = 3; divLine.BackgroundTransparency = 0.5
 
-        -- Target dropdown
-        local tRow = Frame(mCard, C.BG2, UDim2.new(1,0,0,32))
-        tRow.LayoutOrder = 4; Corner(tRow,6)
-        local tLbl = Label(tRow,"🎯 Target:",11,C.TXT,Enum.Font.GothamBold)
-        tLbl.Size = UDim2.new(0,72,1,0); tLbl.Position = UDim2.new(0,8,0,0)
-
-        local tDdBtn = Btn(tRow, C.DD_BG, UDim2.new(1,-88,0,24))
-        tDdBtn.Position = UDim2.new(0,80,0.5,-12); Corner(tDdBtn,5); Stroke(tDdBtn,C.BORD2,1,0.3)
-        local tDdLbl = Label(tDdBtn,"-- pilih quirk --",10,C.TXT2,Enum.Font.Gotham,Enum.TextXAlignment.Left)
-        tDdLbl.Size = UDim2.new(1,-20,1,0); tDdLbl.Position = UDim2.new(0,7,0,0)
-        tDdLbl.TextTruncate = Enum.TextTruncate.AtEnd
-        ORN.sumLbls[mi] = tDdLbl
-        local tArrow = Label(tDdBtn,"▼",9,C.ACC,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-        tArrow.Size = UDim2.new(0,14,1,0); tArrow.Position = UDim2.new(1,-16,0,0)
-
-        -- Pesan jika list kosong
-        local emptyHint = Label(mCard,
-            "⚠ Belum ada quirk terdeteksi.\n\n📌 Cara scan quirk:\n1. Pergi ke mesin " .. mInfo.name .. " di game\n2. Klik Reroll / Roll 1x secara manual\n3. Quirk otomatis muncul di dropdown sini\n\n💡 Script sudah aktif memantau — tidak perlu reload.",
-            9, Color3.fromRGB(255,180,80), Enum.Font.Gotham)
-        emptyHint.Size = UDim2.new(1,0,0,0); emptyHint.AutomaticSize = Enum.AutomaticSize.Y
-        emptyHint.TextWrapped = true; emptyHint.LayoutOrder = 5
-        emptyHint.TextXAlignment = Enum.TextXAlignment.Left
-        -- Simpan ref untuk refresh dari HandleResponse
-        _ASH_ORN.emptyHintRefs[mi] = emptyHint
-
-        local function onTargetChange()
-            local names = {}
-            for id in pairs(ORN.targets[mi_l]) do
-                table.insert(names, _ASH_ORN.QUIRK_MAP[id] or ("ID:"..tostring(id)))
-            end
-            table.sort(names)
-            tDdLbl.Text = #names > 0 and table.concat(names," / ") or "-- pilih quirk --"
-            tDdLbl.TextColor3 = #names > 0 and C.ACC2 or C.TXT2
-
-            -- Update emptyHint visibility
-            local hasQuirks = #_ASH_ORN.QUIRK_LIST[mi_l] > 0
-            emptyHint.Visible = not hasQuirks
-
-            if ORN.running[mi_l] and ORN.statLbls[mi_l] then
-                if #names == 0 then
-                    ORN.statLbls[mi_l].Text = "⚠ Target dikosongkan!"
-                    ORN.statLbls[mi_l].TextColor3 = Color3.fromRGB(255,100,80)
-                end
-            end
-        end
-
-        -- Dropdown dengan refresh list dinamis
-        tDdBtn.MouseButton1Click:Connect(function()
-            CloseActiveDD()
-            -- Update emptyHint sebelum buka DD
-            emptyHint.Visible = #_ASH_ORN.QUIRK_LIST[mi_l] == 0
-            if #_ASH_ORN.QUIRK_LIST[mi_l] == 0 then
-                -- Tampilkan info saja
-                return
-            end
-            local list = _ASH_ORN.QUIRK_LIST[mi_l]
-            local maxSel = 3
-            local absPos  = tDdBtn.AbsolutePosition
-            local absSize = tDdBtn.AbsoluteSize
-            local ITEM_H  = 28
-            local contentH = #list * (ITEM_H + 2) + 42
-            local scrollH  = math.min(contentH, 200)
-            local HEADER_H = 32
-
-            local popup = Instance.new("Frame")
-            popup.Parent = DDLayer; popup.BackgroundColor3 = C.DD_BG; popup.BorderSizePixel = 0
-            popup.Size = UDim2.new(0, absSize.X+30, 0, HEADER_H+scrollH)
-            popup.Position = UDim2.new(0, absPos.X, 0, absPos.Y+absSize.Y+3)
-            popup.ZIndex = 9999; popup.ClipsDescendants = true
-            Corner(popup,8); Stroke(popup,C.BORD2,1,0.2)
-
-            local hdr = Frame(popup,Color3.fromRGB(90,30,0),UDim2.new(1,0,0,HEADER_H)); hdr.ZIndex=9999
-            local countLbl = Label(hdr,"0/"..maxSel.." dipilih",10.5,C.ACC2,Enum.Font.GothamBold)
-            countLbl.Size=UDim2.new(0.6,0,1,0); countLbl.Position=UDim2.new(0,8,0,0); countLbl.ZIndex=9999
-            local clrBtn = Btn(hdr,Color3.fromRGB(180,50,50),UDim2.new(0,50,0,20))
-            clrBtn.Position=UDim2.new(1,-56,0.5,-10); Corner(clrBtn,5); clrBtn.ZIndex=9999
-            local cL = Label(clrBtn,"Clear",10,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-            cL.Size=UDim2.new(1,0,1,0); cL.ZIndex=9999
-
-            local sf = Instance.new("ScrollingFrame")
-            sf.Parent=popup; sf.BackgroundTransparency=1; sf.BorderSizePixel=0
-            sf.Position=UDim2.new(0,0,0,HEADER_H); sf.Size=UDim2.new(1,0,0,scrollH)
-            sf.CanvasSize=UDim2.new(0,0,0,contentH)
-            sf.ScrollBarThickness=6; sf.ScrollBarImageColor3=C.ACC
-            sf.ScrollingDirection=Enum.ScrollingDirection.Y; sf.ZIndex=9999
-            Instance.new("UIListLayout",sf).SortOrder=Enum.SortOrder.LayoutOrder
-            local sfp=Instance.new("UIPadding",sf)
-            sfp.PaddingTop=UDim.new(0,4); sfp.PaddingBottom=UDim.new(0,4)
-            sfp.PaddingLeft=UDim.new(0,4); sfp.PaddingRight=UDim.new(0,8)
-
-            local rowRefs = {}
-            local selTable = ORN.targets[mi_l]
-
-            local function UpdateCount()
-                local n=0; for _ in pairs(selTable) do n=n+1 end
-                countLbl.Text=n.."/"..maxSel.." dipilih"
-                countLbl.TextColor3=n>=maxSel and Color3.fromRGB(255,100,80) or C.ACC2
-            end
-
-            for _, q in ipairs(list) do
-                local qRow=Btn(sf,C.DD_BG,UDim2.new(1,-8,0,ITEM_H)); qRow.ZIndex=9999; Corner(qRow,5)
-                local tBox=Frame(qRow,C.SEL_BG,UDim2.new(0,16,0,16))
-                tBox.Position=UDim2.new(0,6,0.5,-8); Corner(tBox,3); tBox.ZIndex=9999; Stroke(tBox,C.BORD2,1,0.4)
-                local tMark=Label(tBox,"✓",11,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-                tMark.Size=UDim2.new(1,0,1,0); tMark.ZIndex=9999
-                local isSel=(selTable[q.id]==true)
-                tMark.Visible=isSel
-                local qLbl=Label(qRow,"  "..(q.name or "?"),11,isSel and C.ACC2 or C.TXT,Enum.Font.Gotham)
-                qLbl.Size=UDim2.new(1,-30,1,0); qLbl.Position=UDim2.new(0,28,0,0); qLbl.ZIndex=9999
-                if isSel then qRow.BackgroundColor3=Color3.fromRGB(140,52,0) end
-                rowRefs[q.id]={bg=qRow,tick=tMark,lbl=qLbl}
-
-                local qid=q.id
-                qRow.MouseButton1Click:Connect(function()
-                    if selTable[qid] then
-                        selTable[qid]=nil
-                    else
-                        local n=0; for _ in pairs(selTable) do n=n+1 end
-                        if n>=maxSel then
-                            local old=countLbl.Text
-                            countLbl.Text="MAX "..maxSel.." tercapai!"; countLbl.TextColor3=Color3.fromRGB(255,60,60)
-                            task.delay(1.2,function() UpdateCount() end); return
-                        end
-                        selTable[qid]=true
-                    end
-                    for k2,ref in pairs(rowRefs) do
-                        local s2=(selTable[k2]==true)
-                        ref.bg.BackgroundColor3=s2 and Color3.fromRGB(140,52,0) or C.DD_BG
-                        ref.tick.Visible=s2; ref.lbl.TextColor3=s2 and C.ACC2 or C.TXT
-                    end
-                    UpdateCount(); onTargetChange()
-                end)
-            end
-            UpdateCount()
-            clrBtn.MouseButton1Click:Connect(function()
-                for k2 in pairs(selTable) do selTable[k2]=nil end
-                for _,ref in pairs(rowRefs) do
-                    ref.bg.BackgroundColor3=C.DD_BG; ref.tick.Visible=false; ref.lbl.TextColor3=C.TXT
-                end
-                UpdateCount(); onTargetChange()
-            end)
-            DDLayer.Visible=true
-            _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
-        end)
-
         -- Enable toggle
         local enRow = Frame(mCard, Color3.fromRGB(40,25,10), UDim2.new(1,0,0,34))
         enRow.LayoutOrder = 6; Corner(enRow,8); Stroke(enRow,ORN_COLORS[mi],1,0.7)
@@ -4444,8 +4292,6 @@ end)()
             _ASH_ORN.DoRoll(mi_l, enOn)
         end)
 
-        -- Init emptyHint visibility
-        emptyHint.Visible = #_ASH_ORN.QUIRK_LIST[mi] == 0
         task.defer(ResizeOrnBody)
     end
 
@@ -4605,17 +4451,32 @@ local function PickRaidByDifficulty()
     local diff = RAID.difficulty
 
     if diff == "easy" then
-        -- Map paling kecil (index pertama, sudah sorted ascending)
-        return RAID_ID_LIST[1]
+        -- Rank paling rendah (cari rank terkecil dari semua entry)
+        local best = nil
+        for _, r in ipairs(RAID_ID_LIST) do
+            if best == nil or (r.rank or 1) < (best.rank or 1) then
+                best = r
+            end
+        end
+        return best
 
     elseif diff == "hard" then
-        -- Map paling besar (index terakhir)
-        return RAID_ID_LIST[#RAID_ID_LIST]
+        -- Rank paling tinggi (cari rank terbesar dari semua entry)
+        local best = nil
+        for _, r in ipairs(RAID_ID_LIST) do
+            if best == nil or (r.rank or 1) > (best.rank or 1) then
+                best = r
+            end
+        end
+        return best
 
     elseif diff == "medium" then
-        -- Map di tengah-tengah index
-        local mid = math.ceil(#RAID_ID_LIST / 2)
-        return RAID_ID_LIST[mid]
+        -- Rank di tengah: kumpulkan semua rank unik, pilih yang di tengah
+        local sorted = {}
+        for _, r in ipairs(RAID_ID_LIST) do table.insert(sorted, r) end
+        table.sort(sorted, function(a, b) return (a.rank or 1) < (b.rank or 1) end)
+        local mid = math.ceil(#sorted / 2)
+        return sorted[mid]
 
     elseif diff == "preferred" then
         -- Cari map yang ada di preferMaps player
@@ -4905,10 +4766,11 @@ end
 -- Main loop
 function StartRaidLoop()
     StopRaid()
-    RAID.running   = true
-    RAID.killed    = 0
-    RAID.collected = 0
-    RAID.loopCount = 0
+    RAID.running    = true
+    RAID.killed     = 0
+    RAID.collected  = 0
+    RAID.loopCount  = 0
+    RAID.lockedMapId = nil  -- reset lock setiap kali start ulang
 
     RAID.thread = task.spawn(function()
         while RAID.running do
@@ -4942,16 +4804,37 @@ function StartRaidLoop()
                     RaidStatusUpdate("▶ Lanjut cari raid...", Color3.fromRGB(100,200,255))
                 end
 
-                raidEntry = PickRaidByDifficulty()
-                if not raidEntry then
-                    local diff = RAID.difficulty
-                    if diff == "preferred" then
-                        RaidStatusUpdate("⏳ Preferred: menunggu raid di map pilihan...", Color3.fromRGB(255,160,40))
-                    else
-                        RaidStatusUpdate("⏳ Menunggu notif raid ("..diff..")...", Color3.fromRGB(255,150,50))
+                if RAID.lockedMapId then
+                    -- Sudah pernah masuk raid → tunggu mapId yang sama spawn lagi
+                    for _, r in ipairs(RAID_ID_LIST) do
+                        if r.mapId == RAID.lockedMapId then
+                            raidEntry = r
+                            break
+                        end
                     end
-                    task.wait(1)
+                    if not raidEntry then
+                        local mapNum = RAID.lockedMapId - 50000
+                        RaidStatusUpdate("⏳ Tunggu Map "..mapNum.." spawn lagi...", Color3.fromRGB(255,160,40))
+                    end
+                else
+                    -- Pertama kali → pick sesuai difficulty, lalu kunci
+                    raidEntry = PickRaidByDifficulty()
+                    if raidEntry then
+                        RAID.lockedMapId = raidEntry.mapId
+                        local mapNum = raidEntry.mapId - 50000
+                        RaidStatusUpdate("🔒 Kunci Map "..mapNum.." ("..RAID.difficulty:upper()..")", Color3.fromRGB(100,255,180))
+                        task.wait(0.3)
+                    else
+                        local diff = RAID.difficulty
+                        if diff == "preferred" then
+                            RaidStatusUpdate("⏳ Preferred: menunggu raid di map pilihan...", Color3.fromRGB(255,160,40))
+                        else
+                            RaidStatusUpdate("⏳ Menunggu notif raid ("..diff..")...", Color3.fromRGB(255,150,50))
+                        end
+                    end
                 end
+
+                if not raidEntry then task.wait(1) end
             end
             if not RAID.running then break end
 
@@ -5151,8 +5034,8 @@ function StartRaidLoop()
                     end
 
                     if RAID.running then
-                        RaidStatusUpdate("⏸ Selesai serang raja — jeda 2s...", Color3.fromRGB(160,148,135))
-                        task.wait(2)
+                        RaidStatusUpdate("⏸ Selesai serang raja — jeda 1s...", Color3.fromRGB(160,148,135))
+                        task.wait(1)
                     end
                 end
             else
@@ -6082,6 +5965,7 @@ end)()
             item.MouseButton1Click:Connect(function()
                 curDiff=ii
                 RAID.difficulty=DIFF_KEYS[ii]
+                RAID.lockedMapId=nil  -- reset lock saat ganti difficulty
                 diffDDLbl.Text="  "..DIFF_OPTS[ii]
                 diffDDLbl.TextColor3=DIFF_COLORS[ii]
                 diffDesc.Text=DIFF_DESC[ii]
@@ -6513,9 +6397,9 @@ do
         {6, 410052, "Plague Power"},
         {6, 410053, "Frosh Power"},
         {6, 410054, "Unbreakable Power"},
-        {6, 410055, "Transfiguration Power"},
+        {6, 410057, "Transfiguration Power"},
         {6, 410056, "Destruction Power"},
-        {6, 410057, "Shadow Power"},                  -- ⭐ RAREST
+        {6, 410055, "Shadow Power"},                  -- ⭐ RAREST
     }
     for _, e in ipairs(ORN_KNOWN) do
         _ASH_ORN.AddQuirk(e[1], e[2], e[3])
