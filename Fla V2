@@ -473,6 +473,7 @@ local NAV_ITEMS = {
     {tag="autoseige", ico="🏰", lbl="Siege"},
     {tag="player",   ico="🧍", lbl="Player"},
     {tag="autoroll", ico="🎲", lbl="Reroll"},
+    {tag="claim",    ico="🎁", lbl="Claim"},
     {tag="settings", ico="⚙",  lbl="Settings"},
 }
 
@@ -621,17 +622,17 @@ local _raidInterrupt = false  -- true saat raid muncul & Mass Attack harus pause
 local _siegeInterrupt = false  -- true saat siege pakai remote -> raid pause
 
 -- ============================================================
--- AUTO POPUP SCANNER
--- Scan PlayerGui + CoreGui tiap 0.3s, cari TextButton "Confirm" / "Close"
--- STATE.autoConfirm = true → klik Confirm otomatis
--- STATE.autoClose   = true → klik Close otomatis
--- [FIX] fuzzy match (case-insensitive + contains), interval 0.3s, race condition guard
+-- AUTO CONFIRM / AUTO CLOSE
+-- Scan GUI tiap 0.3s, cari button Confirm/Close
+-- Panggil callback via Activated:Fire() sebagai fallback Delta
 -- ============================================================
 local _popupThread   = nil
-local _popupRunning  = false  -- guard race condition
+local _popupRunning  = false
 
 local POPUP_CONFIRM_KEYS = {"confirm", "ok", "yes", "lanjut", "proceed", "accept"}
 local POPUP_CLOSE_KEYS   = {"close", "cancel", "batal", "exit", "dismiss", "skip", "no"}
+
+local IGNORE_PATH = {"proximityprompt", "topbar", "tipspanel"}
 
 local function _fuzzyMatch(text, keys)
     local low = text:lower():gsub("%s+","")
@@ -641,30 +642,34 @@ local function _fuzzyMatch(text, keys)
     return false
 end
 
+local function _isIgnored(obj)
+    local path = obj:GetFullName():lower()
+    for _, ig in ipairs(IGNORE_PATH) do
+        if path:find(ig, 1, true) then return true end
+    end
+    return false
+end
+
 local function ScanAndClickPopup()
-    local sources = { PG, game:GetService("CoreGui") }
-    for _, src in ipairs(sources) do
-        if not src then continue end
-        local ok, descs = pcall(function() return src:GetDescendants() end)
-        if not ok then continue end
-        for _, obj in ipairs(descs) do
-            if obj:IsA("TextButton") and obj.Visible and obj.Text ~= "" then
-                local txt = obj.Text
-                if STATE.autoConfirm and _fuzzyMatch(txt, POPUP_CONFIRM_KEYS) then
-                    pcall(function() obj.MouseButton1Click:Fire() end)
-                    return
-                end
-                if STATE.autoClose and _fuzzyMatch(txt, POPUP_CLOSE_KEYS) then
-                    pcall(function() obj.MouseButton1Click:Fire() end)
-                    return
-                end
+    for _, obj in ipairs(PG:GetDescendants()) do
+        if obj:IsA("TextButton") and obj.Visible
+        and obj.Text ~= "" and not _isIgnored(obj) then
+            local txt = obj.Text
+            if STATE.autoConfirm and _fuzzyMatch(txt, POPUP_CONFIRM_KEYS) then
+                pcall(function() obj.Activated:Fire() end)
+                pcall(function() obj.MouseButton1Click:Fire() end)
+                return
+            end
+            if STATE.autoClose and _fuzzyMatch(txt, POPUP_CLOSE_KEYS) then
+                pcall(function() obj.Activated:Fire() end)
+                pcall(function() obj.MouseButton1Click:Fire() end)
+                return
             end
         end
     end
 end
 
 local function StartPopupScanner()
-    -- Stop existing thread dengan flag guard (bukan hanya task.cancel)
     _popupRunning = false
     if _popupThread then
         pcall(function() task.cancel(_popupThread) end)
@@ -678,45 +683,55 @@ local function StartPopupScanner()
             task.wait(0.3)
         end
         _popupRunning = false
-        _popupThread = nil
+        _popupThread  = nil
     end)
 end
 
 -- ============================================================
--- HIDE REWARD — Hook ShowReward + DropItems OnClientEvent
--- Blokir GUI reward muncul di client saat STATE.hideReward = true
--- [FIX] Remote sebenarnya adalah ShowReward & DropItems, bukan ExtraReward
+-- HIDE REWARD — Hook ShowReward.OnClientEvent
+-- Saat server kirim ShowReward → kalau hideReward ON:
+--   1. Tangkap event sebelum GUI sempat dibuat
+--   2. Destroy GUI baru yang muncul dalam 0.5s setelah event
 -- ============================================================
-local _showRewardConn = nil
-local _dropItemsConn  = nil
+local _hideRewardHooked = false
 
 local function SetupHideRewardHooks()
-    -- Disconnect old
-    if _showRewardConn then _showRewardConn:Disconnect(); _showRewardConn = nil end
-    if _dropItemsConn  then _dropItemsConn:Disconnect();  _dropItemsConn  = nil end
+    if _hideRewardHooked then return end
+    _hideRewardHooked = true
 
-    -- Hook ShowReward
-    if RE_ShowReward and RE_ShowReward:IsA("RemoteEvent") then
-        _showRewardConn = RE_ShowReward.OnClientEvent:Connect(function(data)
-            if STATE.hideReward then
-                -- Blokir: jangan lakukan apapun (popup tidak akan muncul)
-                return
-            end
-            -- Tidak di-handle disini — biarkan game normal
-        end)
+    local RE_SR = Remotes:FindFirstChild("ShowReward")
+    if not RE_SR then
+        -- Coba lagi setelah beberapa detik (mungkin belum load)
+        task.delay(5, SetupHideRewardHooks)
+        _hideRewardHooked = false
+        return
     end
 
-    -- Hook DropItems
-    if RE_DropItems and RE_DropItems:IsA("RemoteEvent") then
-        _dropItemsConn = RE_DropItems.OnClientEvent:Connect(function(data)
-            if STATE.hideReward then
-                return
-            end
+    -- Hook ShowReward → saat fired, destroy semua GUI baru yang muncul
+    RE_SR.OnClientEvent:Connect(function()
+        if not STATE.hideReward then return end
+        -- Destroy GUI yang muncul dalam window 0.5s setelah event ini
+        local conn
+        conn = PG.ChildAdded:Connect(function(gui)
+            pcall(function() gui:Destroy() end)
         end)
-    end
+        task.delay(0.5, function()
+            pcall(function() conn:Disconnect() end)
+        end)
+    end)
+
+    -- Juga destroy kalau GUI sudah keburu muncul sebelum kita connect
+    PG.ChildAdded:Connect(function(gui)
+        if not STATE.hideReward then return end
+        -- Cek apakah ini reward GUI berdasarkan nama
+        local n = gui.Name:lower()
+        if n:find("reward") or n:find("showreward") or n:find("garrison")
+        or n:find("congratu") or n:find("drop") or n:find("prize") then
+            pcall(function() gui:Destroy() end)
+        end
+    end)
 end
 
--- Jalankan hooks saat script load
 task.defer(SetupHideRewardHooks)
 
 RAID.autoKillBoss    = false  -- toggle: teleport ke raja + auto attack sampai mati
@@ -2839,7 +2854,7 @@ end
             BackgroundColor3=on and Color3.fromRGB(255,255,255) or C.DK
         }):Play()
         _hrIcon.Text = on and "🙈" or "🎁"
-        _hrSub.Text  = on and "ON — ShowReward & DropItems diblokir" or "OFF — reward muncul normal"
+        _hrSub.Text  = on and "ON — popup reward tidak akan muncul" or "OFF — reward muncul normal"
         _hrSub.TextColor3 = on and C.GRN or C.DIM
         SetupHideRewardHooks()
     end)
@@ -5280,10 +5295,10 @@ local SIEGE_MAP_ICONS = {
 -- tpMapId    = mapId ke StartLocalPlayerTeleport (confirmed spy)
 -- equipHero  = apakah EquipHeroWithData dipanggil saat enter
 local SIEGE_MAP_DATA = {
-    [3]  = {cityRaidId=1000001, tpMapId=50201, equipHero=false},
-    [7]  = {cityRaidId=1000002, tpMapId=50202, equipHero=true},
-    [10] = {cityRaidId=1000003, tpMapId=50203, equipHero=true},
-    -- [13] = {cityRaidId=1000004, tpMapId=50204, equipHero=true},
+    [3]  = {cityRaidId=1000001, tpMapId=50201, backMapId=50003, equipHero=false},
+    [7]  = {cityRaidId=1000002, tpMapId=50202, backMapId=50007, equipHero=true},
+    [10] = {cityRaidId=1000003, tpMapId=50203, backMapId=50010, equipHero=true},
+    [13] = {cityRaidId=1000004, tpMapId=50204, backMapId=50013, equipHero=true},
 }
 
 -- Helper: list map yang aktif
@@ -5315,6 +5330,7 @@ end
 -- Stop siege paksa
 local function StopSiege()
     SIEGE.running = false
+    _siegeInterrupt = false  -- [FIX] selalu lepas interrupt agar raid tidak stuck
     if SIEGE.thread then
         pcall(function() task.cancel(SIEGE.thread) end)
         SIEGE.thread = nil
@@ -5379,26 +5395,21 @@ local function SiegeQuit(mn, doCollect, doTpBack)
                 end
             end
         end
-        -- GetDrawHeroId (map 7 specific)
-        local RE_GDH = GetSiegeRemote("GetDrawHeroId")
-        if RE_GDH then
-            pcall(function() RE_GDH:InvokeServer() end)
+        -- GetDrawHeroId (map 7 specific only — tidak ada di map 10)
+        if mn == 7 then
+            local RE_GDH = GetSiegeRemote("GetDrawHeroId")
+            if RE_GDH then
+                pcall(function() RE_GDH:InvokeServer() end)
+            end
+            task.wait(0.2)
         end
-        task.wait(0.2)
     end
 
-    -- QuitCityRaidMap
-    local RE_Quit = GetSiegeRemote("QuitCityRaidMap")
-    if RE_Quit then
-        pcall(function() RE_Quit:FireServer(data.cityRaidId) end)
-    end
-    task.wait(0.3)
-
-    -- TP balik ke hub (Map 7 specific)
+    -- TP balik ke hub DULU (sesuai spy: TP → Equip → Success → Quit)
     if doTpBack then
         local RE_STP = GetSiegeRemote("StartLocalPlayerTeleport")
         if RE_STP then
-            pcall(function() RE_STP:FireServer({mapId = data.tpMapId}) end)
+            pcall(function() RE_STP:FireServer({mapId = data.backMapId}) end)
         end
         task.wait(0.3)
         local RE_EHD = GetSiegeRemote("EquipHeroWithData")
@@ -5406,8 +5417,15 @@ local function SiegeQuit(mn, doCollect, doTpBack)
         task.wait(0.2)
         local RE_LTS = GetSiegeRemote("LocalPlayerTeleportSuccess")
         if RE_LTS then pcall(function() RE_LTS:InvokeServer() end) end
-        task.wait(1)
+        task.wait(0.5)
     end
+
+    -- QuitCityRaidMap (sesuai spy: paling terakhir)
+    local RE_Quit = GetSiegeRemote("QuitCityRaidMap")
+    if RE_Quit then
+        pcall(function() RE_Quit:FireServer(data.cityRaidId) end)
+    end
+    task.wait(0.5)
 end
 
 -- Auto mass attack di dalam siege map
@@ -5510,13 +5528,22 @@ local function StartSiegeLoop()
     SIEGE.killed  = 0
     SiegeCounterUpdate()
 
+    -- [FIX] Watchdog: kalau siege berhenti tiba-tiba (error/cancel),
+    -- pastikan _siegeInterrupt direset supaya raid tidak stuck selamanya
+    task.spawn(function()
+        repeat task.wait(1) until not SIEGE.running
+        if _siegeInterrupt then
+            _siegeInterrupt = false
+        end
+    end)
+
     SIEGE.thread = task.spawn(function()
         while SIEGE.running do
             local active = GetActiveSiegeMaps()
             if #active == 0 then
-                -- Tidak ada map aktif → jangan interrupt raid
+                -- Tidak ada map aktif → jangan interrupt raid, tunggu saja
                 _siegeInterrupt = false
-                SiegeStatus("⚠ Semua map di-OFF — menunggu...", Color3.fromRGB(255,100,60))
+                SiegeStatus("⏳ Menunggu siege tersedia...", Color3.fromRGB(160,148,135))
                 task.wait(1); continue
             end
 
@@ -5574,8 +5601,8 @@ local function StartSiegeLoop()
                 -- ── QUIT ──
                 SiegeStatus("🚪 Keluar siege "..SIEGE_MAP_NAMES[mn].."...", Color3.fromRGB(200,100,100))
 
-                local doCollect = (mn == 7)
-                local doTpBack  = (mn == 7)
+                local doCollect = true   -- semua map collect (confirmed spy map 7 & 10)
+                local doTpBack  = true   -- semua map TP balik (pola confirmed: backMapId = 500XX)
                 SiegeQuit(mn, doCollect, doTpBack)
 
                 -- ── LEPAS INTERRUPT: siege selesai 1 map → raid boleh jalan lagi ──
@@ -5586,6 +5613,19 @@ local function StartSiegeLoop()
                     SiegeStatus("⏳ Jeda 3s — lanjut map berikutnya...", Color3.fromRGB(160,148,135))
                     if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
                     task.wait(3)
+                end
+            end
+
+            -- Semua map selesai satu putaran → tunggu siege buka lagi dari server
+            if SIEGE.running then
+                -- Countdown 30 detik sebelum coba masuk siege lagi
+                -- (server biasanya butuh waktu reset siege)
+                local waitSec = 30
+                for i = waitSec, 1, -1 do
+                    if not SIEGE.running then break end
+                    SiegeStatus("🔄 Semua map selesai — retry dalam "..i.."s...", Color3.fromRGB(160,200,255))
+                    if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(100,150,255) end
+                    task.wait(1)
                 end
             end
         end
@@ -6134,6 +6174,246 @@ end)()
             BackgroundColor3=on and Color3.fromRGB(255,255,255) or Color3.fromRGB(160,80,80),
         }):Play()
         bossRow.BackgroundColor3=on and Color3.fromRGB(50,10,10) or Color3.fromRGB(35,15,2)
+    end)
+end)()
+
+-- ============================================================
+-- PANEL : CLAIM REWARD
+-- ============================================================
+;(function()
+    local p = NewPanel("claim")
+    SectionHeader(p,"AUTO CLAIM REWARD",0)
+
+    -- Status label
+    local statusCard = Frame(p, Color3.fromRGB(25,12,2), UDim2.new(1,0,0,32))
+    statusCard.LayoutOrder = 1; Corner(statusCard,8); Stroke(statusCard,C.ACC,1,0.3)
+    local statusLbl = Label(statusCard,"⏹ Idle — tekan Claim All untuk mulai",10,C.TXT2,Enum.Font.Gotham)
+    statusLbl.Size = UDim2.new(1,-16,1,0); statusLbl.Position = UDim2.new(0,8,0,0)
+
+    -- Log panel (snipping output)
+    local logCard = Frame(p, Color3.fromRGB(15,8,2), UDim2.new(1,0,0,120))
+    logCard.LayoutOrder = 2; Corner(logCard,8); Stroke(logCard,C.BORD,1,0.4)
+    local logScroll = New("ScrollingFrame",{
+        Parent=logCard, Size=UDim2.new(1,-8,1,-8),
+        Position=UDim2.new(0,4,0,4),
+        BackgroundTransparency=1, BorderSizePixel=0,
+        ScrollBarThickness=3, ScrollBarImageColor3=C.ACC,
+        CanvasSize=UDim2.new(0,0,0,0),
+        AutomaticCanvasSize=Enum.AutomaticSize.Y,
+    })
+    ListLayout(logScroll,nil,Enum.HorizontalAlignment.Left,2)
+    local logLines = {}
+
+    local function Log(msg, col)
+        -- Print ke console juga
+        print("[ASH CLAIM] " .. msg)
+        -- Tambah ke GUI log
+        local lbl = Label(logScroll, msg, 8, col or C.TXT2, Enum.Font.RobotoMono)
+        lbl.Size = UDim2.new(1,0,0,13)
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.TextTruncate = Enum.TextTruncate.AtEnd
+        table.insert(logLines, lbl)
+        -- Hapus baris lama kalau lebih dari 30
+        if #logLines > 30 then
+            logLines[1]:Destroy()
+            table.remove(logLines, 1)
+        end
+        -- Auto scroll ke bawah
+        task.defer(function()
+            logScroll.CanvasPosition = Vector2.new(0, logScroll.AbsoluteCanvasSize.Y)
+        end)
+    end
+
+    local function SetStatus(msg, col)
+        statusLbl.Text = msg
+        statusLbl.TextColor3 = col or C.TXT2
+        Log(msg, col)
+    end
+
+    -- Helper buat row claim
+    local function ClaimRow(order, icon, title, desc, fn)
+        local row = Frame(p, C.SURFACE, UDim2.new(1,0,0,54))
+        row.LayoutOrder = order; Corner(row,9); Stroke(row,C.BORD,1,0.3)
+        Padding(row,6,6,10,8)
+
+        local ico = Label(row, icon, 18, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+        ico.Size = UDim2.new(0,24,0,24); ico.Position = UDim2.new(0,0,0.5,-12)
+
+        local ttl = Label(row, title, 11, C.TXT, Enum.Font.GothamBold)
+        ttl.Size = UDim2.new(1,-90,0,16); ttl.Position = UDim2.new(0,28,0,4)
+
+        local sub = Label(row, desc, 9, C.DIM, Enum.Font.Gotham)
+        sub.Size = UDim2.new(1,-90,0,13); sub.Position = UDim2.new(0,28,0,22)
+
+        local btn = Btn(row, C.ACC, UDim2.new(0,52,0,26))
+        btn.AnchorPoint = Vector2.new(1,0.5); btn.Position = UDim2.new(1,-6,0.5,0)
+        Corner(btn,8)
+        local btnLbl = Label(btn,"CLAIM",9,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+        btnLbl.Size = UDim2.new(1,0,1,0)
+
+        btn.MouseButton1Click:Connect(function()
+            btn.BackgroundColor3 = C.DIM
+            btnLbl.Text = "..."
+            task.spawn(function()
+                fn(sub, SetStatus)
+                btn.BackgroundColor3 = C.GRN
+                btnLbl.Text = "✓"
+                task.wait(2)
+                btn.BackgroundColor3 = C.ACC
+                btnLbl.Text = "CLAIM"
+            end)
+        end)
+
+        return row, sub
+    end
+
+    -- ── Online Reward ──
+    ClaimRow(2, "🌐", "Online Reward", "Klaim semua online reward (id 1-200)", function(sub, status)
+        local RE = Remotes:FindFirstChild("ClaimOnlineReward")
+        if not RE then status("❌ Remote tidak ditemukan", C.RED); return end
+        local claimed = 0
+        status("⏳ Claiming online reward...", C.YEL)
+        for id = 1, 200 do
+            local ok, res = pcall(function()
+                return RE:InvokeServer({id = tostring(id)})
+            end)
+            if ok and res then
+                claimed = claimed + 1
+                Log("🌐 id="..id.." → "..tostring(res), C.GRN)
+                status("🌐 id "..id.." claimed ("..claimed.." total)", C.GRN)
+            elseif ok and res == false then
+                Log("  id="..id.." → skip (sudah diklaim / tidak ada)", C.DIM)
+            end
+            task.wait(0.1)
+        end
+        status("✅ Online Reward selesai — "..claimed.." diklaim", C.GRN)
+        sub.Text = "Terakhir: "..claimed.." reward diklaim"
+        sub.TextColor3 = C.GRN
+    end)
+
+    -- ── Season Task Reward ──
+    ClaimRow(3, "📋", "Season Task Reward", "Klaim semua season task reward", function(sub, status)
+        local RE = Remotes:FindFirstChild("ClaimSeasonTaskReward")
+        if not RE then status("❌ Remote tidak ditemukan", C.RED); return end
+        status("⏳ Claiming season task reward...", C.YEL)
+        local ok, res = pcall(function() return RE:FireServer() end)
+        Log("📋 SeasonTask → ok="..tostring(ok).." res="..tostring(res), ok and C.GRN or C.RED)
+        task.wait(0.5)
+        status("✅ Season Task Reward diklaim", C.GRN)
+        sub.Text = "Terakhir: berhasil diklaim"
+        sub.TextColor3 = C.GRN
+    end)
+
+    -- ── Season Pass Reward ──
+    ClaimRow(4, "🎫", "Season Pass Reward", "Klaim semua season pass reward", function(sub, status)
+        local RE = Remotes:FindFirstChild("ClaimSeasonPassReward")
+        if not RE then status("❌ Remote tidak ditemukan", C.RED); return end
+        status("⏳ Claiming season pass reward...", C.YEL)
+        local ok, res = pcall(function() return RE:FireServer() end)
+        Log("🎫 SeasonPass → ok="..tostring(ok).." res="..tostring(res), ok and C.GRN or C.RED)
+        task.wait(0.5)
+        status("✅ Season Pass Reward diklaim", C.GRN)
+        sub.Text = "Terakhir: berhasil diklaim"
+        sub.TextColor3 = C.GRN
+    end)
+
+    -- ── 7 Day Login Reward ──
+    ClaimRow(5, "📅", "7 Day Login Reward", "Klaim semua hari (1-7)", function(sub, status)
+        local RE = Remotes:FindFirstChild("ClaimSevenLoginReward")
+        if not RE then status("❌ Remote tidak ditemukan", C.RED); return end
+        local claimed = 0
+        status("⏳ Claiming 7 day login reward...", C.YEL)
+        for day = 1, 7 do
+            local ok, res = pcall(function() return RE:FireServer(day) end)
+            Log("📅 Day "..day.." → ok="..tostring(ok).." res="..tostring(res), ok and C.GRN or C.DIM)
+            if ok then claimed = claimed + 1 end
+            task.wait(0.3)
+        end
+        status("✅ 7 Day Login selesai — "..claimed.."/7 diklaim", C.GRN)
+        sub.Text = "Terakhir: "..claimed.."/7 hari diklaim"
+        sub.TextColor3 = C.GRN
+    end)
+
+    -- ── Raid Reward ──
+    ClaimRow(6, "⚡", "Gain Raids Reward", "Klaim reward raid aktif", function(sub, status)
+        local RE = Remotes:FindFirstChild("GainRaidsRewards")
+        if not RE then status("❌ Remote tidak ditemukan", C.RED); return end
+        status("⏳ Claiming raid reward...", C.YEL)
+        local ok, res = pcall(function() return RE:InvokeServer(1) end)
+        Log("⚡ RaidReward → ok="..tostring(ok).." res="..tostring(res), ok and C.GRN or C.RED)
+        task.wait(0.5)
+        if ok then
+            status("✅ Raid Reward diklaim", C.GRN)
+            sub.Text = "Terakhir: berhasil diklaim"
+            sub.TextColor3 = C.GRN
+        else
+            status("⚠ Raid Reward gagal (mungkin tidak ada raid aktif)", C.YEL)
+        end
+    end)
+
+    -- ── Claim ALL button ──
+    local allBtn = Btn(p, C.ACC, UDim2.new(1,0,0,38))
+    allBtn.LayoutOrder = 10; Corner(allBtn,10); Stroke(allBtn,C.ACC2,1,0.2)
+    local allLbl = Label(allBtn,"🎁  CLAIM ALL",13,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    allLbl.Size = UDim2.new(1,0,1,0)
+
+    allBtn.MouseButton1Click:Connect(function()
+        allBtn.BackgroundColor3 = C.DIM
+        allLbl.Text = "⏳ Claiming..."
+        task.spawn(function()
+            SetStatus("⏳ Claim All dimulai...", C.YEL)
+
+            -- Online Reward
+            local RE1 = Remotes:FindFirstChild("ClaimOnlineReward")
+            if RE1 then
+                SetStatus("🌐 Online Reward...", C.YEL)
+                for id = 1, 200 do
+                    pcall(function() RE1:InvokeServer({id = tostring(id)}) end)
+                    task.wait(0.08)
+                end
+            end
+
+            -- Season Task
+            local RE2 = Remotes:FindFirstChild("ClaimSeasonTaskReward")
+            if RE2 then
+                SetStatus("📋 Season Task...", C.YEL)
+                pcall(function() RE2:FireServer() end)
+                task.wait(0.3)
+            end
+
+            -- Season Pass
+            local RE3 = Remotes:FindFirstChild("ClaimSeasonPassReward")
+            if RE3 then
+                SetStatus("🎫 Season Pass...", C.YEL)
+                pcall(function() RE3:FireServer() end)
+                task.wait(0.3)
+            end
+
+            -- 7 Day Login
+            local RE4 = Remotes:FindFirstChild("ClaimSevenLoginReward")
+            if RE4 then
+                SetStatus("📅 7 Day Login...", C.YEL)
+                for day = 1, 7 do
+                    pcall(function() RE4:FireServer(day) end)
+                    task.wait(0.2)
+                end
+            end
+
+            -- Raid Reward
+            local RE5 = Remotes:FindFirstChild("GainRaidsRewards")
+            if RE5 then
+                SetStatus("⚡ Raid Reward...", C.YEL)
+                pcall(function() RE5:InvokeServer(1) end)
+                task.wait(0.3)
+            end
+
+            SetStatus("✅ Claim All selesai!", C.GRN)
+            allBtn.BackgroundColor3 = C.GRN
+            allLbl.Text = "✅  CLAIM ALL SELESAI"
+            task.wait(3)
+            allBtn.BackgroundColor3 = C.ACC
+            allLbl.Text = "🎁  CLAIM ALL"
+        end)
     end)
 end)()
 
