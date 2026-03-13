@@ -2,9 +2,10 @@
 --   Theme : Full Orange iPhone 17 Pro Max
 --   By    : FLa Project  (Fixed by Assistant)
 --   Platform : Android (Delta) + PC (Xeno) — Full Support
---   [UPDATED] Floating Bubble diganti dengan versi sc_baru (v14.5)
---   [UPDATED] Auto Siege v3 + Siege<>Raid koordinasi (siege prioritas)
---   [UPDATED] Main panel: Hide Reward toggle
+--   [UPDATED v23] Automation panel (Raid+Siege dropdown)
+--   [UPDATED v23] Raid: Snapshot system, difficulty fix, Sukses counter
+--   [UPDATED v23] Settings: Webhook Discord/Telegram
+--   [UPDATED v23] Claim: faster loop, Siege pindah ke Automation
 
 local Players          = game:GetService("Players")
 local TweenService     = game:GetService("TweenService")
@@ -469,8 +470,7 @@ local NAV_ITEMS = {
     {tag="main",     ico="🏠", lbl="Main"},
     {tag="farm",     ico="⚔",  lbl="Farm"},
     {tag="attack",   ico="💥", lbl="Attack"},
-    {tag="autoraid", ico="⚡", lbl="Raid"},
-    {tag="autoseige", ico="🏰", lbl="Siege"},
+    {tag="autoraid", ico="⚡", lbl="Automation"},
     {tag="player",   ico="🧍", lbl="Player"},
     {tag="autoroll", ico="🎲", lbl="Reroll"},
     {tag="claim",    ico="🎁", lbl="Claim"},
@@ -601,26 +601,28 @@ local AG = {running=false, thread=nil, killed=0, collected=0, currentTarget=nil,
 local RAID = {
     running     = false,
     thread      = nil,
-    killed      = 0,
+    sukses      = 0,   -- counter raid berhasil (masuk+bunuh bos+ambil reward)
     collected   = 0,
-    loopCount   = 0,
     raidId      = 0,
     raidMapId   = 50001,
     slotIndex   = 1,       -- dapat dari EnterRaidsUpdateInfo
     _raidDone   = false,   -- true saat ChallengeRaidsSuccess/Fail fire
     statusLbl   = nil,
-    killLbl     = nil,
-    loopLbl     = nil,
+    suksesLbl   = nil,     -- label UI sukses (ganti killLbl/loopLbl)
     dot         = nil,
     -- Difficulty & preferred maps
     difficulty  = "easy",  -- "easy" | "medium" | "hard" | "preferred"
     preferMaps  = {},      -- set: {[mapNumber]=true} (1..18)
     diffLbl     = nil,     -- label UI difficulty
-    lockedMapId = nil,     -- mapId yang dikunci setelah pick pertama (nil = belum terkunci)
+    -- Snapshot: MapId yang di-lock saat notif raid pertama kali masuk
+    -- Key: "easy"/"medium"/"hard" → locked to specific mapId until restarted or diff changed
+    snapshotMapId = nil,   -- mapId hasil jepretan sesuai difficulty saat ini
 }
 local _raidOn        = false
 local _raidInterrupt = false  -- true saat raid muncul & Mass Attack harus pause
 local _siegeInterrupt = false  -- true saat siege pakai remote -> raid pause
+local _webhookEnabled = false
+local _webhookUrl     = ""
 
 -- ============================================================
 -- AUTO CONFIRM / AUTO CLOSE
@@ -2817,99 +2819,47 @@ end
 -- ============================================================
 ;(function()
     local p = NewPanel("main")
-    SectionHeader(p, "PENGATURAN CEPAT", 0)
-    ToggleRow(p, "Auto Collect + Destroyer", "Aktifkan Auto Collect otomatis saat Destroyer ON", 1,
-        function(on)
-            if STATE.autoDestroyer then STATE.autoCollect = on; DoAutoCollect(on); RefreshStatus() end
-        end)
+    SectionHeader(p, "STATUS AKTIF", 0)
 
-    -- HIDE REWARD toggle
-    local _hrCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,54))
-    _hrCard.LayoutOrder = 1; Corner(_hrCard,9); Stroke(_hrCard,C.BORD,1,0.35)
-    Padding(_hrCard,6,6,10,8)
-    local _hrIcon = Label(_hrCard,"🎁",18,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-    _hrIcon.Size = UDim2.new(0,24,0,24); _hrIcon.Position = UDim2.new(0,0,0.5,-12)
-    local _hrTitle = Label(_hrCard,"Hide Reward (ShowReward + DropItems)",11,C.TXT,Enum.Font.GothamBold)
-    _hrTitle.Size = UDim2.new(1,-60,0,16); _hrTitle.Position = UDim2.new(0,28,0,4)
-    local _hrSub = Label(_hrCard,"OFF — reward muncul normal",9,C.DIM,Enum.Font.Gotham)
-    _hrSub.Size = UDim2.new(1,-60,0,13); _hrSub.Position = UDim2.new(0,28,0,22)
-    local _hrPill = Btn(_hrCard,C.NSEL,UDim2.new(0,44,0,24))
-    _hrPill.AnchorPoint = Vector2.new(1,0.5); _hrPill.Position = UDim2.new(1,-6,0.5,0)
-    Corner(_hrPill,12)
-    local _hrKnob = Frame(_hrPill,C.DK,UDim2.new(0,18,0,18))
-    _hrKnob.AnchorPoint = Vector2.new(0,0.5); _hrKnob.Position = UDim2.new(0,3,0.5,0)
-    Corner(_hrKnob,9)
-    _hrPill.MouseButton1Click:Connect(function()
-        STATE.hideReward = not STATE.hideReward
-        local on = STATE.hideReward
-        TweenService:Create(_hrPill,TweenInfo.new(0.15),{BackgroundColor3=on and C.GRN or C.NSEL}):Play()
-        TweenService:Create(_hrKnob,TweenInfo.new(0.15),{
-            Position=on and UDim2.new(1,-20,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3=on and Color3.fromRGB(255,255,255) or C.DK
-        }):Play()
-        _hrIcon.Text = on and "🙈" or "🎁"
-        _hrSub.Text  = on and "ON — popup reward tidak akan muncul" or "OFF — reward muncul normal"
-        _hrSub.TextColor3 = on and C.GRN or C.DIM
-        SetupHideRewardHooks()
-    end)
+    -- Status overview card
+    local ovCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,0))
+    ovCard.LayoutOrder = 1; ovCard.AutomaticSize = Enum.AutomaticSize.Y
+    Corner(ovCard,9); Stroke(ovCard,C.BORD,1,0.35); Padding(ovCard,8,8,12,10)
+    New("UIListLayout",{Parent=ovCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,5)})
 
-    -- AUTO CONFIRM toggle
-    local _acfCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,54))
-    _acfCard.LayoutOrder = 2; Corner(_acfCard,9); Stroke(_acfCard,Color3.fromRGB(60,180,80),1,0.4)
-    Padding(_acfCard,6,6,10,8)
-    local _acfIcon = Label(_acfCard,"✅",18,C.GRN,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-    _acfIcon.Size = UDim2.new(0,24,0,24); _acfIcon.Position = UDim2.new(0,0,0.5,-12)
-    local _acfTitle = Label(_acfCard,"Auto Confirm",11,C.TXT,Enum.Font.GothamBold)
-    _acfTitle.Size = UDim2.new(1,-60,0,16); _acfTitle.Position = UDim2.new(0,28,0,4)
-    local _acfSub = Label(_acfCard,"OFF — tombol Confirm tidak diklik otomatis",9,C.DIM,Enum.Font.Gotham)
-    _acfSub.Size = UDim2.new(1,-60,0,13); _acfSub.Position = UDim2.new(0,28,0,22)
-    local _acfPill = Btn(_acfCard,C.NSEL,UDim2.new(0,44,0,24))
-    _acfPill.AnchorPoint = Vector2.new(1,0.5); _acfPill.Position = UDim2.new(1,-6,0.5,0)
-    Corner(_acfPill,12)
-    local _acfKnob = Frame(_acfPill,C.DK,UDim2.new(0,18,0,18))
-    _acfKnob.AnchorPoint = Vector2.new(0,0.5); _acfKnob.Position = UDim2.new(0,3,0.5,0)
-    Corner(_acfKnob,9)
-    _acfPill.MouseButton1Click:Connect(function()
-        STATE.autoConfirm = not STATE.autoConfirm
-        local on = STATE.autoConfirm
-        TweenService:Create(_acfPill,TweenInfo.new(0.15),{BackgroundColor3=on and C.GRN or C.NSEL}):Play()
-        TweenService:Create(_acfKnob,TweenInfo.new(0.15),{
-            Position=on and UDim2.new(1,-20,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3=on and Color3.fromRGB(255,255,255) or C.DK
-        }):Play()
-        _acfSub.Text = on and "ON — tombol Confirm diklik otomatis tiap 1s" or "OFF — tombol Confirm tidak diklik otomatis"
-        _acfSub.TextColor3 = on and C.GRN or C.DIM
-        StartPopupScanner()
-    end)
+    local function MakeStatusRow(parent, key, label, order)
+        local row = Frame(parent, C.BLACK, UDim2.new(1,0,0,20))
+        row.BackgroundTransparency = 1; row.LayoutOrder = order
+        local dot = Frame(row, Color3.fromRGB(100,100,100), UDim2.new(0,7,0,7))
+        dot.Position = UDim2.new(0,0,0.5,-3); Corner(dot,4)
+        local lbl = Label(row, label.." — OFF", 10.5, C.TXT2, Enum.Font.Gotham)
+        lbl.Size = UDim2.new(1,-14,1,0); lbl.Position = UDim2.new(0,14,0,0)
+        StatusDots[key]  = dot
+        StatusLbls[key]  = lbl
+    end
 
-    -- AUTO CLOSE toggle
-    local _aclCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,54))
-    _aclCard.LayoutOrder = 3; Corner(_aclCard,9); Stroke(_aclCard,Color3.fromRGB(200,80,30),1,0.4)
-    Padding(_aclCard,6,6,10,8)
-    local _aclIcon = Label(_aclCard,"❌",18,C.RED,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-    _aclIcon.Size = UDim2.new(0,24,0,24); _aclIcon.Position = UDim2.new(0,0,0.5,-12)
-    local _aclTitle = Label(_aclCard,"Auto Close",11,C.TXT,Enum.Font.GothamBold)
-    _aclTitle.Size = UDim2.new(1,-60,0,16); _aclTitle.Position = UDim2.new(0,28,0,4)
-    local _aclSub = Label(_aclCard,"OFF — tombol Close tidak diklik otomatis",9,C.DIM,Enum.Font.Gotham)
-    _aclSub.Size = UDim2.new(1,-60,0,13); _aclSub.Position = UDim2.new(0,28,0,22)
-    local _aclPill = Btn(_aclCard,C.NSEL,UDim2.new(0,44,0,24))
-    _aclPill.AnchorPoint = Vector2.new(1,0.5); _aclPill.Position = UDim2.new(1,-6,0.5,0)
-    Corner(_aclPill,12)
-    local _aclKnob = Frame(_aclPill,C.DK,UDim2.new(0,18,0,18))
-    _aclKnob.AnchorPoint = Vector2.new(0,0.5); _aclKnob.Position = UDim2.new(0,3,0.5,0)
-    Corner(_aclKnob,9)
-    _aclPill.MouseButton1Click:Connect(function()
-        STATE.autoClose = not STATE.autoClose
-        local on = STATE.autoClose
-        TweenService:Create(_aclPill,TweenInfo.new(0.15),{BackgroundColor3=on and C.RED or C.NSEL}):Play()
-        TweenService:Create(_aclKnob,TweenInfo.new(0.15),{
-            Position=on and UDim2.new(1,-20,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3=on and Color3.fromRGB(255,255,255) or C.DK
-        }):Play()
-        _aclSub.Text = on and "ON — tombol Close diklik otomatis tiap 1s" or "OFF — tombol Close tidak diklik otomatis"
-        _aclSub.TextColor3 = on and C.RED or C.DIM
-        StartPopupScanner()
-    end)
+    MakeStatusRow(ovCard,"arise","Auto Arise",0)
+    MakeStatusRow(ovCard,"roll","Auto Roll",1)
+    MakeStatusRow(ovCard,"noClip","No Clip",2)
+    MakeStatusRow(ovCard,"antiAfk","Anti AFK",3)
+
+    SectionHeader(p,"INFO",2)
+    local infoCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,0))
+    infoCard.LayoutOrder = 3; infoCard.AutomaticSize = Enum.AutomaticSize.Y
+    Corner(infoCard,9); Stroke(infoCard,C.BORD,1,0.35); Padding(infoCard,8,8,12,10)
+    New("UIListLayout",{Parent=infoCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,3)})
+    local function InfoLine(txt, col, order)
+        local lbl = Label(infoCard, txt, 10, col or C.TXT2, Enum.Font.Gotham)
+        lbl.Size = UDim2.new(1,0,0,0); lbl.AutomaticSize = Enum.AutomaticSize.Y
+        lbl.TextWrapped = true; lbl.LayoutOrder = order
+    end
+    InfoLine("🏠 Main: status aktif fitur",C.TXT3,0)
+    InfoLine("⚔  Farm: auto attack musuh",C.TXT3,1)
+    InfoLine("💥 Attack: skill key config",C.TXT3,2)
+    InfoLine("⚡ Automation: Auto Raid + Auto Siege",C.TXT3,3)
+    InfoLine("🎲 Reroll: hero/weapon/ornament",C.TXT3,4)
+    InfoLine("🎁 Claim: klaim reward otomatis",C.TXT3,5)
+    InfoLine("⚙  Settings: Webhook notif raid",C.TXT3,6)
 end)()
 
 -- ============================================================
@@ -2943,32 +2893,8 @@ local FindLiveEnemyByName, SelectEnemyName, RefreshEnemies, RunAG_Targeted
     agELbl = Label(p,"Belum di-refresh",9,C.DIM,Enum.Font.Gotham)
     agELbl.Size = UDim2.new(1,0,0,14); agELbl.LayoutOrder = 1
 
-    local acCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,36))
-    acCard.LayoutOrder = 2; Corner(acCard,7); Stroke(acCard,C.BORD,1,0.4)
-    Padding(acCard,6,6,10,8)
-    local acLbl = Label(acCard,"Auto Collect Gold / Item",11,C.TXT,Enum.Font.GothamBold)
-    acLbl.Size = UDim2.new(0.7,0,0,16); acLbl.Position = UDim2.new(0,0,0,2)
-    local acSub = Label(acCard,"Destroyer: Aktif",9,C.GRN,Enum.Font.Gotham)
-    acSub.Size = UDim2.new(0.7,0,0,13); acSub.Position = UDim2.new(0,0,0,20)
-    local acToggle = Btn(acCard,C.NSEL,UDim2.new(0,36,0,20))
-    acToggle.AnchorPoint = Vector2.new(1, 0.5)
-    acToggle.Position = UDim2.new(1,-10,0.5,0); Corner(acToggle,10)
-    local acKnob = Frame(acToggle,C.YEL,UDim2.new(0,14,0,14))
-    acKnob.AnchorPoint = Vector2.new(0, 0.5)
-    acKnob.Position = UDim2.new(0,3,0.5,0); Corner(acKnob,7)
-    local acOn = true
-    acToggle.MouseButton1Click:Connect(function()
-        acOn = not acOn; AG.autoCollect = acOn
-        TweenService:Create(acToggle,TweenInfo.new(0.14),{BackgroundColor3=acOn and C.NSEL or Color3.fromRGB(22,20,18)}):Play()
-        TweenService:Create(acKnob,TweenInfo.new(0.14),{
-            Position=acOn and UDim2.new(1,-16,0.5,0) or UDim2.new(0,2,0.5,0),
-            BackgroundColor3=acOn and C.YEL or C.DK}):Play()
-        acSub.Text = acOn and "Destroyer: Aktif" or "Destroyer: Nonaktif"
-        acSub.TextColor3 = acOn and C.GRN or C.RED
-    end)
-
     local tgtHdr = Label(p,"Target Musuh (pilih yang mau diserang)",10,C.AG,Enum.Font.GothamBold)
-    tgtHdr.Size = UDim2.new(1,0,0,18); tgtHdr.LayoutOrder = 3
+    tgtHdr.Size = UDim2.new(1,0,0,18); tgtHdr.LayoutOrder = 2
 
     local eCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,260))
     eCard.LayoutOrder = 4; Corner(eCard,9); Stroke(eCard,C.BORD,1,0.4)
@@ -4306,113 +4232,7 @@ end)()
 
 ;(function()
     local p = Panels["autoroll"]
-    local noteOpen   = false
-    local noteHeader = Btn(p, Color3.fromRGB(50,20,5), UDim2.new(1,0,0,38))
-    noteHeader.LayoutOrder = 40; Corner(noteHeader,8); Stroke(noteHeader,C.ACC,1,0.5)
-    local noteIcon  = Label(noteHeader,"▶",12,C.ACC2,Enum.Font.GothamBold)
-    noteIcon.Size   = UDim2.new(0,20,1,0); noteIcon.Position = UDim2.new(0,10,0,0)
-    local noteLabel = Label(noteHeader,"📋  Catatan Penting — Cara Pakai AutoReroll",13,Color3.fromRGB(255,200,80),Enum.Font.GothamBold)
-    noteLabel.Size  = UDim2.new(1,-40,1,0); noteLabel.Position = UDim2.new(0,30,0,0)
 
-    local noteBody  = Frame(p, Color3.fromRGB(25,12,3), UDim2.new(1,0,0,0))
-    noteBody.LayoutOrder = 41; noteBody.ClipsDescendants = true
-    Corner(noteBody,8); Stroke(noteBody,C.ACC,1,0.4); noteBody.Visible = false
-
-    local noteInner = Frame(noteBody, C.BLACK, UDim2.new(1,-16,0,0))
-    noteInner.BackgroundTransparency = 1; noteInner.Position = UDim2.new(0,8,0,10)
-    local noteLayout = New("UIListLayout",{Parent=noteInner,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,10)})
-
-    local function ResizeNoteBody()
-        noteLayout:ApplyLayout()
-        local h = noteLayout.AbsoluteContentSize.Y + 20
-        noteInner.Size = UDim2.new(1,0,0,h); noteBody.Size = UDim2.new(1,0,0,h+20)
-    end
-
-    local function NoteBlock(order, icon, title, titleColor, lines)
-        local block = Frame(noteInner, Color3.fromRGB(35,18,5), UDim2.new(1,0,0,0))
-        block.LayoutOrder = order; block.AutomaticSize = Enum.AutomaticSize.Y
-        Corner(block,8); Stroke(block,Color3.fromRGB(180,80,0),1,0.5)
-        local bPad = Instance.new("UIPadding",block)
-        bPad.PaddingLeft=UDim.new(0,10); bPad.PaddingRight=UDim.new(0,10)
-        bPad.PaddingTop=UDim.new(0,8);   bPad.PaddingBottom=UDim.new(0,8)
-        local bLayout = New("UIListLayout",{Parent=block,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,5)})
-        local titleLbl = Label(block,icon.."  "..title,11.5,titleColor,Enum.Font.GothamBold)
-        titleLbl.Size = UDim2.new(1,0,0,0); titleLbl.AutomaticSize = Enum.AutomaticSize.Y
-        titleLbl.TextWrapped = true; titleLbl.LayoutOrder = 0
-        for i, line in ipairs(lines) do
-            local lbl = Label(block,line,10.5,Color3.fromRGB(230,210,180),Enum.Font.Gotham)
-            lbl.Size = UDim2.new(1,0,0,0); lbl.AutomaticSize = Enum.AutomaticSize.Y
-            lbl.TextWrapped = true; lbl.LayoutOrder = i; lbl.TextXAlignment = Enum.TextXAlignment.Left
-        end
-        return block
-    end
-
-    NoteBlock(1,"⚡","Auto Roll Hero",Color3.fromRGB(255,200,60),{
-        "1.  Masuk ke Mesin Roll Hero.",
-        "2.  Masukkan Hero yang ingin di-reroll.",
-        "3.  Klik Reroll 1x secara manual.",
-        "4.  Tunggu status berubah HIJAU (GUID terdeteksi).",
-        "5.  Pilih target Quirk di slot yang diinginkan.",
-        "6.  Aktifkan toggle AutoReroll → script jalan otomatis.",
-    })
-    NoteBlock(2,"⚔️","Auto Roll Weapon",Color3.fromRGB(180,220,255),{
-        "1.  Equip dulu senjata yang ingin di-reroll.",
-        "2.  Tunggu status berubah HIJAU (GUID terbaca).",
-        "3.  Pilih target Quirk di setiap slot.",
-        "4.  Aktifkan toggle AutoReroll → script jalan otomatis.",
-    })
-    NoteBlock(3,"🐾","Auto Roll Pet Gear",Color3.fromRGB(180,255,180),{
-        "1.  Masuk ke Mesin Roll Pet Gear (R / Y / B).",
-        "2.  Pilih Pet Gear yang ingin di-reroll.",
-        "3.  Klik Reroll 1x secara manual.",
-        "4.  Tunggu status berubah HIJAU (GUID terdeteksi).",
-        "5.  Pilih target Grade di dropdown.",
-        "6.  Aktifkan toggle Fastroll.",
-        "⚠  Ingin jalankan 3 mesin sekaligus?",
-        "    → Datangi setiap mesin satu per satu,",
-        "       lakukan langkah 1–5 di tiap mesin,",
-        "       lalu aktifkan semua toggle.",
-    })
-    NoteBlock(4,"💍","Auto Roll Ornament",Color3.fromRGB(200,160,255),{
-        "1.  Buka panel 💍 Auto Roll Ornament.",
-        "2.  Roll 1x manual di mesin yang ingin di-reroll.",
-        "    → Quirk akan otomatis terdeteksi di dropdown.",
-        "3.  Pilih target quirk (maks 3) di dropdown.",
-        "4.  Aktifkan toggle Fastroll → script jalan otomatis.",
-        "5.  Script berhenti otomatis jika target tercapai.",
-        "Mesin yang tersedia:",
-        "  400001 = Headdress",
-        "  400002 = Ornament Machine",
-        "  400003 = Wealth Blessing",
-        "  400004 = Shadowhunter Blessing",
-        "  400005 = Primordial Blessing",
-        "  400006 = Monarch Power",
-    })
-
-    local noteBlock = Frame(noteInner, Color3.fromRGB(60,10,10), UDim2.new(1,0,0,0))
-    noteBlock.LayoutOrder = 5; noteBlock.AutomaticSize = Enum.AutomaticSize.Y
-    Corner(noteBlock,8); Stroke(noteBlock,Color3.fromRGB(255,60,60),1,0.4)
-    local nbPad = Instance.new("UIPadding",noteBlock)
-    nbPad.PaddingLeft=UDim.new(0,10); nbPad.PaddingRight=UDim.new(0,10)
-    nbPad.PaddingTop=UDim.new(0,8);   nbPad.PaddingBottom=UDim.new(0,8)
-    New("UIListLayout",{Parent=noteBlock,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
-    local noteTitleLbl = Label(noteBlock,"⚠  PENTING",12,Color3.fromRGB(255,80,80),Enum.Font.GothamBold)
-    noteTitleLbl.Size = UDim2.new(1,0,0,18); noteTitleLbl.LayoutOrder = 0
-    local noteTextLbl = Label(noteBlock,
-        "Jika target sudah tercapai, keluar dari game\n"..
-        "lalu masuk kembali untuk melihat hasil\n"..
-        "AutoReroll yang sudah kamu dapatkan.",
-        10.5,Color3.fromRGB(255,180,180),Enum.Font.GothamBold)
-    noteTextLbl.Size = UDim2.new(1,0,0,0); noteTextLbl.AutomaticSize = Enum.AutomaticSize.Y
-    noteTextLbl.TextWrapped = true; noteTextLbl.LayoutOrder = 1
-    noteTextLbl.TextXAlignment = Enum.TextXAlignment.Left
-
-    noteHeader.MouseButton1Click:Connect(function()
-        noteOpen = not noteOpen
-        noteBody.Visible = noteOpen
-        noteIcon.Text = noteOpen and "▼" or "▶"
-        if noteOpen then task.defer(ResizeNoteBody) end
-    end)
 end)()
 
 
@@ -4451,44 +4271,43 @@ local function PickRaidByDifficulty()
     local diff = RAID.difficulty
 
     if diff == "easy" then
-        -- Rank paling rendah (cari rank terkecil dari semua entry)
+        -- MapNum (mapId-50000) terkecil
         local best = nil
         for _, r in ipairs(RAID_ID_LIST) do
-            if best == nil or (r.rank or 1) < (best.rank or 1) then
-                best = r
-            end
+            local mn = r.mapId - 50000
+            if best == nil or mn < (best.mapId - 50000) then best = r end
         end
         return best
 
     elseif diff == "hard" then
-        -- Rank paling tinggi (cari rank terbesar dari semua entry)
+        -- MapNum (mapId-50000) terbesar
         local best = nil
         for _, r in ipairs(RAID_ID_LIST) do
-            if best == nil or (r.rank or 1) > (best.rank or 1) then
-                best = r
-            end
+            local mn = r.mapId - 50000
+            if best == nil or mn > (best.mapId - 50000) then best = r end
         end
         return best
 
     elseif diff == "medium" then
-        -- Rank di tengah: kumpulkan semua rank unik, pilih yang di tengah
+        -- MapNum urutan tengah (ceil(N/2)) diurutkan ascending
         local sorted = {}
         for _, r in ipairs(RAID_ID_LIST) do table.insert(sorted, r) end
-        table.sort(sorted, function(a, b) return (a.rank or 1) < (b.rank or 1) end)
+        table.sort(sorted, function(a, b) return (a.mapId - 50000) < (b.mapId - 50000) end)
         local mid = math.ceil(#sorted / 2)
         return sorted[mid]
 
     elseif diff == "preferred" then
-        -- Cari map yang ada di preferMaps player
+        -- Cari map yang ada di preferMaps, pilih yang mapNum-nya terkecil
+        local candidates = {}
         for _, r in ipairs(RAID_ID_LIST) do
-            local mapNum = r.mapId - 50000
-            if RAID.preferMaps[mapNum] then
-                return r
-            end
+            local mn = r.mapId - 50000
+            if RAID.preferMaps[mn] then table.insert(candidates, r) end
         end
-        return nil  -- tidak ada yang cocok
-
+        if #candidates == 0 then return nil end
+        table.sort(candidates, function(a, b) return (a.mapId - 50000) < (b.mapId - 50000) end)
+        return candidates[1]  -- mapNum terkecil yang dipilih
     end
+
     return RAID_ID_LIST[1]
 end
 
@@ -4508,6 +4327,10 @@ local function RebuildRaidList()
         })
     end
     if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
+    -- Kirim webhook setiap RAID_LIVE berubah
+    if _webhookEnabled and _webhookUrl ~= "" then
+        task.spawn(SendWebhookNotif)
+    end
 end
 
 -- Parse satu entry raidInfos
@@ -4603,13 +4426,10 @@ local function ConnectRaidListeners()
         table.insert(_raidConns, conn)
     end
 
-    -- ── ChallengeRaidsSuccess: raid berhasil ──
+    -- ── ChallengeRaidsSuccess: handled di StartRaidLoop ──
     if _RE_Success then
         local conn = _RE_Success.OnClientEvent:Connect(function()
-            if RAID.running then
-                RAID.killed = RAID.killed + 1
-                RaidCounterUpdate()
-            end
+            -- Counting via StartRaidLoop (RAID.sukses)
         end)
         table.insert(_raidConns, conn)
     end
@@ -4696,8 +4516,7 @@ function RaidStatusUpdate(msg, color)
 end
 
 function RaidCounterUpdate()
-    if RAID.killLbl then RAID.killLbl.Text = "Kill: "..RAID.killed end
-    if RAID.loopLbl then RAID.loopLbl.Text = "Loop: "..RAID.loopCount end
+    if RAID.suksesLbl then RAID.suksesLbl.Text = "Sukses: "..RAID.sukses end
 end
 
 function RaidCollectAll()
@@ -4766,37 +4585,48 @@ end
 -- Main loop
 function StartRaidLoop()
     StopRaid()
-    RAID.running    = true
-    RAID.killed     = 0
-    RAID.collected  = 0
-    RAID.loopCount  = 0
-    RAID.lockedMapId = nil  -- reset lock setiap kali start ulang
+    RAID.running      = true
+    RAID.sukses       = 0
+    RAID.collected    = 0
+    RAID.snapshotMapId = nil  -- reset snapshot setiap kali start ulang
+    RaidCounterUpdate()
 
     RAID.thread = task.spawn(function()
         while RAID.running do
 
-            -- ── CEK SIEGE INTERRUPT (BARU) ──
-            -- Kalau siege sedang aktif pakai remote, raid tunggu dulu
+            -- ── CEK SIEGE INTERRUPT ──
             if _siegeInterrupt then
                 RaidStatusUpdate("⏸ Pause — Siege sedang berlangsung...", Color3.fromRGB(255,140,0))
-                while _siegeInterrupt and RAID.running do
-                    task.wait(0.5)
-                end
+                while _siegeInterrupt and RAID.running do task.wait(0.5) end
                 if not RAID.running then break end
                 RaidStatusUpdate("▶ Siege selesai — lanjut cari raid...", Color3.fromRGB(100,200,255))
                 task.wait(0.3)
             end
 
-            -- ── STEP 1: Resolve raidId berdasarkan difficulty ──
+            -- ── STEP 1: Resolve raidEntry berdasarkan snapshot ──
             _raidInterrupt = false
             RaidStatusUpdate("🔍 Cek raid aktif...", Color3.fromRGB(255,200,60))
             FetchRaidIds()
             task.wait(0.5)
 
-            -- Tunggu sampai ada raid yang cocok
             local raidEntry = nil
+
+            -- Kalau snapshot sudah ada, cari entry dengan mapId yang sama dari list aktif
+            if RAID.snapshotMapId then
+                for _, r in ipairs(RAID_ID_LIST) do
+                    if r.mapId == RAID.snapshotMapId then
+                        raidEntry = r; break
+                    end
+                end
+                if not raidEntry then
+                    local mn = RAID.snapshotMapId - 50000
+                    RaidStatusUpdate("⏳ Tunggu Map "..mn.." spawn lagi...", Color3.fromRGB(255,160,40))
+                end
+            end
+
+            -- Tunggu sampai ada raid yang cocok
             while RAID.running and not raidEntry do
-                -- CEK SIEGE INTERRUPT saat menunggu raid (BARU)
+                -- CEK SIEGE INTERRUPT saat menunggu
                 if _siegeInterrupt then
                     RaidStatusUpdate("⏸ Pause — Siege sedang berlangsung...", Color3.fromRGB(255,140,0))
                     while _siegeInterrupt and RAID.running do task.wait(0.5) end
@@ -4804,25 +4634,26 @@ function StartRaidLoop()
                     RaidStatusUpdate("▶ Lanjut cari raid...", Color3.fromRGB(100,200,255))
                 end
 
-                if RAID.lockedMapId then
-                    -- Sudah pernah masuk raid → tunggu mapId yang sama spawn lagi
+                if RAID.snapshotMapId then
+                    -- Sudah ada snapshot → hanya tunggu mapId itu spawn lagi
                     for _, r in ipairs(RAID_ID_LIST) do
-                        if r.mapId == RAID.lockedMapId then
-                            raidEntry = r
-                            break
+                        if r.mapId == RAID.snapshotMapId then
+                            raidEntry = r; break
                         end
                     end
                     if not raidEntry then
-                        local mapNum = RAID.lockedMapId - 50000
-                        RaidStatusUpdate("⏳ Tunggu Map "..mapNum.." spawn lagi...", Color3.fromRGB(255,160,40))
+                        local mn = RAID.snapshotMapId - 50000
+                        RaidStatusUpdate("⏳ Tunggu Map "..mn.." spawn lagi...", Color3.fromRGB(255,160,40))
                     end
                 else
-                    -- Pertama kali → pick sesuai difficulty, lalu kunci
-                    raidEntry = PickRaidByDifficulty()
-                    if raidEntry then
-                        RAID.lockedMapId = raidEntry.mapId
-                        local mapNum = raidEntry.mapId - 50000
-                        RaidStatusUpdate("🔒 Kunci Map "..mapNum.." ("..RAID.difficulty:upper()..")", Color3.fromRGB(100,255,180))
+                    -- Belum ada snapshot → ambil snapshot sekarang sesuai difficulty saat ini
+                    local picked = PickRaidByDifficulty()
+                    if picked then
+                        -- JEPRET: simpan mapId yang dipilih sebagai snapshot tetap
+                        RAID.snapshotMapId = picked.mapId
+                        raidEntry = picked
+                        local mn = picked.mapId - 50000
+                        RaidStatusUpdate("📸 Snapshot Map "..mn.." ["..RAID.difficulty:upper().."]", Color3.fromRGB(100,255,180))
                         task.wait(0.3)
                     else
                         local diff = RAID.difficulty
@@ -4833,34 +4664,29 @@ function StartRaidLoop()
                         end
                     end
                 end
-
                 if not raidEntry then task.wait(1) end
             end
             if not RAID.running then break end
 
-            -- ── CEK SIEGE INTERRUPT sebelum masuk raid (BARU) ──
+            -- ── CEK SIEGE INTERRUPT sebelum masuk raid ──
             if _siegeInterrupt then
                 RaidStatusUpdate("⏸ Pause — Siege sedang berlangsung...", Color3.fromRGB(255,140,0))
                 while _siegeInterrupt and RAID.running do task.wait(0.5) end
                 if not RAID.running then break end
-                -- Setelah siege selesai, fetch ulang raid list karena mungkin sudah expired
                 FetchRaidIds()
                 task.wait(0.5)
-                RaidStatusUpdate("▶ Lanjut setelah siege...", Color3.fromRGB(100,200,255))
-                -- Reset raidEntry supaya tidak pakai entry yang mungkin sudah expired
-                -- Loop akan restart dari atas dan pick entry baru
                 continue
             end
 
-            -- Raid ditemukan → pause Mass Attack sekarang
+            -- Raid ditemukan → pause Mass Attack
             _raidInterrupt = true
 
             RAID.raidId    = raidEntry.id
             RAID.raidMapId = raidEntry.mapId
             if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
 
-            local diffLabel = RAID.difficulty:upper()
-            RaidStatusUpdate("🎯 ["..diffLabel.."] "..raidEntry.label, Color3.fromRGB(100,200,255))
+            local mn = raidEntry.mapId - 50000
+            RaidStatusUpdate("🎯 ["..RAID.difficulty:upper().."] Map "..mn.." (ID:"..RAID.raidId..")", Color3.fromRGB(100,200,255))
             task.wait(0.3)
             if not RAID.running then break end
 
@@ -4910,8 +4736,6 @@ function StartRaidLoop()
             if RE_S2 then
                 connS2 = RE_S2.OnClientEvent:Connect(function()
                     RAID._raidDone = true; _raidSuccess = true
-                    RAID.killed = RAID.killed + 1; RaidCounterUpdate()
-                    RaidStatusUpdate("🏆 Raid sukses! Kill:"..RAID.killed, Color3.fromRGB(100,255,150))
                 end)
             end
             if RE_F2 then
@@ -4934,6 +4758,151 @@ function StartRaidLoop()
                     local BOSS_NAMES = {
                         "goblin king","giant arachnid","buryura","igris",
                         "leader of the polar","polar bear","arch lich","kargalgan",
+                        "cerberus","demon","dragon","knight","beast","boss","raja","king",
+                    }
+                    local function IsBoss(name)
+                        local n = name:lower()
+                        for _, k in ipairs(BOSS_NAMES) do if n:find(k,1,true) then return true end end
+                        return false
+                    end
+                    local boss = nil
+                    local waitBoss = 0
+                    while RAID.running and not boss and waitBoss < 20 and not RAID._raidDone do
+                        local enemies = GetRaidEnemies()
+                        if #enemies > 0 then
+                            for _, e in ipairs(enemies) do
+                                if IsBoss(e.model.Name) then
+                                    boss = e
+                                    RaidStatusUpdate("👑 Raja: ["..e.model.Name.."]", Color3.fromRGB(255,80,80))
+                                    break
+                                end
+                            end
+                            if not boss and #enemies == 1 then
+                                boss = enemies[1]
+                                RaidStatusUpdate("👑 1 musuh: ["..boss.model.Name.."]", Color3.fromRGB(255,160,40))
+                            end
+                            if not boss then
+                                local topHealth = -1
+                                for _, e in ipairs(enemies) do
+                                    local hum = e.model and e.model:FindFirstChildOfClass("Humanoid")
+                                    if hum and hum.MaxHealth > topHealth then
+                                        topHealth = hum.MaxHealth; boss = e
+                                    end
+                                end
+                            end
+                        end
+                        if not boss then task.wait(0.3); waitBoss = waitBoss + 0.3 end
+                    end
+
+                    if boss and RAID.running then
+                        local bossPos = Vector3.new(0,0,0)
+                        pcall(function() bossPos = boss.hrp.Position end)
+                        local char = LP.Character
+                        local myHrp = char and char:FindFirstChild("HumanoidRootPart")
+                        if myHrp then
+                            pcall(function() myHrp.CFrame = CFrame.new(bossPos + Vector3.new(3, 0, 0)) end)
+                        end
+                        RaidStatusUpdate("👑 TP ke raja — serang!", Color3.fromRGB(255,80,80))
+                        task.wait(0.2)
+
+                        local bossGuid = boss.guid
+                        local bossHum  = boss.model and boss.model:FindFirstChildOfClass("Humanoid")
+                        while RAID.running and not RAID._raidDone do
+                            local dead = not boss.model or not boss.model.Parent
+                                or (bossHum and bossHum.Health <= 0)
+                            if dead then break end
+                            local p = boss.hrp and boss.hrp.Position or bossPos
+                            RaidFireDamage(bossGuid, p)
+                            task.wait(0.08)
+                        end
+
+                        local waited = 0
+                        while RAID.running and not RAID._raidDone and waited < 5 do
+                            task.wait(0.2); waited = waited + 0.2
+                        end
+                    else
+                        RaidStatusUpdate("⚠ Raja tidak ditemukan — lewati", Color3.fromRGB(255,150,50))
+                    end
+
+                    if RAID.running then
+                        task.wait(1)
+                    end
+                end
+            else
+                RaidStatusUpdate("⚔ Di dalam raid — menunggu hasil...", Color3.fromRGB(255,180,40))
+                local waited = 0
+                while RAID.running and not RAID._raidDone and waited < 300 do
+                    task.wait(1); waited = waited + 1
+                    if waited % 15 == 0 then
+                        RaidStatusUpdate("⚔ Dalam raid... ("..waited.."s)", Color3.fromRGB(255,180,40))
+                    end
+                end
+            end
+
+            if connS2 then pcall(function() connS2:Disconnect() end) end
+            if connF2 then pcall(function() connF2:Disconnect() end) end
+
+            -- Sukses hanya dihitung kalau: masuk, bunuh bos, collect reward berhasil
+            if _raidSuccess then
+                RaidStatusUpdate("🎁 Ambil drop & reward...", Color3.fromRGB(255,220,80))
+                task.wait(0.3); RaidCollectAll(); task.wait(0.3)
+                if RE_GainRaidsRewards then
+                    pcall(function() RE_GainRaidsRewards:InvokeServer(1) end)
+                end
+                task.wait(0.5)
+                -- Hitung Sukses hanya setelah reward berhasil diambil
+                RAID.sukses = RAID.sukses + 1
+                RaidCounterUpdate()
+                RaidStatusUpdate("✅ Sukses ke-"..RAID.sukses.." — Map "..mn, Color3.fromRGB(100,255,150))
+            end
+            if not RAID.running then break end
+
+            -- ── STEP 7: Keluar raid ──
+            RaidStatusUpdate("🚪 Keluar raid...", Color3.fromRGB(200,100,100))
+            task.wait(0.5)
+            if RE_StartTp then
+                pcall(function() RE_StartTp:FireServer({mapId=RAID.raidMapId}) end)
+            end
+            if RE_EquipHeroWithData then
+                pcall(function() RE_EquipHeroWithData:FireServer() end)
+            end
+            if RE_LocalTpSuccess then
+                pcall(function() RE_LocalTpSuccess:InvokeServer() end)
+            end
+            task.wait(1)
+
+            RAID_LIVE[RAID.raidId] = nil
+            RebuildRaidList()
+            _raidInterrupt = false
+
+            -- Cooldown 30 detik
+            local COOLDOWN = 30
+            for cd = COOLDOWN, 1, -1 do
+                if not RAID.running then break end
+                if _siegeInterrupt then
+                    RaidStatusUpdate("⏸ Cooldown pause — Siege berlangsung...", Color3.fromRGB(255,140,0))
+                    while _siegeInterrupt and RAID.running do task.wait(0.5) end
+                    if not RAID.running then break end
+                end
+                RaidStatusUpdate("⏳ Cooldown: "..cd.."s lagi...", Color3.fromRGB(160,148,135))
+                if RAID.dot then RAID.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
+                task.wait(1)
+            end
+
+            if RAID.running then
+                RaidStatusUpdate("🔍 Cooldown selesai — cari raid berikutnya...", Color3.fromRGB(100,255,150))
+                if RAID.dot then RAID.dot.BackgroundColor3 = Color3.fromRGB(100,100,100) end
+            end
+        end
+
+        _raidInterrupt = false
+        _siegeInterrupt = false
+        RAID.running = false
+        _raidOn = false
+        RaidStatusUpdate("⏹ Idle — Auto Raid berhenti", Color3.fromRGB(160,148,135))
+        if RAID.dot then RAID.dot.BackgroundColor3 = Color3.fromRGB(100,100,100) end
+    end)
+end
                         "baran","beru","grendal","plague","frostborne",
                         "legia","monarch beastly","beastly fangs","silas",
                         "unbreakable monarch","yogumunt","monarch of transfiguration",
@@ -5014,113 +4983,14 @@ function StartRaidLoop()
                         RaidStatusUpdate("👑 TP ke raja — serang!", Color3.fromRGB(255,80,80))
                         task.wait(0.2)
 
-                        local bossGuid = boss.guid
-                        local bossHum  = boss.model and boss.model:FindFirstChildOfClass("Humanoid")
-                        while RAID.running and not RAID._raidDone do
-                            local dead = not boss.model or not boss.model.Parent
-                                or (bossHum and bossHum.Health <= 0)
-                            if dead then break end
-                            local p = boss.hrp and boss.hrp.Position or bossPos
-                            RaidFireDamage(bossGuid, p)
-                            task.wait(0.08)
-                        end
-
-                        local waited = 0
-                        while RAID.running and not RAID._raidDone and waited < 5 do
-                            task.wait(0.2); waited = waited + 0.2
-                        end
-                    else
-                        RaidStatusUpdate("⚠ Raja tidak ditemukan — lewati", Color3.fromRGB(255,150,50))
-                    end
-
-                    if RAID.running then
-                        RaidStatusUpdate("⏸ Selesai serang raja — jeda 1s...", Color3.fromRGB(160,148,135))
-                        task.wait(1)
-                    end
-                end
-            else
-                RaidStatusUpdate("⚔ Di dalam raid — menunggu hasil...", Color3.fromRGB(255,180,40))
-                local waited = 0
-                while RAID.running and not RAID._raidDone and waited < 300 do
-                    task.wait(1); waited = waited + 1
-                    if waited % 15 == 0 then
-                        RaidStatusUpdate("⚔ Dalam raid... ("..waited.."s)", Color3.fromRGB(255,180,40))
-                    end
-                end
-            end
-
-            if connS2 then pcall(function() connS2:Disconnect() end) end
-            if connF2 then pcall(function() connF2:Disconnect() end) end
-
-            if _raidSuccess then
-                RaidStatusUpdate("🎁 Ambil drop & reward...", Color3.fromRGB(255,220,80))
-                task.wait(0.3); RaidCollectAll(); task.wait(0.3)
-                if RE_GainRaidsRewards then
-                    pcall(function() RE_GainRaidsRewards:InvokeServer(1) end)
-                end
-                task.wait(0.5)
-            end
-            if not RAID.running then break end
-
-            -- ── STEP 7: Keluar raid ──
-            RaidStatusUpdate("🚪 Keluar raid...", Color3.fromRGB(200,100,100))
-            task.wait(0.5)
-            if RE_StartTp then
-                pcall(function() RE_StartTp:FireServer({mapId=RAID.raidMapId}) end)
-            end
-            if RE_EquipHeroWithData then
-                pcall(function() RE_EquipHeroWithData:FireServer() end)
-            end
-            if RE_LocalTpSuccess then
-                pcall(function() RE_LocalTpSuccess:InvokeServer() end)
-            end
-            task.wait(1)
-
-            RAID_LIVE[RAID.raidId] = nil
-            RebuildRaidList()
-
-            _raidInterrupt = false
-            RAID.loopCount = RAID.loopCount + 1
-            RaidCounterUpdate()
-
-            local COOLDOWN = 20
-            for cd = COOLDOWN, 1, -1 do
-                if not RAID.running then break end
-                -- CEK SIEGE INTERRUPT saat cooldown juga (BARU)
-                if _siegeInterrupt then
-                    RaidStatusUpdate("⏸ Cooldown pause — Siege berlangsung...", Color3.fromRGB(255,140,0))
-                    while _siegeInterrupt and RAID.running do task.wait(0.5) end
-                    if not RAID.running then break end
-                end
-                RaidStatusUpdate("⏳ Cooldown: "..cd.."s lagi... (Mass Attack lanjut)", Color3.fromRGB(160,148,135))
-                if RAID.dot then RAID.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
-                task.wait(1)
-            end
-
-            if RAID.running then
-                RaidStatusUpdate("🔍 Cooldown selesai — cari raid berikutnya...", Color3.fromRGB(100,255,150))
-                if RAID.dot then RAID.dot.BackgroundColor3 = Color3.fromRGB(100,100,100) end
-            end
-        end
-
-        _raidInterrupt = false
-        _siegeInterrupt = false  -- safety reset (BARU)
-        RAID.running = false
-        _raidOn = false
-        RaidStatusUpdate("⏹ Idle — Auto Raid berhenti", Color3.fromRGB(160,148,135))
-        if RAID.dot then RAID.dot.BackgroundColor3 = Color3.fromRGB(100,100,100) end
-    end)
-end
 
 
 -- ══════════════════════════════════════════════════════════════
 
 -- ============================================================
--- AUTO SIEGE
+-- AUTO SIEGE (logika saja — UI di panel Automation)
 -- ============================================================
-
-;(function()
-    local p = NewPanel("autoseige")
+do -- siege logic block
 
 -- ══════════════════════════════════════════════════════════════
 -- DROPDOWN 2: AUTO SIEGE  (v3 — remote confirmed dari spy log)
@@ -5740,326 +5610,59 @@ siegeStopBtn.MouseButton1Click:Connect(function()
     StopSiege()
 end)
 
-task.defer(ResizeSiegeBody)
+task.defer(function()
+    -- Siege UI diinisialisasi di dalam Automation panel (lihat bawah)
+    -- Tidak ada panel "autoseige" terpisah
+end)
 
 end -- do (siege UI locals)
 
-end)()
+end -- siege logic block
+
 -- ============================================================
--- PANEL : AUTO RAID (rebuilt — difficulty selector + preferred)
+-- PANEL : AUTOMATION (Auto Raid dropdown + Auto Siege dropdown)
 -- ============================================================
 ;(function()
     local p = NewPanel("autoraid")
-    SectionHeader(p,"AUTO RAID",0)
+    SectionHeader(p,"AUTOMATION",0)
+
+    -- ════════════════════════════════════════════
+    -- DROPDOWN 1: AUTO RAID
+    -- ════════════════════════════════════════════
+    local raidOpen = false
+
+    local raidHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,42))
+    raidHeader.LayoutOrder = 1; Corner(raidHeader,10); Stroke(raidHeader,C.ACC,1,0.4)
+    local raidArrow = Label(raidHeader,"▶",13,C.ACC2,Enum.Font.GothamBold)
+    raidArrow.Size = UDim2.new(0,22,1,0); raidArrow.Position = UDim2.new(0,10,0,0)
+    local raidHeaderLbl = Label(raidHeader,"⚡  Auto Raid",14,C.TXT,Enum.Font.GothamBold)
+    raidHeaderLbl.Size = UDim2.new(1,-50,1,0); raidHeaderLbl.Position = UDim2.new(0,34,0,0)
+
+    local raidBody = Frame(p, C.BG2, UDim2.new(1,0,0,0))
+    raidBody.LayoutOrder = 2; raidBody.ClipsDescendants = true
+    Corner(raidBody,10); Stroke(raidBody,C.ACC,1,0.25); raidBody.Visible = false
+
+    local raidInner = Frame(raidBody, C.BLACK, UDim2.new(1,-16,0,0))
+    raidInner.BackgroundTransparency = 1; raidInner.Position = UDim2.new(0,8,0,8)
+    local raidLayout = New("UIListLayout",{Parent=raidInner, SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,6)})
+
+    local function ResizeRaidBody()
+        raidLayout:ApplyLayout()
+        local h = raidLayout.AbsoluteContentSize.Y + 16
+        raidInner.Size = UDim2.new(1,0,0,h)
+        raidBody.Size  = UDim2.new(1,0,0,h+16)
+    end
+
+    raidHeader.MouseButton1Click:Connect(function()
+        raidOpen = not raidOpen; raidBody.Visible = raidOpen
+        raidArrow.Text = raidOpen and "▼" or "▶"
+        if raidOpen then task.defer(ResizeRaidBody) end
+    end)
 
     -- ── STATUS CARD ──
-    local statusCard = Frame(p, Color3.fromRGB(30,14,3), UDim2.new(1,0,0,0))
-    statusCard.LayoutOrder=1; statusCard.AutomaticSize=Enum.AutomaticSize.Y
-    Corner(statusCard,10); Stroke(statusCard,C.ACC,1,0.3); Padding(statusCard,10,10,12,12)
-    New("UIListLayout",{Parent=statusCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
+    local statusCard = Frame(raidInner, Color3.fromRGB(30,14,3), UDim2.new(1,0,0,0))
+    statusCard.LayoutOrder=0; statusCard.AutomaticSize=Enum.AutomaticSize.Y
 
-    local dotRow = Frame(statusCard,Color3.fromRGB(0,0,0),UDim2.new(1,0,0,26))
-    dotRow.BackgroundTransparency=1; dotRow.LayoutOrder=0
-    local dot = Frame(dotRow,Color3.fromRGB(100,100,100),UDim2.new(0,10,0,10))
-    dot.Position=UDim2.new(0,0,0.5,-5); Corner(dot,5)
-    RAID.dot = dot
-    local stLbl = Label(dotRow,"⏹ Idle — Aktifkan untuk mulai Raid",11,C.TXT2,Enum.Font.Gotham)
-    stLbl.Size=UDim2.new(1,-18,1,0); stLbl.Position=UDim2.new(0,18,0,0)
-    stLbl.TextTruncate=Enum.TextTruncate.AtEnd
-    RAID.statusLbl = stLbl
-
-    local cRow = Frame(statusCard,Color3.fromRGB(22,10,2),UDim2.new(1,0,0,24))
-    cRow.LayoutOrder=1; Corner(cRow,6); Stroke(cRow,C.BORD,1,0.5)
-    local kLbl = Label(cRow,"Kill: 0",10.5,C.ACC2,Enum.Font.GothamBold)
-    kLbl.Size=UDim2.new(0.5,0,1,0); kLbl.Position=UDim2.new(0,8,0,0)
-    RAID.killLbl = kLbl
-    local lLbl = Label(cRow,"Loop: 0",10.5,C.TXT3,Enum.Font.GothamBold)
-    lLbl.Size=UDim2.new(0.5,0,1,0); lLbl.Position=UDim2.new(0.5,0,0,0)
-    RAID.loopLbl = lLbl
-
-    -- ── SECTION: DIFFICULTY ──
-    SectionHeader(p,"DIFFICULTY",2)
-
-    -- Difficulty dropdown
-    local diffCard = Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
-    diffCard.LayoutOrder=3; Corner(diffCard,8); Stroke(diffCard,C.BORD,1,0.4); Padding(diffCard,6,6,12,8)
-    local diffTitle = Label(diffCard,"Mode",12,C.TXT,Enum.Font.GothamBold)
-    diffTitle.Size=UDim2.new(0.38,0,1,0)
-
-    local DIFF_OPTS   = {"Easy","Medium","Hard","Preferred"}
-    local DIFF_KEYS   = {"easy","medium","hard","preferred"}
-    local DIFF_COLORS = {
-        Color3.fromRGB(80,220,80),
-        Color3.fromRGB(255,200,60),
-        Color3.fromRGB(255,80,80),
-        Color3.fromRGB(100,180,255),
-    }
-    local DIFF_DESC = {
-        "Easy = map angka terkecil",
-        "Medium = map angka tengah",
-        "Hard = map angka terbesar",
-        "Preferred = map pilihan kamu",
-    }
-
-    local curDiff = 1  -- index ke DIFF_OPTS
-
-    local diffDDBtn = Btn(diffCard,C.BG3,UDim2.new(0.62,-4,1,-4))
-    diffDDBtn.Position=UDim2.new(0.38,0,0,2); Corner(diffDDBtn,6); Stroke(diffDDBtn,C.BORD,1,0.2)
-    local diffDDLbl = Label(diffDDBtn,"  "..DIFF_OPTS[curDiff],11,DIFF_COLORS[curDiff],Enum.Font.GothamBold)
-    diffDDLbl.Size=UDim2.new(1,-18,1,0)
-    local diffArr = Label(diffDDBtn,"▾",11,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-    diffArr.Size=UDim2.new(0,16,1,0); diffArr.Position=UDim2.new(1,-18,0,0)
-    RAID.diffLbl = diffDDLbl
-
-    -- Desc label
-    local diffDesc = Label(p,DIFF_DESC[curDiff],10,C.TXT3,Enum.Font.Gotham)
-    diffDesc.LayoutOrder=4; diffDesc.Size=UDim2.new(1,0,0,14)
-
-    -- Preferred map panel (hidden by default)
-    local prefCard = Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
-    prefCard.LayoutOrder=5; Corner(prefCard,8); Stroke(prefCard,Color3.fromRGB(100,180,255),1,0.3); Padding(prefCard,6,6,12,8)
-    prefCard.Visible = false
-    local prefTitle = Label(prefCard,"🗺 Pilih Map Preferred",11,Color3.fromRGB(100,180,255),Enum.Font.GothamBold)
-    prefTitle.Size=UDim2.new(0.55,0,0,16); prefTitle.Position=UDim2.new(0,0,0,4)
-    local prefCountLbl = Label(prefCard,"0 map",10,C.TXT3,Enum.Font.Gotham,Enum.TextXAlignment.Right)
-    prefCountLbl.Size=UDim2.new(0.45,0,0,16); prefCountLbl.Position=UDim2.new(0.55,0,0,4)
-
-    -- Preferred map DD button
-    local prefDDBtn = Btn(prefCard,C.DD_BG,UDim2.new(1,0,0,20))
-    prefDDBtn.Position=UDim2.new(0,0,0,22); Corner(prefDDBtn,5); Stroke(prefDDBtn,Color3.fromRGB(100,180,255),1,0.3)
-    local prefDDLbl = Label(prefDDBtn,"  Klik untuk pilih map...",10,C.TXT3,Enum.Font.Gotham)
-    prefDDLbl.Size=UDim2.new(1,-18,1,0); prefDDLbl.Position=UDim2.new(0,4,0,0)
-    local prefArr = Label(prefDDBtn,"▾",10,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-    prefArr.Size=UDim2.new(0,14,1,0); prefArr.Position=UDim2.new(1,-16,0,0)
-
-    local function UpdatePrefLabel()
-        local n = 0; for _ in pairs(RAID.preferMaps) do n=n+1 end
-        prefCountLbl.Text = n.." map"
-        if n == 0 then
-            prefDDLbl.Text = "  Klik untuk pilih map..."
-            prefDDLbl.TextColor3 = C.TXT3
-        else
-            local names = {}
-            for mn in pairs(RAID.preferMaps) do table.insert(names, "Map "..mn) end
-            table.sort(names)
-            prefDDLbl.Text = "  "..table.concat(names, ", ")
-            prefDDLbl.TextColor3 = Color3.fromRGB(100,180,255)
-        end
-    end
-
-    -- Preferred map dropdown popup
-    prefDDBtn.MouseButton1Click:Connect(function()
-        CloseActiveDD()
-        local absPos  = prefDDBtn.AbsolutePosition
-        local absSize = prefDDBtn.AbsoluteSize
-        local ITEM_H  = 26
-        local nMaps   = 18
-        local contentH = nMaps * (ITEM_H + 2) + 42
-        local scrollH  = math.min(contentH, _isSmallScreen and 180 or 210)
-        local HEADER_H = 32
-
-        local popup = Instance.new("Frame")
-        popup.Parent=DDLayer; popup.BackgroundColor3=C.DD_BG; popup.BorderSizePixel=0
-        popup.Size=UDim2.new(0,absSize.X+20,0,HEADER_H+scrollH)
-        popup.Position=UDim2.new(0,absPos.X,0,absPos.Y+absSize.Y+3)
-        popup.ZIndex=9999; popup.ClipsDescendants=true
-        Corner(popup,8); Stroke(popup,Color3.fromRGB(100,180,255),1,0.2)
-
-        local hdr=Frame(popup,Color3.fromRGB(20,40,80),UDim2.new(1,0,0,HEADER_H)); hdr.ZIndex=9999
-        local cntLbl=Label(hdr,"0/18 dipilih",10.5,Color3.fromRGB(100,180,255),Enum.Font.GothamBold)
-        cntLbl.Size=UDim2.new(0.6,0,1,0); cntLbl.Position=UDim2.new(0,8,0,0); cntLbl.ZIndex=9999
-        local clrBtn=Btn(hdr,Color3.fromRGB(120,30,30),UDim2.new(0,48,0,20))
-        clrBtn.Position=UDim2.new(1,-54,0.5,-10); Corner(clrBtn,5); clrBtn.ZIndex=9999
-        local cL=Label(clrBtn,"Clear",10,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-        cL.Size=UDim2.new(1,0,1,0); cL.ZIndex=9999
-
-        local sf=Instance.new("ScrollingFrame")
-        sf.Parent=popup; sf.BackgroundTransparency=1; sf.BorderSizePixel=0
-        sf.Position=UDim2.new(0,0,0,HEADER_H); sf.Size=UDim2.new(1,0,0,scrollH)
-        sf.CanvasSize=UDim2.new(0,0,0,contentH)
-        sf.ScrollBarThickness=5; sf.ScrollBarImageColor3=Color3.fromRGB(100,180,255)
-        sf.ScrollingDirection=Enum.ScrollingDirection.Y; sf.ZIndex=9999
-        Instance.new("UIListLayout",sf).SortOrder=Enum.SortOrder.LayoutOrder
-        local sfp=Instance.new("UIPadding",sf)
-        sfp.PaddingTop=UDim.new(0,4); sfp.PaddingLeft=UDim.new(0,4); sfp.PaddingRight=UDim.new(0,6)
-
-        local rowRefs = {}
-        local function UpdateCnt()
-            local n=0; for _ in pairs(RAID.preferMaps) do n=n+1 end
-            cntLbl.Text=n.."/18 dipilih"
-        end
-
-        for mn=1,18 do
-            local item=Instance.new("TextButton",sf)
-            item.Size=UDim2.new(1,-4,0,ITEM_H); item.LayoutOrder=mn
-            item.BackgroundColor3=RAID.preferMaps[mn] and Color3.fromRGB(20,50,100) or Color3.fromRGB(28,20,12)
-            item.BackgroundTransparency=0.3; item.BorderSizePixel=0
-            item.Text=""; item.AutoButtonColor=false; item.ZIndex=9999
-            Instance.new("UICorner",item).CornerRadius=UDim.new(0,5)
-            local tick=Instance.new("TextLabel",item)
-            tick.Size=UDim2.new(0,18,1,0); tick.BackgroundTransparency=1
-            tick.Text=RAID.preferMaps[mn] and "✓" or ""; tick.TextSize=11
-            tick.Font=Enum.Font.GothamBold; tick.TextColor3=Color3.fromRGB(100,180,255)
-            tick.ZIndex=9999
-            local iLbl=Instance.new("TextLabel",item)
-            iLbl.Size=UDim2.new(1,-24,1,0); iLbl.Position=UDim2.new(0,20,0,0)
-            iLbl.BackgroundTransparency=1; iLbl.Text="Map "..mn; iLbl.TextSize=11
-            iLbl.Font=Enum.Font.GothamBold
-            iLbl.TextColor3=RAID.preferMaps[mn] and Color3.fromRGB(100,180,255) or C.TXT
-            iLbl.TextXAlignment=Enum.TextXAlignment.Left; iLbl.ZIndex=9999
-            rowRefs[mn]={btn=item,tick=tick,lbl=iLbl}
-            local mn_l=mn
-            item.MouseButton1Click:Connect(function()
-                RAID.preferMaps[mn_l]=not RAID.preferMaps[mn_l] or nil
-                rowRefs[mn_l].tick.Text = RAID.preferMaps[mn_l] and "✓" or ""
-                rowRefs[mn_l].btn.BackgroundColor3 = RAID.preferMaps[mn_l] and Color3.fromRGB(20,50,100) or Color3.fromRGB(28,20,12)
-                rowRefs[mn_l].lbl.TextColor3 = RAID.preferMaps[mn_l] and Color3.fromRGB(100,180,255) or C.TXT
-                UpdateCnt(); UpdatePrefLabel()
-            end)
-        end
-        UpdateCnt()
-        clrBtn.MouseButton1Click:Connect(function()
-            for mn=1,18 do
-                RAID.preferMaps[mn]=nil
-                rowRefs[mn].tick.Text=""; rowRefs[mn].btn.BackgroundColor3=Color3.fromRGB(28,20,12)
-                rowRefs[mn].lbl.TextColor3=C.TXT
-            end
-            UpdateCnt(); UpdatePrefLabel()
-        end)
-        DDLayer.Visible=true
-        _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
-    end)
-
-    -- Difficulty dropdown popup
-    diffDDBtn.MouseButton1Click:Connect(function()
-        CloseActiveDD()
-        local absPos  = diffDDBtn.AbsolutePosition
-        local absSize = diffDDBtn.AbsoluteSize
-        local ITEM_H  = 28
-
-        local popup = Instance.new("Frame")
-        popup.Parent=DDLayer; popup.BackgroundColor3=C.DD_BG; popup.BorderSizePixel=0
-        popup.Size=UDim2.new(0,absSize.X+10,0,#DIFF_OPTS*(ITEM_H+2)+12)
-        popup.Position=UDim2.new(0,absPos.X,0,absPos.Y+absSize.Y+3)
-        popup.ZIndex=9999
-        Corner(popup,8); Stroke(popup,C.BORD2,1,0.2)
-
-        local ll=Instance.new("UIListLayout",popup); ll.Padding=UDim.new(0,2); ll.SortOrder=Enum.SortOrder.LayoutOrder
-        Instance.new("UIPadding",popup).PaddingTop=UDim.new(0,4)
-
-        local irefs = {}
-        for i,opt in ipairs(DIFF_OPTS) do
-            local item=Instance.new("TextButton",popup)
-            item.Size=UDim2.new(1,-8,0,ITEM_H); item.LayoutOrder=i
-            item.BackgroundColor3=i==curDiff and Color3.fromRGB(60,30,5) or Color3.fromRGB(28,20,12)
-            item.BackgroundTransparency=i==curDiff and 0 or 0.4
-            item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=9999
-            Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
-            local iL=Instance.new("TextLabel",item)
-            iL.Size=UDim2.new(1,-8,1,0); iL.Position=UDim2.new(0,8,0,0)
-            iL.BackgroundTransparency=1; iL.Text=opt; iL.TextSize=11
-            iL.Font=Enum.Font.GothamBold; iL.TextColor3=DIFF_COLORS[i]
-            iL.TextXAlignment=Enum.TextXAlignment.Left; iL.ZIndex=9999
-            irefs[i]={btn=item,lbl=iL}
-            local ii=i
-            item.MouseButton1Click:Connect(function()
-                curDiff=ii
-                RAID.difficulty=DIFF_KEYS[ii]
-                RAID.lockedMapId=nil  -- reset lock saat ganti difficulty
-                diffDDLbl.Text="  "..DIFF_OPTS[ii]
-                diffDDLbl.TextColor3=DIFF_COLORS[ii]
-                diffDesc.Text=DIFF_DESC[ii]
-                prefCard.Visible = (DIFF_KEYS[ii]=="preferred")
-                for j,r in ipairs(irefs) do
-                    r.btn.BackgroundColor3=j==ii and Color3.fromRGB(60,30,5) or Color3.fromRGB(28,20,12)
-                    r.btn.BackgroundTransparency=j==ii and 0 or 0.4
-                end
-                CloseActiveDD()
-            end)
-        end
-        DDLayer.Visible=true
-        _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
-    end)
-
-    -- ── SECTION: RAID AKTIF ──
-    SectionHeader(p,"RAID AKTIF",6)
-
-    local selCard = Frame(p,Color3.fromRGB(28,12,2),UDim2.new(1,0,0,36))
-    selCard.LayoutOrder=7; Corner(selCard,8); Stroke(selCard,C.ACC,1,0.3)
-    local selLbl = Label(selCard,"⏳ Menunggu notif raid...",11,C.TXT3,Enum.Font.Gotham)
-    selLbl.Size=UDim2.new(1,-8,1,0); selLbl.Position=UDim2.new(0,8,0,0)
-    selLbl.TextTruncate=Enum.TextTruncate.AtEnd
-
-    local function UpdateSelLabel()
-        if #RAID_ID_LIST == 0 then
-            selLbl.Text = "⏳ Menunggu notif raid..."
-            selLbl.TextColor3 = C.TXT3
-        else
-            local picked = PickRaidByDifficulty()
-            if picked then
-                selLbl.Text = "🎯 ["..RAID.difficulty:upper().."] "..picked.label.." | Total: "..#RAID_ID_LIST
-                selLbl.TextColor3 = C.ACC2
-            else
-                selLbl.Text = "⏳ Preferred: belum ada raid di map pilihan ("..#RAID_ID_LIST.." raid aktif)"
-                selLbl.TextColor3 = Color3.fromRGB(100,180,255)
-            end
-        end
-    end
-
-    _raidIdRefreshCb = function() UpdateSelLabel() end
-    UpdateSelLabel()
-
-    -- ── KONTROL ──
-    SectionHeader(p,"KONTROL",8)
-
-    local ctrlRow = Frame(p,Color3.fromRGB(35,15,2),UDim2.new(1,0,0,50))
-    ctrlRow.LayoutOrder=9; Corner(ctrlRow,10); Stroke(ctrlRow,C.ACC,1.5,0.2)
-    local mL = Label(ctrlRow,"⚡  Auto Raid",13,C.TXT,Enum.Font.GothamBold)
-    mL.Size=UDim2.new(0.65,0,0,20); mL.Position=UDim2.new(0,12,0,8)
-    local mS = Label(ctrlRow,"Jalankan loop raid otomatis",10,C.TXT3,Enum.Font.Gotham)
-    mS.Size=UDim2.new(0.65,0,0,14); mS.Position=UDim2.new(0,12,0,28)
-    local pill = Btn(ctrlRow,Color3.fromRGB(120,40,0),UDim2.new(0,50,0,26))
-    pill.AnchorPoint=Vector2.new(1,0.5); pill.Position=UDim2.new(1,-12,0.5,0); Corner(pill,13)
-    local knob = Frame(pill,Color3.fromRGB(190,130,70),UDim2.new(0,20,0,20))
-    knob.AnchorPoint=Vector2.new(0,0.5); knob.Position=UDim2.new(0,3,0.5,0); Corner(knob,10)
-    pill.MouseButton1Click:Connect(function()
-        _raidOn=not _raidOn
-        TweenService:Create(pill,TweenInfo.new(0.16),{BackgroundColor3=_raidOn and C.ACC or Color3.fromRGB(120,40,0)}):Play()
-        TweenService:Create(knob,TweenInfo.new(0.16),{
-            Position=_raidOn and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3=_raidOn and Color3.fromRGB(255,255,255) or Color3.fromRGB(190,130,70),
-        }):Play()
-        ctrlRow.BackgroundColor3=_raidOn and Color3.fromRGB(50,25,3) or Color3.fromRGB(35,15,2)
-        if _raidOn then
-            StartRaidLoop()
-        else
-            StopRaid()
-            RaidStatusUpdate("⏹ Idle — Auto Raid dimatikan",Color3.fromRGB(160,148,135))
-        end
-    end)
-
-    -- ── Toggle: Auto Kill Boss ──
-    local bossRow = Frame(p,Color3.fromRGB(35,15,2),UDim2.new(1,0,0,50))
-    bossRow.LayoutOrder=10; Corner(bossRow,10); Stroke(bossRow,Color3.fromRGB(180,60,60),1,0.3)
-    local bL = Label(bossRow,"👑  Auto Kill Boss",13,C.TXT,Enum.Font.GothamBold)
-    bL.Size=UDim2.new(0.65,0,0,20); bL.Position=UDim2.new(0,12,0,8)
-    local bS = Label(bossRow,"TP ke raja & serang sampai mati",10,C.TXT3,Enum.Font.Gotham)
-    bS.Size=UDim2.new(0.65,0,0,14); bS.Position=UDim2.new(0,12,0,28)
-    local bPill = Btn(bossRow,Color3.fromRGB(80,20,20),UDim2.new(0,50,0,26))
-    bPill.AnchorPoint=Vector2.new(1,0.5); bPill.Position=UDim2.new(1,-12,0.5,0); Corner(bPill,13)
-    local bKnob = Frame(bPill,Color3.fromRGB(160,80,80),UDim2.new(0,20,0,20))
-    bKnob.AnchorPoint=Vector2.new(0,0.5); bKnob.Position=UDim2.new(0,3,0.5,0); Corner(bKnob,10)
-    bPill.MouseButton1Click:Connect(function()
-        RAID.autoKillBoss = not RAID.autoKillBoss
-        local on = RAID.autoKillBoss
-        TweenService:Create(bPill,TweenInfo.new(0.16),{BackgroundColor3=on and Color3.fromRGB(200,50,50) or Color3.fromRGB(80,20,20)}):Play()
-        TweenService:Create(bKnob,TweenInfo.new(0.16),{
-            Position=on and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3=on and Color3.fromRGB(255,255,255) or Color3.fromRGB(160,80,80),
-        }):Play()
-        bossRow.BackgroundColor3=on and Color3.fromRGB(50,10,10) or Color3.fromRGB(35,15,2)
-    end)
-end)()
 
 -- ============================================================
 -- PANEL : CLAIM REWARD
@@ -6168,7 +5771,7 @@ end)()
             elseif ok and res == false then
                 Log("  id="..id.." → skip (sudah diklaim / tidak ada)", C.DIM)
             end
-            task.wait(0.1)
+            task.wait(0.02)
         end
         status("✅ Online Reward selesai — "..claimed.." diklaim", C.GRN)
         sub.Text = "Terakhir: "..claimed.." reward diklaim"
@@ -6302,13 +5905,152 @@ end)()
 end)()
 
 -- ============================================================
+-- WEBHOOK SENDER
+-- ============================================================
+local function SendWebhookNotif()
+    if not _webhookEnabled or _webhookUrl == "" then return end
+    local isDiscord  = _webhookUrl:find("discord%.com/api/webhooks")
+    local isTelegram = _webhookUrl:find("api%.telegram%.org")
+    if not isDiscord and not isTelegram then return end
+
+    local lines = {"🎯 ASH Raid — "..os.date("%H:%M:%S")}
+    table.insert(lines, "Raid aktif: "..#RAID_ID_LIST)
+    for _, e in ipairs(RAID_ID_LIST) do
+        table.insert(lines, "• Map "..(e.mapId-50000).." — "..e.label)
+    end
+    if RAID.snapshotMapId then
+        table.insert(lines, "📌 Snapshot ["..RAID.difficulty:upper().."]: Map "..(RAID.snapshotMapId-50000))
+    end
+    local body = table.concat(lines, "\n")
+
+    task.spawn(function()
+        pcall(function()
+            local HS = game:GetService("HttpService")
+            if isDiscord then
+                local payload = HS:JSONEncode({content = body})
+                HS:PostAsync(_webhookUrl, payload, Enum.HttpContentType.ApplicationJson)
+            elseif isTelegram then
+                -- Expect URL format: https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>
+                local encoded = body:gsub(" ", "%%20"):gsub("\n", "%%0A")
+                HS:GetAsync(_webhookUrl.."&text="..encoded)
+            end
+        end)
+    end)
+end
+
+-- ============================================================
 -- PANEL : SETTINGS
 -- ============================================================
 ;(function()
     local p = NewPanel("settings")
     SectionHeader(p,"PENGATURAN LANJUTAN",0)
-    ToggleRow(p,"Izinkan HTTP Request","Aktifkan akses internet untuk fitur eksternal",2,function(on)
-        pcall(function() game:GetService("HttpService").HttpEnabled=on end)
+
+    -- ── Webhook Section ──
+    SectionHeader(p,"WEBHOOK NOTIFIKASI",1)
+
+    -- Info card
+    local infoCard = Frame(p, Color3.fromRGB(20,25,35), UDim2.new(1,0,0,0))
+    infoCard.LayoutOrder=2; infoCard.AutomaticSize=Enum.AutomaticSize.Y
+    Corner(infoCard,8); Stroke(infoCard,Color3.fromRGB(80,130,220),1,0.4); Padding(infoCard,8,8,10,10)
+    local infoLbl = Label(infoCard,
+        "Kirim notif ke Discord atau Telegram setiap kali data raid diperbarui.\n"..
+        "Paste URL webhook Discord atau Telegram bot di bawah.",
+        10,Color3.fromRGB(160,190,255),Enum.Font.Gotham)
+    infoLbl.Size=UDim2.new(1,0,0,0); infoLbl.AutomaticSize=Enum.AutomaticSize.Y
+    infoLbl.TextWrapped=true
+
+    -- URL input row
+    local urlCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,58))
+    urlCard.LayoutOrder=3; Corner(urlCard,9); Stroke(urlCard,C.BORD,1,0.4); Padding(urlCard,8,8,10,10)
+    New("UIListLayout",{Parent=urlCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,5)})
+
+    local urlHdr=Label(urlCard,"URL Webhook",10.5,C.TXT2,Enum.Font.GothamBold)
+    urlHdr.Size=UDim2.new(1,0,0,14); urlHdr.LayoutOrder=0
+
+    local urlBox = Instance.new("TextBox")
+    urlBox.Parent=urlCard; urlBox.LayoutOrder=1
+    urlBox.Size=UDim2.new(1,0,0,24); urlBox.BackgroundColor3=Color3.fromRGB(18,14,10)
+    urlBox.BorderSizePixel=0; urlBox.TextSize=9.5; urlBox.Font=Enum.Font.Gotham
+    urlBox.TextColor3=C.TXT2; urlBox.PlaceholderColor3=C.DIM
+    urlBox.PlaceholderText="https://discord.com/api/webhooks/..."
+    urlBox.Text=_webhookUrl; urlBox.TextXAlignment=Enum.TextXAlignment.Left
+    urlBox.ClearTextOnFocus=false
+    Corner(urlBox,5); Stroke(urlBox,C.BORD,1,0.3)
+    local urlPad=Instance.new("UIPadding",urlBox)
+    urlPad.PaddingLeft=UDim.new(0,6); urlPad.PaddingRight=UDim.new(0,6)
+
+    urlBox.FocusLost:Connect(function()
+        _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
+    end)
+
+    -- Platform detect label
+    local platformLbl = Label(p,"",9.5,C.DIM,Enum.Font.Gotham)
+    platformLbl.LayoutOrder=4; platformLbl.Size=UDim2.new(1,0,0,13)
+
+    local function UpdatePlatformLbl()
+        local url = _webhookUrl
+        if url:find("discord%.com/api/webhooks") then
+            platformLbl.Text="✅ Discord webhook terdeteksi"; platformLbl.TextColor3=Color3.fromRGB(100,220,100)
+        elseif url:find("api%.telegram%.org") then
+            platformLbl.Text="✅ Telegram bot API terdeteksi"; platformLbl.TextColor3=Color3.fromRGB(100,180,255)
+        elseif url=="" then
+            platformLbl.Text="Belum ada URL"; platformLbl.TextColor3=C.DIM
+        else
+            platformLbl.Text="⚠ URL tidak dikenali (Discord/Telegram saja)"; platformLbl.TextColor3=Color3.fromRGB(255,180,60)
+        end
+    end
+
+    urlBox.FocusLost:Connect(function() UpdatePlatformLbl() end)
+    UpdatePlatformLbl()
+
+    -- Toggle aktifkan webhook
+    local wRow = Frame(p,Color3.fromRGB(20,25,40),UDim2.new(1,0,0,50))
+    wRow.LayoutOrder=5; Corner(wRow,9); Stroke(wRow,Color3.fromRGB(80,130,220),1,0.3)
+    local wL=Label(wRow,"🔔  Aktifkan Webhook",13,C.TXT,Enum.Font.GothamBold)
+    wL.Size=UDim2.new(0.65,0,0,20); wL.Position=UDim2.new(0,10,0,6)
+    local wS=Label(wRow,"Kirim notif setiap raid list update",9.5,C.TXT3,Enum.Font.Gotham)
+    wS.Size=UDim2.new(0.65,0,0,14); wS.Position=UDim2.new(0,10,0,26)
+    local wPill=Btn(wRow,Color3.fromRGB(30,50,100),UDim2.new(0,50,0,26))
+    wPill.AnchorPoint=Vector2.new(1,0.5); wPill.Position=UDim2.new(1,-10,0.5,0); Corner(wPill,13)
+    local wKnob=Frame(wPill,Color3.fromRGB(80,110,180),UDim2.new(0,20,0,20))
+    wKnob.AnchorPoint=Vector2.new(0,0.5); wKnob.Position=UDim2.new(0,3,0.5,0); Corner(wKnob,10)
+    wPill.MouseButton1Click:Connect(function()
+        _webhookEnabled=not _webhookEnabled; local on=_webhookEnabled
+        _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
+        TweenService:Create(wPill,TweenInfo.new(0.16),{BackgroundColor3=on and Color3.fromRGB(60,100,220) or Color3.fromRGB(30,50,100)}):Play()
+        TweenService:Create(wKnob,TweenInfo.new(0.16),{
+            Position=on and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
+            BackgroundColor3=on and Color3.fromRGB(255,255,255) or Color3.fromRGB(80,110,180),
+        }):Play()
+        wRow.BackgroundColor3=on and Color3.fromRGB(25,40,80) or Color3.fromRGB(20,25,40)
+        UpdatePlatformLbl()
+        if on then task.spawn(SendWebhookNotif) end
+    end)
+
+    -- Test button
+    local testRow=Frame(p,Color3.fromRGB(20,35,20),UDim2.new(1,0,0,36))
+    testRow.LayoutOrder=6; Corner(testRow,9); Stroke(testRow,Color3.fromRGB(60,180,60),1,0.3)
+    local testBtn=Btn(testRow,Color3.fromRGB(30,100,30),UDim2.new(0.6,0,0,24))
+    testBtn.AnchorPoint=Vector2.new(0.5,0.5); testBtn.Position=UDim2.new(0.5,0,0.5,0)
+    Corner(testBtn,7); Stroke(testBtn,Color3.fromRGB(80,220,80),1,0.3)
+    local testLbl=Label(testBtn,"📡  Test Webhook",11,Color3.fromRGB(200,255,200),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+    testLbl.Size=UDim2.new(1,0,1,0)
+    testBtn.MouseButton1Click:Connect(function()
+        _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
+        UpdatePlatformLbl()
+        if _webhookUrl=="" then
+            testLbl.Text="⚠ URL kosong!"; testLbl.TextColor3=Color3.fromRGB(255,100,60)
+        else
+            local prevEnabled=_webhookEnabled; _webhookEnabled=true
+            task.spawn(function()
+                SendWebhookNotif()
+                task.wait(0.5)
+                testLbl.Text="✅ Terkirim!"; testLbl.TextColor3=Color3.fromRGB(100,255,100)
+                task.wait(2)
+                testLbl.Text="📡  Test Webhook"; testLbl.TextColor3=Color3.fromRGB(200,255,200)
+                _webhookEnabled=prevEnabled
+            end)
+        end
     end)
 end)()
 
